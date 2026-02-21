@@ -17,6 +17,7 @@ defmodule ABSmartly.MixProject do
 
   def application do
     [
+      mod: {ABSmartly.Application, []},
       extra_applications: [:logger, :crypto]
     ]
   end
