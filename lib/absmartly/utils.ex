@@ -64,15 +64,7 @@ defmodule ABSmartly.Utils do
     end
   end
 
-  @doc """
-  Convert any value to a string representation.
-  """
-  def to_string_value(nil), do: nil
-  def to_string_value(val) when is_binary(val), do: val
-  def to_string_value(val) when is_integer(val), do: Integer.to_string(val)
-  def to_string_value(val) when is_float(val), do: Float.to_string(val)
-  def to_string_value(val) when is_boolean(val), do: Atom.to_string(val)
-  def to_string_value(val), do: Kernel.to_string(val)
+  # Fixes MEDIUM-15: to_string_value is dead code - removed
 
   @doc """
   Convert any value to a number (integer or float).
@@ -104,42 +96,6 @@ defmodule ABSmartly.Utils do
   def to_boolean(""), do: false
   def to_boolean(_), do: true
 
-  @doc """
-  Deep copy a value by encoding and decoding JSON.
-  """
-  def deep_copy(value) do
-    case Jason.encode(value) do
-      {:ok, json} ->
-        case Jason.decode(json) do
-          {:ok, decoded} -> decoded
-          _ -> value
-        end
-
-      _ ->
-        value
-    end
-  end
-
-  @doc """
-  Convert snake_case to camelCase.
-  """
-  def snake_to_camel(string) when is_binary(string) do
-    string
-    |> String.split("_")
-    |> Enum.with_index()
-    |> Enum.map(fn {word, idx} ->
-      if idx == 0 do
-        word
-      else
-        String.capitalize(word)
-      end
-    end)
-    |> Enum.join()
-  end
-
-  def snake_to_camel(atom) when is_atom(atom) do
-    atom
-    |> Atom.to_string()
-    |> snake_to_camel()
-  end
+  # Fixes MEDIUM-13: deep_copy is dead code - removed (Elixir data is immutable)
+  # Fixes MEDIUM-14: snake_to_camel is dead code - removed
 end

@@ -3,9 +3,22 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   JSON expression evaluator for audience targeting.
 
   Supports 13 operators: and, or, not, null, var, value, eq, gt, gte, lt, lte, in, match
+
+  Fixes:
+  - CRITICAL-04: ReDoS vulnerability in eval_match
+  - HIGH-10: ReDoS risk + silent regex compilation failure
+  - HIGH-14: Non-list `and`/`or` silently defaults
+  - MEDIUM-21: Unknown operators silently return nil
   """
 
   alias ABSmartly.Utils
+
+  require Logger
+
+  # Maximum regex pattern length (CRITICAL-04)
+  @max_regex_length 1000
+  # Regex timeout in milliseconds (CRITICAL-04)
+  @regex_timeout_ms 100
 
   @doc """
   Evaluate a JSON expression with given variables.
@@ -42,7 +55,10 @@ defmodule ABSmartly.JSONExpr.Evaluator do
       Map.has_key?(expr, "lte") -> eval_lte(expr["lte"], vars)
       Map.has_key?(expr, "in") -> eval_in(expr["in"], vars)
       Map.has_key?(expr, "match") -> eval_match(expr["match"], vars)
-      true -> nil
+      # Fixes MEDIUM-21: Log unknown operators
+      true ->
+        Logger.warning("Unknown operator in expression: #{inspect(Map.keys(expr))}")
+        nil
     end
   end
 
@@ -50,6 +66,7 @@ defmodule ABSmartly.JSONExpr.Evaluator do
 
   # Operator implementations
 
+  # Fixes HIGH-14: Validate that and/or receive lists, fail closed if not
   defp eval_and(exprs, vars) when is_list(exprs) do
     Enum.reduce_while(exprs, true, fn expr, _acc ->
       case Utils.to_boolean(evaluate(expr, vars)) do
@@ -60,7 +77,10 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     end)
   end
 
-  defp eval_and(_exprs, _vars), do: true
+  defp eval_and(exprs, _vars) do
+    Logger.error("Invalid 'and' operand (expected list): #{inspect(exprs)}")
+    false
+  end
 
   defp eval_or(exprs, vars) when is_list(exprs) do
     Enum.reduce_while(exprs, false, fn expr, _acc ->
@@ -72,7 +92,10 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     end)
   end
 
-  defp eval_or(_exprs, _vars), do: false
+  defp eval_or(exprs, _vars) do
+    Logger.error("Invalid 'or' operand (expected list): #{inspect(exprs)}")
+    false
+  end
 
   defp eval_not(expr, vars) do
     case Utils.to_boolean(evaluate(expr, vars)) do
@@ -199,6 +222,7 @@ defmodule ABSmartly.JSONExpr.Evaluator do
 
   defp eval_in(_args, _vars), do: false
 
+  # Fixes CRITICAL-04, HIGH-10: ReDoS protection with pattern validation and timeout
   defp eval_match([text_expr, pattern_expr], vars) do
     text = evaluate(text_expr, vars)
     pattern = evaluate(pattern_expr, vars)
@@ -208,9 +232,36 @@ defmodule ABSmartly.JSONExpr.Evaluator do
         false
 
       is_binary(text) and is_binary(pattern) ->
-        case Regex.compile(pattern) do
-          {:ok, regex} -> Regex.match?(regex, text)
-          _ -> false
+        # Fixes CRITICAL-04: Reject patterns that are too long
+        if String.length(pattern) > @max_regex_length do
+          Logger.warning(
+            "Regex pattern too long (#{String.length(pattern)}), rejecting: #{String.slice(pattern, 0, 100)}..."
+          )
+
+          false
+        else
+          case Regex.compile(pattern) do
+            {:ok, regex} ->
+              # Fixes CRITICAL-04: Run regex in a Task with timeout
+              task = Task.async(fn -> Regex.match?(regex, text) end)
+
+              case Task.yield(task, @regex_timeout_ms) || Task.shutdown(task) do
+                {:ok, result} ->
+                  result
+
+                nil ->
+                  Logger.error(
+                    "Regex timeout (#{@regex_timeout_ms}ms): pattern=#{pattern}, text=#{String.slice(text, 0, 100)}"
+                  )
+
+                  false
+              end
+
+            {:error, reason} ->
+              # Fixes HIGH-10: Log regex compilation failures
+              Logger.error("Invalid regex pattern: #{pattern}, reason: #{inspect(reason)}")
+              false
+          end
         end
 
       true ->
@@ -267,6 +318,7 @@ defmodule ABSmartly.JSONExpr.Evaluator do
         end
 
       _ ->
+        Logger.warning("Failed to compare complex values via JSON encoding")
         nil
     end
   end

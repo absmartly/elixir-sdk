@@ -1,9 +1,13 @@
 defmodule ABSmartly.Matcher do
   @moduledoc """
   Audience matcher for experiment targeting.
+
+  Fixes HIGH-07: Returns `true` for unrecognized filters.
   """
 
   alias ABSmartly.JSONExpr.Evaluator
+
+  require Logger
 
   @doc """
   Evaluate audience filter against attributes.
@@ -12,6 +16,7 @@ defmodule ABSmartly.Matcher do
   - nil if filter is nil
   - true if filter is empty map (matches all)
   - result of filter evaluation otherwise
+  - false for invalid filter structures (fail closed)
 
   ## Examples
 
@@ -33,7 +38,13 @@ defmodule ABSmartly.Matcher do
   def evaluate(filter, attributes) when is_map(filter) do
     case Map.get(filter, "filter") do
       nil ->
-        true
+        # Fixes HIGH-07: Check if %{"invalid" => true} sentinel from parse_audience
+        if Map.get(filter, "invalid") == true do
+          Logger.error("Invalid audience filter detected")
+          false
+        else
+          true
+        end
 
       filter_expr when is_list(filter_expr) ->
         # Convert attributes to a map for JSONExpr evaluation
@@ -47,12 +58,18 @@ defmodule ABSmartly.Matcher do
           end
         end)
 
-      _ ->
-        true
+      other ->
+        # Fixes HIGH-07: Log and fail closed for non-list filter
+        Logger.error("Filter key is not a list: #{inspect(other)}")
+        false
     end
   end
 
-  def evaluate(_filter, _attributes), do: true
+  # Fixes HIGH-07: Fail closed for invalid filter types
+  def evaluate(filter, _attributes) do
+    Logger.error("Invalid filter type: #{inspect(filter)}")
+    false
+  end
 
   defp attributes_to_vars(attributes) when is_list(attributes) do
     Enum.reduce(attributes, %{}, fn attr, acc ->
