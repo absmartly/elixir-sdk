@@ -7,6 +7,8 @@ defmodule ABSmartly.SDK do
   - create_context_with/3: Sync - uses pre-fetched data
   """
 
+  require Logger
+
   alias ABSmartly.{Context, HTTP, Types}
 
   @type t :: %__MODULE__{
@@ -89,7 +91,8 @@ defmodule ABSmartly.SDK do
 
   defp validate_required_params(opts) do
     required = [:endpoint, :api_key, :application, :environment]
-    missing = Enum.filter(required, fn key -> !Keyword.has_key?(opts, key) end)
+    # Fixes LOW-01: Use Enum.reject instead of negated filter
+    missing = Enum.reject(required, &Keyword.has_key?(opts, &1))
 
     case missing do
       [] ->
@@ -102,6 +105,7 @@ defmodule ABSmartly.SDK do
     end
   end
 
+  # Fixes MEDIUM-20, LOW-02: Narrower rescue scope
   defp build_config(opts) do
     config = %Types.SDKConfig{
       endpoint: Keyword.fetch!(opts, :endpoint),
@@ -114,7 +118,8 @@ defmodule ABSmartly.SDK do
 
     {:ok, config}
   rescue
-    e -> {:error, "Failed to build config: #{Exception.message(e)}"}
+    e in [ArgumentError, KeyError] ->
+      {:error, "Failed to build config: #{Exception.message(e)}"}
   end
 
   @doc """

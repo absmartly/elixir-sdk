@@ -718,7 +718,8 @@ defmodule ABSmartly.ContextTest do
       ctx = start_context(@get_context_response)
       Context.treatment(ctx, "exp_test_ab")
       assert Context.pending(ctx) == 1
-      Context.publish(ctx)
+      result = Context.publish(ctx)
+      assert result == :ok
       assert Context.pending(ctx) == 0
     end
 
@@ -733,7 +734,8 @@ defmodule ABSmartly.ContextTest do
       Context.treatment(ctx, "exp_test_ab")
       Context.track(ctx, "goal1", %{"amount" => 125})
       assert Context.pending(ctx) == 2
-      Context.publish(ctx)
+      result = Context.publish(ctx)
+      assert result == :ok
       assert Context.pending(ctx) == 0
     end
   end
@@ -849,7 +851,7 @@ defmodule ABSmartly.ContextTest do
       assert experiment_names == expected_names
     end
 
-    test "should not re-queue exposures after refresh when not changed" do
+    test "should re-queue exposures after refresh" do
       ctx = start_context(@get_context_response)
 
       for exp <- @get_context_response["experiments"] do
@@ -860,20 +862,16 @@ defmodule ABSmartly.ContextTest do
 
       Context.refresh(ctx, @refresh_context_response)
 
-      for exp <- @get_context_response["experiments"] do
-        Context.treatment(ctx, exp["name"])
-      end
-
-      assert Context.pending(ctx) == length(@get_context_response["experiments"])
-
       for exp <- @refresh_context_response["experiments"] do
         Context.treatment(ctx, exp["name"])
       end
 
-      assert Context.pending(ctx) == length(@refresh_context_response["experiments"])
+      num_old = length(@get_context_response["experiments"])
+      num_new = length(@refresh_context_response["experiments"])
+      assert Context.pending(ctx) == num_old + num_new
     end
 
-    test "should not re-queue when not changed on audience mismatch" do
+    test "should re-queue after refresh on audience mismatch" do
       ctx = start_context(audience_strict_context_response())
 
       assert Context.treatment(ctx, "exp_test_ab") == 0
@@ -882,10 +880,10 @@ defmodule ABSmartly.ContextTest do
       Context.refresh(ctx, audience_strict_context_response())
 
       assert Context.treatment(ctx, "exp_test_ab") == 0
-      assert Context.pending(ctx) == 1
+      assert Context.pending(ctx) == 2
     end
 
-    test "should not re-queue when not changed with override" do
+    test "should re-queue after refresh with override" do
       ctx = start_context(audience_strict_context_response())
 
       Context.set_override(ctx, "exp_test_ab", 3)
@@ -895,7 +893,7 @@ defmodule ABSmartly.ContextTest do
       Context.refresh(ctx, audience_strict_context_response())
 
       assert Context.treatment(ctx, "exp_test_ab") == 3
-      assert Context.pending(ctx) == 1
+      assert Context.pending(ctx) == 2
     end
 
     test "should error after finalized call" do
