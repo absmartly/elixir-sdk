@@ -35,13 +35,26 @@ defmodule ABSmartly.Context do
     :variable_index,
     :event_handler,
     :exposed_experiments,
-    attrs_seq: 0
+    attrs_seq: 0,
+    pending_waiters: []
   ]
 
   # Public API
 
   def start_link(sdk_config, data, context_config) do
     GenServer.start_link(__MODULE__, {sdk_config, data, context_config})
+  end
+
+  def start_link_async(sdk_config, context_config) do
+    GenServer.start_link(__MODULE__, {:async, sdk_config, context_config})
+  end
+
+  def set_data(context, data) do
+    GenServer.call(context, {:set_data, data})
+  end
+
+  def wait_until_ready(context, timeout \\ 5000) do
+    GenServer.call(context, :wait_until_ready, timeout)
   end
 
   def set_unit(context, unit_type, uid) do
@@ -175,6 +188,32 @@ defmodule ABSmartly.Context do
   # GenServer callbacks
 
   @impl true
+  def init({:async, sdk_config, context_config}) do
+    empty_data = %Types.ContextData{experiments: []}
+    state = %__MODULE__{
+      sdk_config: sdk_config,
+      data: empty_data,
+      ready: false,
+      failed: false,
+      finalized: false,
+      finalizing: false,
+      units: context_config.units,
+      attributes: context_config.attributes || [],
+      overrides: context_config.overrides,
+      custom_assignments: context_config.custom_assignments,
+      assignments: %{},
+      exposures: [],
+      goals: [],
+      variable_index: %{},
+      event_handler: context_config.event_handler,
+      exposed_experiments: MapSet.new(),
+      pending_waiters: []
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
   def init({sdk_config, data, context_config}) do
     # Fixes CRITICAL-03: Get event handler from config, not Process dictionary
     state = %__MODULE__{
@@ -200,6 +239,31 @@ defmodule ABSmartly.Context do
     emit_event(state, :ready, %{experiments: data.experiments})
 
     {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:set_data, data}, _from, state) do
+    context_data = Types.ContextData.from_map(data)
+    state = %{state |
+      data: context_data,
+      ready: true,
+      variable_index: build_variable_index(context_data.experiments)
+    }
+    for waiter <- state.pending_waiters do
+      GenServer.reply(waiter, :ok)
+    end
+    state = %{state | pending_waiters: []}
+    emit_event(state, :ready, %{experiments: context_data.experiments})
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:wait_until_ready, from, state) do
+    if state.ready do
+      {:reply, :ok, state}
+    else
+      {:noreply, %{state | pending_waiters: [from | state.pending_waiters]}}
+    end
   end
 
   @impl true

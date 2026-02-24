@@ -172,6 +172,42 @@ defmodule ABSmartly.SDK do
 
     * `{:ok, context}` - Context successfully created
   """
+  def create_context_async(sdk_or_result, units, options \\ %{})
+  def create_context_async({:ok, sdk}, units, options), do: create_context_async(sdk, units, options)
+
+  def create_context_async(%__MODULE__{} = sdk, units, options) do
+    config = sdk.config
+
+    context_config =
+      options
+      |> Map.put(:units, units)
+      |> Types.ContextConfig.from_options()
+
+    case Context.start_link_async(config, context_config) do
+      {:ok, ctx} ->
+        Task.start(fn ->
+          case HTTP.Client.fetch_context(
+                 config.endpoint,
+                 config.api_key,
+                 config.application,
+                 config.environment,
+                 config.retries
+               ) do
+            {:ok, data} ->
+              Context.set_data(ctx, data)
+
+            {:error, reason} ->
+              Logger.error("Async context fetch failed: #{inspect(reason)}")
+          end
+        end)
+
+        {:ok, ctx}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   def create_context_with(sdk_or_result, units, data, options \\ %{})
 
   def create_context_with({:ok, sdk}, units, data, options),
