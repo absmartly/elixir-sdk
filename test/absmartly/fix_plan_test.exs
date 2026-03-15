@@ -74,6 +74,26 @@ defmodule ABSmartly.FixPlanTest do
     pid
   end
 
+  defp start_context_with_refresh(response, refresh_response, units \\ nil) do
+    context_units = units || @context_params
+    sdk_config = %Types.SDKConfig{
+      endpoint: "https://test.absmartly.io/v1",
+      api_key: "test-api-key",
+      application: "website",
+      environment: "development"
+    }
+    context_data = Types.ContextData.from_map(response)
+    context_config = %Types.ContextConfig{
+      units: context_units,
+      overrides: %{},
+      custom_assignments: %{}
+    }
+    refresh_data = Types.ContextData.from_map(refresh_response)
+    data_fetcher = fn -> {:ok, refresh_data} end
+    {:ok, pid} = Context.start_link(sdk_config, context_data, context_config, data_fetcher: data_fetcher)
+    pid
+  end
+
   # Fix #4: Cross-type comparison
   describe "fix #4 - cross-type comparison" do
     test "compare number to string coerces string" do
@@ -402,10 +422,6 @@ defmodule ABSmartly.FixPlanTest do
   # Fix #32: Split changes in invalidation
   describe "fix #32 - split changes invalidation" do
     test "refresh picks up split changes" do
-      ctx = start_context(@get_context_response)
-      Context.treatment(ctx, "exp_test_ab")
-      assert Context.pending(ctx) == 1
-
       changed_split_response = %{@get_context_response |
         "experiments" => Enum.map(@get_context_response["experiments"], fn exp ->
           if exp["name"] == "exp_test_ab" do
@@ -415,8 +431,11 @@ defmodule ABSmartly.FixPlanTest do
           end
         end)
       }
+      ctx = start_context_with_refresh(@get_context_response, changed_split_response)
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
 
-      Context.refresh(ctx, changed_split_response)
+      Context.refresh(ctx)
       v2 = Context.treatment(ctx, "exp_test_ab")
       assert Context.pending(ctx) == 2
       assert is_integer(v2)

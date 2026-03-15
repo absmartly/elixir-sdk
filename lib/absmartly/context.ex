@@ -36,6 +36,7 @@ defmodule ABSmartly.Context do
     :event_handler,
     :exposed_experiments,
     :audience_cache,
+    :data_fetcher,
     attrs_seq: 0,
     pending_waiters: [],
     exposure_count: 0,
@@ -51,8 +52,9 @@ defmodule ABSmartly.Context do
     }
   end
 
-  def start_link(sdk_config, data, context_config) do
-    GenServer.start_link(__MODULE__, {sdk_config, data, context_config})
+  def start_link(sdk_config, data, context_config, opts \\ []) do
+    data_fetcher = Keyword.get(opts, :data_fetcher)
+    GenServer.start_link(__MODULE__, {sdk_config, data, context_config, data_fetcher})
   end
 
   def start_link_async(sdk_config, context_config) do
@@ -250,6 +252,10 @@ defmodule ABSmartly.Context do
 
   @impl true
   def init({sdk_config, data, context_config}) do
+    init({sdk_config, data, context_config, nil})
+  end
+
+  def init({sdk_config, data, context_config, data_fetcher}) do
     {var_index, exp_index, aud_cache} = build_indexes(data.experiments)
     state = %__MODULE__{
       sdk_config: sdk_config,
@@ -271,6 +277,7 @@ defmodule ABSmartly.Context do
       event_handler: context_config.event_handler,
       exposed_experiments: MapSet.new(),
       audience_cache: aud_cache,
+      data_fetcher: data_fetcher,
       exposure_count: 0,
       goal_count: 0
     }
@@ -573,12 +580,18 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call(:refresh, _from, state) do
-    case ABSmartly.HTTP.Client.fetch_context(
-      state.sdk_config.endpoint,
-      state.sdk_config.api_key,
-      state.sdk_config.application,
-      state.sdk_config.environment
-    ) do
+    fetch_result = if state.data_fetcher do
+      state.data_fetcher.()
+    else
+      ABSmartly.HTTP.Client.fetch_context(
+        state.sdk_config.endpoint,
+        state.sdk_config.api_key,
+        state.sdk_config.application,
+        state.sdk_config.environment
+      )
+    end
+
+    case fetch_result do
       {:ok, new_data} ->
         handle_call({:refresh, new_data}, nil, state)
       {:error, reason} ->
@@ -1043,8 +1056,16 @@ defmodule ABSmartly.Context do
     Types.PublishEvent.to_map(publish_event)
   end
 
+  defp do_refresh(state, %Types.ContextData{} = new_data) do
+    do_refresh_with_context_data(state, new_data)
+  end
+
   defp do_refresh(state, new_data) do
     context_data = Types.ContextData.from_map(new_data)
+    do_refresh_with_context_data(state, context_data)
+  end
+
+  defp do_refresh_with_context_data(state, context_data) do
 
     assignments =
       invalidate_changed_assignments(

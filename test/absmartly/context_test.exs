@@ -263,6 +263,26 @@ defmodule ABSmartly.ContextTest do
     pid
   end
 
+  defp start_context_with_refresh(response, refresh_response, units \\ nil) do
+    context_units = units || @context_params
+    sdk_config = %Types.SDKConfig{
+      endpoint: "https://test.absmartly.io/v1",
+      api_key: "test-api-key",
+      application: "website",
+      environment: "development"
+    }
+    context_data = Types.ContextData.from_map(response)
+    context_config = %Types.ContextConfig{
+      units: context_units,
+      overrides: %{},
+      custom_assignments: %{}
+    }
+    refresh_data = Types.ContextData.from_map(refresh_response)
+    data_fetcher = fn -> {:ok, refresh_data} end
+    {:ok, pid} = Context.start_link(sdk_config, context_data, context_config, data_fetcher: data_fetcher)
+    pid
+  end
+
   describe "constructor and initialization" do
     test "should be ready with data" do
       ctx = start_context(@get_context_response)
@@ -843,8 +863,8 @@ defmodule ABSmartly.ContextTest do
 
   describe "refresh" do
     test "should load new data" do
-      ctx = start_context(@get_context_response)
-      Context.refresh(ctx, @refresh_context_response)
+      ctx = start_context_with_refresh(@get_context_response, @refresh_context_response)
+      Context.refresh(ctx)
 
       experiment_names = Context.experiments(ctx)
       expected_names = Enum.map(@refresh_context_response["experiments"], & &1["name"])
@@ -852,7 +872,7 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should re-queue exposures after refresh" do
-      ctx = start_context(@get_context_response)
+      ctx = start_context_with_refresh(@get_context_response, @refresh_context_response)
 
       for exp <- @get_context_response["experiments"] do
         Context.treatment(ctx, exp["name"])
@@ -860,7 +880,7 @@ defmodule ABSmartly.ContextTest do
 
       assert Context.pending(ctx) == length(@get_context_response["experiments"])
 
-      Context.refresh(ctx, @refresh_context_response)
+      Context.refresh(ctx)
 
       for exp <- @refresh_context_response["experiments"] do
         Context.treatment(ctx, exp["name"])
@@ -872,150 +892,145 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should re-queue after refresh on audience mismatch" do
-      ctx = start_context(audience_strict_context_response())
+      ctx = start_context_with_refresh(audience_strict_context_response(), audience_strict_context_response())
 
       assert Context.treatment(ctx, "exp_test_ab") == 0
       assert Context.pending(ctx) == 1
 
-      Context.refresh(ctx, audience_strict_context_response())
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_ab") == 0
       assert Context.pending(ctx) == 2
     end
 
     test "should re-queue after refresh with override" do
-      ctx = start_context(audience_strict_context_response())
+      ctx = start_context_with_refresh(audience_strict_context_response(), audience_strict_context_response())
 
       Context.set_override(ctx, "exp_test_ab", 3)
       assert Context.treatment(ctx, "exp_test_ab") == 3
       assert Context.pending(ctx) == 1
 
-      Context.refresh(ctx, audience_strict_context_response())
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_ab") == 3
       assert Context.pending(ctx) == 2
     end
 
     test "should error after finalized call" do
-      ctx = start_context(@get_context_response)
+      ctx = start_context_with_refresh(@get_context_response, @refresh_context_response)
       Context.finalize(ctx)
-      assert {:error, "ABsmartly Context is finalized."} = Context.refresh(ctx, @refresh_context_response)
+      assert {:error, "ABsmartly Context is finalized."} = Context.refresh(ctx)
     end
 
     test "should keep overrides" do
-      ctx = start_context(@get_context_response)
+      ctx = start_context_with_refresh(@get_context_response, @refresh_context_response)
       Context.set_override(ctx, "not_found", 3)
       assert Context.peek(ctx, "not_found") == 3
 
-      Context.refresh(ctx, @refresh_context_response)
+      Context.refresh(ctx)
       assert Context.peek(ctx, "not_found") == 3
     end
 
     test "should keep custom assignments" do
-      ctx = start_context(@get_context_response)
+      ctx = start_context_with_refresh(@get_context_response, @refresh_context_response)
       Context.set_custom_assignment(ctx, "exp_test_ab", 3)
       assert Context.peek(ctx, "exp_test_ab") == 3
 
-      Context.refresh(ctx, @refresh_context_response)
+      Context.refresh(ctx)
       assert Context.peek(ctx, "exp_test_ab") == 3
     end
 
     test "should pick up changes in experiment stopped" do
-      ctx = start_context(@get_context_response)
-
-      assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
-      assert Context.pending(ctx) == 1
-
       stopped_response = %{
         @get_context_response |
         "experiments" => Enum.filter(@get_context_response["experiments"], fn e ->
           e["name"] != "exp_test_abc"
         end)
       }
+      ctx = start_context_with_refresh(@get_context_response, stopped_response)
 
-      Context.refresh(ctx, stopped_response)
+      assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
+      assert Context.pending(ctx) == 1
+
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_abc") == 0
       assert Context.pending(ctx) == 2
     end
 
     test "should pick up changes in experiment started" do
-      ctx = start_context(@get_context_response)
+      ctx = start_context_with_refresh(@get_context_response, @refresh_context_response)
 
       assert Context.treatment(ctx, "exp_test_new") == 0
       assert Context.pending(ctx) == 1
 
-      Context.refresh(ctx, @refresh_context_response)
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_new") == 1
       assert Context.pending(ctx) == 2
     end
 
     test "should pick up changes in experiment fullon" do
-      ctx = start_context(@get_context_response)
+      full_on_response = update_experiment(@get_context_response, "exp_test_abc", fn exp ->
+        Map.put(exp, "fullOnVariant", 1)
+      end)
+      ctx = start_context_with_refresh(@get_context_response, full_on_response)
 
       assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
       assert Context.pending(ctx) == 1
 
-      full_on_response = update_experiment(@get_context_response, "exp_test_abc", fn exp ->
-        Map.put(exp, "fullOnVariant", 1)
-      end)
-
-      Context.refresh(ctx, full_on_response)
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_abc") == 1
       assert Context.pending(ctx) == 2
     end
 
     test "should pick up changes in experiment traffic split" do
-      ctx = start_context(@get_context_response)
+      scaled_up_response = update_experiment(@get_context_response, "exp_test_not_eligible", fn exp ->
+        Map.put(exp, "trafficSplit", [0.0, 1.0])
+      end)
+      ctx = start_context_with_refresh(@get_context_response, scaled_up_response)
 
       assert Context.treatment(ctx, "exp_test_not_eligible") == @expected_variants["exp_test_not_eligible"]
       assert Context.pending(ctx) == 1
 
-      scaled_up_response = update_experiment(@get_context_response, "exp_test_not_eligible", fn exp ->
-        Map.put(exp, "trafficSplit", [0.0, 1.0])
-      end)
-
-      Context.refresh(ctx, scaled_up_response)
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_not_eligible") == 2
       assert Context.pending(ctx) == 2
     end
 
     test "should pick up changes in experiment iteration" do
-      ctx = start_context(@get_context_response)
-
-      assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
-      assert Context.pending(ctx) == 1
-
       iterated_response = update_experiment(@get_context_response, "exp_test_abc", fn exp ->
         exp
         |> Map.put("iteration", 2)
         |> Map.put("trafficSeedHi", 398724581)
         |> Map.put("seedHi", 34737352)
       end)
+      ctx = start_context_with_refresh(@get_context_response, iterated_response)
 
-      Context.refresh(ctx, iterated_response)
+      assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
+      assert Context.pending(ctx) == 1
+
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_abc") == 1
       assert Context.pending(ctx) == 2
     end
 
     test "should pick up changes in experiment id" do
-      ctx = start_context(@get_context_response)
-
-      assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
-      assert Context.pending(ctx) == 1
-
       id_changed_response = update_experiment(@get_context_response, "exp_test_abc", fn exp ->
         exp
         |> Map.put("id", 11)
         |> Map.put("trafficSeedHi", 398724581)
         |> Map.put("seedHi", 34737352)
       end)
+      ctx = start_context_with_refresh(@get_context_response, id_changed_response)
 
-      Context.refresh(ctx, id_changed_response)
+      assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
+      assert Context.pending(ctx) == 1
+
+      Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_abc") == 1
       assert Context.pending(ctx) == 2
