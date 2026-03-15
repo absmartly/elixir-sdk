@@ -11,11 +11,9 @@ defmodule ABSmartly.Context do
     HTTP
   }
 
-  @type t :: pid()
+  @type t :: GenServer.server()
 
-  # Maximum unit ID length to prevent memory issues (HIGH-20)
   @max_uid_length 1024
-  # Maximum queue size to prevent unbounded growth (HIGH-19)
   @max_queue_size 10_000
 
   defstruct [
@@ -33,13 +31,24 @@ defmodule ABSmartly.Context do
     :exposures,
     :goals,
     :variable_index,
+    :experiment_index,
     :event_handler,
     :exposed_experiments,
+    :audience_cache,
     attrs_seq: 0,
-    pending_waiters: []
+    pending_waiters: [],
+    exposure_count: 0,
+    goal_count: 0
   ]
 
-  # Public API
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, opts},
+      type: :worker,
+      restart: :temporary
+    }
+  end
 
   def start_link(sdk_config, data, context_config) do
     GenServer.start_link(__MODULE__, {sdk_config, data, context_config})
@@ -53,6 +62,10 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:set_data, data})
   end
 
+  def set_failed(context, reason) do
+    GenServer.call(context, {:set_failed, reason})
+  end
+
   def wait_until_ready(context, timeout \\ 5000) do
     GenServer.call(context, :wait_until_ready, timeout)
   end
@@ -61,7 +74,6 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:set_unit, unit_type, uid})
   end
 
-  # Fixes HIGH-01: set_units as single GenServer call
   def set_units(context, units) when is_map(units) do
     GenServer.call(context, {:set_units, units})
   end
@@ -78,7 +90,6 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:set_attribute, name, value})
   end
 
-  # Fixes HIGH-02: set_attributes as single GenServer call
   def set_attributes(context, attributes) when is_map(attributes) or is_list(attributes) do
     GenServer.call(context, {:set_attributes, attributes})
   end
@@ -95,7 +106,6 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:set_override, experiment_name, variant})
   end
 
-  # Fixes HIGH-02: set_overrides as single GenServer call
   def set_overrides(context, overrides) when is_map(overrides) do
     GenServer.call(context, {:set_overrides, overrides})
   end
@@ -104,7 +114,6 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:set_custom_assignment, experiment_name, variant})
   end
 
-  # Fixes HIGH-02: set_custom_assignments as single GenServer call
   def set_custom_assignments(context, assignments) when is_map(assignments) do
     GenServer.call(context, {:set_custom_assignments, assignments})
   end
@@ -153,6 +162,10 @@ defmodule ABSmartly.Context do
     GenServer.call(context, :finalize)
   end
 
+  def refresh(context) do
+    GenServer.call(context, :refresh)
+  end
+
   def refresh(context, new_data) do
     GenServer.call(context, {:refresh, new_data})
   end
@@ -198,16 +211,20 @@ defmodule ABSmartly.Context do
       finalized: false,
       finalizing: false,
       units: context_config.units,
-      attributes: context_config.attributes || [],
+      attributes: attributes_to_map(context_config.attributes),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
       assignments: %{},
       exposures: [],
       goals: [],
       variable_index: %{},
+      experiment_index: %{},
       event_handler: context_config.event_handler,
       exposed_experiments: MapSet.new(),
-      pending_waiters: []
+      audience_cache: %{},
+      pending_waiters: [],
+      exposure_count: 0,
+      goal_count: 0
     }
 
     {:ok, state}
@@ -215,7 +232,7 @@ defmodule ABSmartly.Context do
 
   @impl true
   def init({sdk_config, data, context_config}) do
-    # Fixes CRITICAL-03: Get event handler from config, not Process dictionary
+    {var_index, exp_index, aud_cache} = build_indexes(data.experiments)
     state = %__MODULE__{
       sdk_config: sdk_config,
       data: data,
@@ -224,15 +241,19 @@ defmodule ABSmartly.Context do
       finalized: false,
       finalizing: false,
       units: context_config.units,
-      attributes: context_config.attributes || [],
+      attributes: attributes_to_map(context_config.attributes),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
       assignments: %{},
       exposures: [],
       goals: [],
-      variable_index: build_variable_index(data.experiments),
+      variable_index: var_index,
+      experiment_index: exp_index,
       event_handler: context_config.event_handler,
-      exposed_experiments: MapSet.new()
+      exposed_experiments: MapSet.new(),
+      audience_cache: aud_cache,
+      exposure_count: 0,
+      goal_count: 0
     }
 
     Logger.info("Context initialized successfully")
@@ -244,10 +265,13 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_data, data}, _from, state) do
     context_data = Types.ContextData.from_map(data)
+    {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
     state = %{state |
       data: context_data,
       ready: true,
-      variable_index: build_variable_index(context_data.experiments)
+      variable_index: var_index,
+      experiment_index: exp_index,
+      audience_cache: aud_cache
     }
     for waiter <- state.pending_waiters do
       GenServer.reply(waiter, :ok)
@@ -258,11 +282,24 @@ defmodule ABSmartly.Context do
   end
 
   @impl true
+  def handle_call({:set_failed, reason}, _from, state) do
+    state = %{state | failed: true}
+    for waiter <- state.pending_waiters do
+      GenServer.reply(waiter, {:error, reason})
+    end
+    state = %{state | pending_waiters: []}
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_call(:wait_until_ready, from, state) do
-    if state.ready do
-      {:reply, :ok, state}
-    else
-      {:noreply, %{state | pending_waiters: [from | state.pending_waiters]}}
+    cond do
+      state.ready ->
+        {:reply, :ok, state}
+      state.failed ->
+        {:reply, {:error, :failed}, state}
+      true ->
+        {:noreply, %{state | pending_waiters: [from | state.pending_waiters]}}
     end
   end
 
@@ -283,7 +320,6 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # Fixes HIGH-01: Batch set_units operation
   @impl true
   def handle_call({:set_units, units}, _from, state) do
     if state.finalized do
@@ -324,19 +360,15 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_attribute, name, value}, _from, state) do
     name_str = to_string(name)
-    attributes = Enum.reject(state.attributes, &(&1["name"] == name_str))
-    attributes = [%{"name" => name_str, "value" => value} | attributes]
+    attributes = Map.put(state.attributes, name_str, value)
     state = %{state | attributes: attributes, attrs_seq: state.attrs_seq + 1}
     {:reply, :ok, state}
   end
 
-  # Fixes HIGH-02: Batch set_attributes operation
   @impl true
   def handle_call({:set_attributes, attributes}, _from, state) do
     new_attributes = Enum.reduce(attributes, state.attributes, fn {name, value}, acc ->
-      name_str = to_string(name)
-      acc = Enum.reject(acc, &(&1["name"] == name_str))
-      [%{"name" => name_str, "value" => value} | acc]
+      Map.put(acc, to_string(name), value)
     end)
 
     state = %{state | attributes: new_attributes, attrs_seq: state.attrs_seq + 1}
@@ -345,49 +377,38 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call({:get_attribute, name}, _from, state) do
-    name_str = to_string(name)
-
-    result = Enum.find(state.attributes, fn attr ->
-      attr["name"] == name_str
-    end)
-
-    value = if result, do: result["value"], else: nil
+    value = Map.get(state.attributes, to_string(name))
     {:reply, value, state}
   end
 
   @impl true
   def handle_call(:get_attributes, _from, state) do
-    {:reply, state.attributes, state}
+    attrs_list = Enum.map(state.attributes, fn {name, value} ->
+      %{"name" => name, "value" => value}
+    end)
+    {:reply, attrs_list, state}
   end
 
   @impl true
   def handle_call({:set_override, experiment_name, variant}, _from, state) do
-    if state.finalized do
-      {:reply, {:error, :finalized}, state}
-    else
-      name = to_string(experiment_name)
-      state = %{
-        state
-        | overrides: Map.put(state.overrides, name, variant),
-          exposed_experiments: MapSet.delete(state.exposed_experiments, name)
-      }
-      {:reply, :ok, state}
-    end
+    name = to_string(experiment_name)
+    state = %{
+      state
+      | overrides: Map.put(state.overrides, name, variant),
+        exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+    }
+    {:reply, :ok, state}
   end
 
-  # Fixes HIGH-02: Batch set_overrides operation
   @impl true
   def handle_call({:set_overrides, overrides}, _from, state) do
-    if state.finalized do
-      {:reply, {:error, :finalized}, state}
-    else
-      new_overrides = Enum.reduce(overrides, state.overrides, fn {experiment_name, variant}, acc ->
-        Map.put(acc, to_string(experiment_name), variant)
-      end)
+    {new_overrides, new_exposed} = Enum.reduce(overrides, {state.overrides, state.exposed_experiments}, fn {experiment_name, variant}, {ov_acc, exp_acc} ->
+      name = to_string(experiment_name)
+      {Map.put(ov_acc, name, variant), MapSet.delete(exp_acc, name)}
+    end)
 
-      state = %{state | overrides: new_overrides}
-      {:reply, :ok, state}
-    end
+    state = %{state | overrides: new_overrides, exposed_experiments: new_exposed}
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -406,17 +427,17 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # Fixes HIGH-02: Batch set_custom_assignments operation
   @impl true
   def handle_call({:set_custom_assignments, assignments}, _from, state) do
     if state.finalized do
       {:reply, {:error, :finalized}, state}
     else
-      new_assignments = Enum.reduce(assignments, state.custom_assignments, fn {experiment_name, variant}, acc ->
-        Map.put(acc, to_string(experiment_name), variant)
+      {new_assignments, new_exposed} = Enum.reduce(assignments, {state.custom_assignments, state.exposed_experiments}, fn {experiment_name, variant}, {ca_acc, exp_acc} ->
+        name = to_string(experiment_name)
+        {Map.put(ca_acc, name, variant), MapSet.delete(exp_acc, name)}
       end)
 
-      state = %{state | custom_assignments: new_assignments}
+      state = %{state | custom_assignments: new_assignments, exposed_experiments: new_exposed}
       {:reply, :ok, state}
     end
   end
@@ -492,8 +513,8 @@ defmodule ABSmartly.Context do
     if state.finalized do
       {:reply, {:error, :finalized}, state}
     else
-      {:ok, new_state} = do_publish(state)
-      {:reply, :ok, new_state}
+      {result, new_state} = do_publish(state)
+      {:reply, result, new_state}
     end
   end
 
@@ -504,11 +525,26 @@ defmodule ABSmartly.Context do
     else
       state = %{state | finalizing: true}
 
-      {:ok, new_state} = do_publish(state)
+      {_result, new_state} = do_publish(state)
 
       new_state = %{new_state | finalized: true, finalizing: false}
       emit_event(new_state, :finalize, nil)
       {:reply, :ok, new_state}
+    end
+  end
+
+  @impl true
+  def handle_call(:refresh, _from, state) do
+    case ABSmartly.HTTP.Client.fetch_context(
+      state.sdk_config.endpoint,
+      state.sdk_config.api_key,
+      state.sdk_config.application,
+      state.sdk_config.environment
+    ) do
+      {:ok, new_data} ->
+        handle_call({:refresh, new_data}, nil, state)
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -544,9 +580,7 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call(:pending, _from, state) do
-    # Fixes MEDIUM-03: Use != [] instead of length/1
-    count = length(state.exposures) + length(state.goals)
-    {:reply, count, state}
+    {:reply, state.exposure_count + state.goal_count, state}
   end
 
   @impl true
@@ -560,28 +594,18 @@ defmodule ABSmartly.Context do
     {:reply, names, state}
   end
 
-  # Fixes CRITICAL-14: Add terminate/2 callback
   @impl true
   def terminate(reason, state) do
     Logger.info("Context terminating: #{inspect(reason)}")
 
-    # Attempt to publish pending data before termination
     if state.exposures != [] or state.goals != [] do
       Logger.info("Context terminating with pending data, attempting final publish")
-
-      case do_publish(state) do
-        {:ok, _} ->
-          Logger.info("Successfully published pending data on terminate")
-
-        {:error, reason} ->
-          Logger.error("Failed to publish on terminate: #{inspect(reason)}")
-      end
+      do_publish_sync(state)
     end
 
     :ok
   end
 
-  # Fixes HIGH-09: Add handle_info/2 callback
   @impl true
   def handle_info({:EXIT, _pid, reason}, state) do
     Logger.warning("Context received EXIT signal: #{inspect(reason)}")
@@ -596,7 +620,6 @@ defmodule ABSmartly.Context do
 
   # Private helper functions
 
-  # Fixes HIGH-20: Validate unit IDs
   defp validate_uid(uid) do
     uid_str = to_string(uid)
 
@@ -607,10 +630,19 @@ defmodule ABSmartly.Context do
     uid_str
   end
 
-  # Fixes CRITICAL-15/16/17/18: Extract and refactor do_treatment
+  defp attributes_to_map(attrs) when is_map(attrs), do: attrs
+  defp attributes_to_map(nil), do: %{}
+  defp attributes_to_map(attrs) when is_list(attrs) do
+    Enum.reduce(attrs, %{}, fn
+      %{"name" => name, "value" => value}, acc -> Map.put(acc, name, value)
+      {name, value}, acc -> Map.put(acc, to_string(name), value)
+      _, acc -> acc
+    end)
+  end
+
   defp do_treatment(state, experiment_name, queue_exposure) do
     override = Map.get(state.overrides, experiment_name)
-    experiment = find_experiment(state.data.experiments, experiment_name)
+    experiment = Map.get(state.experiment_index, experiment_name)
 
     case {experiment, override} do
       {exp, _} when not is_nil(exp) ->
@@ -688,26 +720,24 @@ defmodule ABSmartly.Context do
     {0, state}
   end
 
-  # Fixes CRITICAL-15: Extract common exposure queueing logic
   defp queue_exposure(state, experiment_name, exposure) do
-    if !MapSet.member?(state.exposed_experiments, experiment_name) do
-      # Fixes HIGH-19: Check queue size limit
+    unless MapSet.member?(state.exposed_experiments, experiment_name) do
       state =
-        if length(state.exposures) >= @max_queue_size do
+        if state.exposure_count >= @max_queue_size do
           Logger.error(
             "Exposure queue size limit reached (#{@max_queue_size}), dropping oldest"
           )
 
-          %{state | exposures: Enum.take(state.exposures, -@max_queue_size + 1)}
+          %{state | exposures: Enum.drop(state.exposures, 1), exposure_count: state.exposure_count - 1}
         else
           state
         end
 
-      # Fixes MEDIUM-08: Prepend instead of append (O(1))
       state = %{
         state
         | exposures: [exposure | state.exposures],
-          exposed_experiments: MapSet.put(state.exposed_experiments, experiment_name)
+          exposed_experiments: MapSet.put(state.exposed_experiments, experiment_name),
+          exposure_count: state.exposure_count + 1
       }
 
       emit_event(state, :exposure, exposure)
@@ -760,7 +790,6 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # Fixes HIGH-04: Add logging for variant config parse failures
   defp parse_variant_config(nil), do: nil
   defp parse_variant_config(config) when is_map(config), do: config
 
@@ -785,7 +814,7 @@ defmodule ABSmartly.Context do
   defp parse_variant_config(_), do: nil
 
   defp do_custom_field_value(state, experiment_name, field_name) do
-    experiment = find_experiment(state.data.experiments, experiment_name)
+    experiment = Map.get(state.experiment_index, experiment_name)
 
     if experiment && experiment.custom_field_values do
       custom_field =
@@ -800,7 +829,7 @@ defmodule ABSmartly.Context do
   end
 
   defp do_custom_field_keys(state, experiment_name) do
-    experiment = find_experiment(state.data.experiments, experiment_name)
+    experiment = Map.get(state.experiment_index, experiment_name)
 
     if experiment && experiment.custom_field_values do
       Enum.map(experiment.custom_field_values, & &1["name"])
@@ -810,7 +839,7 @@ defmodule ABSmartly.Context do
   end
 
   defp do_custom_field_value_type(state, experiment_name, field_name) do
-    experiment = find_experiment(state.data.experiments, experiment_name)
+    experiment = Map.get(state.experiment_index, experiment_name)
 
     if experiment && experiment.custom_field_values do
       custom_field =
@@ -824,7 +853,6 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # Fixes HIGH-05: Add logging for custom field parse failures
   defp parse_custom_field(value, "string"), do: value
   defp parse_custom_field(value, "text"), do: value
   defp parse_custom_field(value, "number"), do: Utils.to_number(value)
@@ -846,7 +874,6 @@ defmodule ABSmartly.Context do
 
   defp parse_custom_field(value, _type), do: value
 
-  # Fixes HIGH-03: Add logging for property filtering
   defp do_track(state, goal_name, properties) do
     sanitized_properties =
       case properties do
@@ -861,69 +888,99 @@ defmodule ABSmartly.Context do
       properties: sanitized_properties
     }
 
-    # Fixes HIGH-19: Check queue size limit
     state =
-      if length(state.goals) >= @max_queue_size do
+      if state.goal_count >= @max_queue_size do
         Logger.error("Goal queue size limit reached (#{@max_queue_size}), dropping oldest")
-        %{state | goals: Enum.take(state.goals, -@max_queue_size + 1)}
+        %{state | goals: Enum.drop(state.goals, 1), goal_count: state.goal_count - 1}
       else
         state
       end
 
-    # Fixes MEDIUM-08: Prepend instead of append (O(1))
-    state = %{state | goals: [goal | state.goals]}
+    state = %{state | goals: [goal | state.goals], goal_count: state.goal_count + 1}
     emit_event(state, :goal, goal)
     state
   end
 
-  # Fixes CRITICAL-01: Actually call HTTP.Client.publish_events
   defp do_publish(state) do
-    # Fixes MEDIUM-03: Use != [] instead of length/1
     if state.exposures != [] or state.goals != [] do
-      hashed_units =
-        Enum.map(state.units, fn {unit_type, uid} ->
-          %{
-            "type" => unit_type,
-            "uid" => Utils.hash_unit(uid)
-          }
-        end)
+      event_map = build_publish_event_map(state)
 
-      publish_event = %Types.PublishEvent{
-        hashed: true,
-        published_at: now_millis(),
-        units: hashed_units,
-        # Fixes MEDIUM-08: Reverse prepended lists
-        exposures: Enum.reverse(state.exposures),
-        goals: Enum.reverse(state.goals),
-        attributes: state.attributes
-      }
+      emit_event(state, :publish, event_map)
 
-      # Convert to map for JSON serialization
-      event_map = Types.PublishEvent.to_map(publish_event)
+      new_state = %{state | exposures: [], goals: [], exposure_count: 0, goal_count: 0}
 
-      emit_event(state, :publish, publish_event)
-
-      Task.start(fn ->
-        case HTTP.Client.publish_events(
-               state.sdk_config.endpoint,
-               state.sdk_config.api_key,
-               state.sdk_config.application,
-               state.sdk_config.environment,
-               event_map,
-               state.sdk_config.retries
-             ) do
-          :ok ->
-            Logger.info("Successfully published #{length(state.exposures)} exposures and #{length(state.goals)} goals")
-
-          {:error, reason} ->
-            Logger.error("Failed to publish events: #{inspect(reason)}")
-        end
+      task = Task.async(fn ->
+        HTTP.Client.publish_events(
+          state.sdk_config.endpoint,
+          state.sdk_config.api_key,
+          state.sdk_config.application,
+          state.sdk_config.environment,
+          event_map,
+          state.sdk_config.retries
+        )
       end)
 
-      {:ok, %{state | exposures: [], goals: []}}
+      case Task.yield(task, 5000) || Task.shutdown(task) do
+        {:ok, :ok} ->
+          Logger.info("Successfully published #{state.exposure_count} exposures and #{state.goal_count} goals")
+
+        {:ok, {:error, reason}} ->
+          Logger.error("Failed to publish events: #{inspect(reason)}")
+
+        nil ->
+          Logger.error("Publish timed out, events may be lost")
+      end
+
+      {:ok, new_state}
     else
       {:ok, state}
     end
+  end
+
+  defp do_publish_sync(state) do
+    if state.exposures != [] or state.goals != [] do
+      event_map = build_publish_event_map(state)
+
+      case HTTP.Client.publish_events(
+             state.sdk_config.endpoint,
+             state.sdk_config.api_key,
+             state.sdk_config.application,
+             state.sdk_config.environment,
+             event_map,
+             min(state.sdk_config.retries, 1)
+           ) do
+        :ok ->
+          Logger.info("Successfully published pending data on terminate")
+
+        {:error, reason} ->
+          Logger.error("Failed to publish on terminate: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp build_publish_event_map(state) do
+    hashed_units =
+      Enum.map(state.units, fn {unit_type, uid} ->
+        %{
+          "type" => unit_type,
+          "uid" => Utils.hash_unit(uid)
+        }
+      end)
+
+    attrs_list = Enum.map(state.attributes, fn {name, value} ->
+      %{"name" => name, "value" => value}
+    end)
+
+    publish_event = %Types.PublishEvent{
+      hashed: true,
+      published_at: now_millis(),
+      units: hashed_units,
+      exposures: Enum.reverse(state.exposures),
+      goals: Enum.reverse(state.goals),
+      attributes: attrs_list
+    }
+
+    Types.PublishEvent.to_map(publish_event)
   end
 
   defp do_refresh(state, new_data) do
@@ -936,11 +993,15 @@ defmodule ABSmartly.Context do
         context_data.experiments
       )
 
+    {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
+
     state = %{
       state
       | data: context_data,
         assignments: assignments,
-        variable_index: build_variable_index(context_data.experiments),
+        variable_index: var_index,
+        experiment_index: exp_index,
+        audience_cache: aud_cache,
         exposed_experiments: MapSet.new()
     }
 
@@ -1026,52 +1087,56 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # Fixes CRITICAL-17: Refactor assign_variant with better structure
   defp assign_variant(state, experiment) do
     unit_type = experiment.unit_type || "session_id"
     uid = Map.get(state.units, unit_type)
-    attributes = state.attributes
     base = %{base_assignment(experiment) | audience_match_seq: state.attrs_seq}
 
     cond do
       is_nil(uid) ->
         %{base | eligible: false}
 
-      not audience_match?(experiment, attributes) && experiment.audience_strict ->
-        %{base | audience_mismatch: true}
-
-      full_on?(experiment) ->
-        %{
-          base
-          | variant: experiment.full_on_variant,
-            assigned: true,
-            full_on: true,
-            audience_mismatch: !audience_match?(experiment, attributes)
-        }
-
-      not traffic_eligible?(uid, experiment) ->
-        %{
-          base
-          | assigned: true,
-            eligible: false,
-            audience_mismatch: !audience_match?(experiment, attributes)
-        }
-
       true ->
-        variant =
-          VariantAssigner.assign(
-            Utils.hash_unit(uid),
-            experiment.split,
-            experiment.seed_hi,
-            experiment.seed_lo
-          )
+        hashed_unit = Utils.hash_unit(uid)
+        audience_matched = audience_match?(state, experiment)
 
-        %{
-          base
-          | variant: variant,
-            assigned: true,
-            audience_mismatch: !audience_match?(experiment, attributes)
-        }
+        cond do
+          not audience_matched && experiment.audience_strict ->
+            %{base | audience_mismatch: true}
+
+          full_on?(experiment) ->
+            %{
+              base
+              | variant: experiment.full_on_variant,
+                assigned: true,
+                full_on: true,
+                audience_mismatch: !audience_matched
+            }
+
+          not traffic_eligible?(hashed_unit, experiment) ->
+            %{
+              base
+              | assigned: true,
+                eligible: false,
+                audience_mismatch: !audience_matched
+            }
+
+          true ->
+            variant =
+              VariantAssigner.assign(
+                hashed_unit,
+                experiment.split,
+                experiment.seed_hi,
+                experiment.seed_lo
+              )
+
+            %{
+              base
+              | variant: variant,
+                assigned: true,
+                audience_mismatch: !audience_matched
+            }
+        end
     end
   end
 
@@ -1091,11 +1156,20 @@ defmodule ABSmartly.Context do
     }
   end
 
-  defp audience_match?(experiment, attributes) do
+  defp audience_match?(state, experiment) do
     case experiment.audience do
       nil -> true
       "" -> true
-      audience -> Matcher.evaluate(parse_audience(audience), attributes) == true
+      _audience ->
+        parsed = Map.get(state.audience_cache, experiment.name)
+        if parsed do
+          attrs_list = Enum.map(state.attributes, fn {name, value} ->
+            %{"name" => name, "value" => value}
+          end)
+          Matcher.evaluate(parsed, attrs_list) == true
+        else
+          true
+        end
     end
   end
 
@@ -1103,10 +1177,8 @@ defmodule ABSmartly.Context do
     experiment.full_on_variant != nil && experiment.full_on_variant > 0
   end
 
-  defp traffic_eligible?(uid, experiment) do
+  defp traffic_eligible?(hashed_unit, experiment) do
     if experiment.traffic_split && length(experiment.traffic_split) > 1 do
-      hashed_unit = Utils.hash_unit(uid)
-
       traffic_variant =
         VariantAssigner.assign(
           hashed_unit,
@@ -1121,7 +1193,6 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # Fixes CRITICAL-10: Better audience parsing with error handling
   defp parse_audience(nil), do: nil
   defp parse_audience(""), do: nil
   defp parse_audience("null"), do: nil
@@ -1137,7 +1208,6 @@ defmodule ABSmartly.Context do
           "Failed to parse audience JSON: #{inspect(error)}, audience: #{audience}"
         )
 
-        # Return sentinel value that will fail all matches
         %{"invalid" => true}
     end
   end
@@ -1163,21 +1233,32 @@ defmodule ABSmartly.Context do
     }
   end
 
-  defp find_experiment(experiments, name) do
-    Enum.find(experiments, fn exp -> exp.name == name end)
-  end
+  defp build_indexes(experiments) do
+    exp_index = Enum.into(experiments, %{}, fn exp -> {exp.name, exp} end)
 
-  defp build_variable_index(experiments) do
-    Enum.reduce(experiments, %{}, fn experiment, index ->
+    aud_cache = Enum.reduce(experiments, %{}, fn experiment, cache ->
+      case experiment.audience do
+        nil -> cache
+        "" -> cache
+        audience ->
+          parsed = parse_audience(audience)
+          if parsed, do: Map.put(cache, experiment.name, parsed), else: cache
+      end
+    end)
+
+    var_index = Enum.reduce(experiments, %{}, fn experiment, index ->
       Enum.reduce(experiment.variants || [], index, fn variant, inner_index ->
         config = parse_variant_config(variant["config"]) || %{}
 
         Enum.reduce(config, inner_index, fn {key, _value}, idx ->
-          # Fixes MEDIUM-08: Prepend instead of append
           Map.update(idx, key, [experiment], fn exps -> [experiment | exps] end)
         end)
       end)
     end)
+
+    reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
+
+    {reversed_var_index, exp_index, aud_cache}
   end
 
   defp invalidate_changed_assignments(assignments, old_experiments, new_experiments) do
@@ -1198,6 +1279,7 @@ defmodule ABSmartly.Context do
           old_exp.iteration != new_exp.iteration -> false
           old_exp.full_on_variant != new_exp.full_on_variant -> false
           old_exp.traffic_split != new_exp.traffic_split -> false
+          old_exp.split != new_exp.split -> false
           true -> true
         end
 
@@ -1209,8 +1291,6 @@ defmodule ABSmartly.Context do
     end)
   end
 
-  # Fixes CRITICAL-09: Rescue event handler exceptions
-  # Fixes HIGH-21: Run event handler in separate process to avoid blocking
   defp emit_event(state, event_type, data) do
     if state.event_handler do
       Task.start(fn ->
