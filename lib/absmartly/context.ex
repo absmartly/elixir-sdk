@@ -167,6 +167,10 @@ defmodule ABSmartly.Context do
     GenServer.call(context, :finalize)
   end
 
+  def close(context) do
+    finalize(context)
+  end
+
   def refresh(context) do
     GenServer.call(context, :refresh)
   end
@@ -189,6 +193,14 @@ defmodule ABSmartly.Context do
 
   def is_finalizing?(context) do
     GenServer.call(context, :is_finalizing)
+  end
+
+  def is_closed?(context) do
+    is_finalized?(context)
+  end
+
+  def is_closing?(context) do
+    is_finalizing?(context)
   end
 
   def pending(context) do
@@ -318,16 +330,20 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_unit, unit_type, uid}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       key = to_string(unit_type)
-      uid_str = validate_uid(uid)
 
-      if Map.has_key?(state.units, key) && Map.get(state.units, key) != uid_str do
-        {:reply, {:error, :duplicate_unit}, state}
-      else
-        state = %{state | units: Map.put(state.units, key, uid_str)}
-        {:reply, :ok, state}
+      case validate_uid_or_error(uid, key) do
+        {:error, msg} ->
+          {:reply, {:error, msg}, state}
+        {:ok, uid_str} ->
+          if Map.has_key?(state.units, key) && Map.get(state.units, key) != uid_str do
+            {:reply, {:error, "Unit '#{key}' UID already set."}, state}
+          else
+            state = %{state | units: Map.put(state.units, key, uid_str)}
+            {:reply, :ok, state}
+          end
       end
     end
   end
@@ -335,12 +351,16 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_units, units}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       try do
         new_units = Enum.reduce(units, state.units, fn {unit_type, uid}, acc ->
           key = to_string(unit_type)
-          uid_str = validate_uid(uid)
+
+          uid_str = case validate_uid_or_error(uid, key) do
+            {:error, msg} -> throw({:validation_error, msg})
+            {:ok, str} -> str
+          end
 
           if Map.has_key?(acc, key) && Map.get(acc, key) != uid_str do
             throw({:duplicate_unit, key})
@@ -353,7 +373,9 @@ defmodule ABSmartly.Context do
         {:reply, :ok, state}
       catch
         {:duplicate_unit, key} ->
-          {:reply, {:error, {:duplicate_unit, key}}, state}
+          {:reply, {:error, "Unit '#{key}' UID already set."}, state}
+        {:validation_error, msg} ->
+          {:reply, {:error, msg}, state}
       end
     end
   end
@@ -430,7 +452,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_custom_assignment, experiment_name, variant}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       name = to_string(experiment_name)
       state = %{
@@ -446,7 +468,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_custom_assignments, assignments}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       {new_assignments, new_exposed} = Enum.reduce(assignments, {state.custom_assignments, state.exposed_experiments}, fn {experiment_name, variant}, {ca_acc, exp_acc} ->
         name = to_string(experiment_name)
@@ -461,7 +483,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:treatment, experiment_name}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       {variant, state} = do_treatment(state, experiment_name, true)
       {:reply, variant, state}
@@ -477,7 +499,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:variable_value, key, default_value}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       {value, state} = do_variable_value(state, key, default_value, true)
       {:reply, value, state}
@@ -517,7 +539,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:track, goal_name, properties}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       state = do_track(state, goal_name, properties)
       {:reply, :ok, state}
@@ -527,7 +549,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call(:publish, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       {result, new_state} = do_publish(state)
       {:reply, result, new_state}
@@ -567,7 +589,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:refresh, new_data}, _from, state) do
     if state.finalized do
-      {:reply, {:error, :finalized}, state}
+      {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       state = do_refresh(state, new_data)
       {:reply, :ok, state}
@@ -636,7 +658,7 @@ defmodule ABSmartly.Context do
 
   # Private helper functions
 
-  defp validate_uid(uid) do
+  defp validate_uid(uid, unit_type \\ "unknown") do
     uid_str = to_string(uid)
 
     if String.length(uid_str) > @max_uid_length do
@@ -644,6 +666,19 @@ defmodule ABSmartly.Context do
     end
 
     uid_str
+  end
+
+  defp validate_uid_or_error(uid, unit_type) do
+    uid_str = to_string(uid)
+
+    cond do
+      String.trim(uid_str) == "" ->
+        {:error, "Unit '#{unit_type}' UID must not be blank."}
+      String.length(uid_str) > @max_uid_length ->
+        {:error, "Unit ID exceeds maximum length of #{@max_uid_length}"}
+      true ->
+        {:ok, uid_str}
+    end
   end
 
   defp config_attributes_to_list(nil), do: []

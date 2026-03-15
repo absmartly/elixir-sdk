@@ -323,7 +323,7 @@ defmodule ABSmartly.ContextTest do
 
     test "should error on duplicate unit type set with different value" do
       ctx = start_context(@get_context_response)
-      assert {:error, :duplicate_unit} = Context.set_unit(ctx, "session_id", "new_id")
+      assert {:error, "Unit 'session_id' UID already set."} = Context.set_unit(ctx, "session_id", "new_id")
     end
 
     test "should not error if set to same value" do
@@ -334,7 +334,7 @@ defmodule ABSmartly.ContextTest do
     test "should error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.set_unit(ctx, "test", "test")
+      assert {:error, "ABsmartly Context is finalized."} = Context.set_unit(ctx, "test", "test")
     end
 
     test "should set multiple units" do
@@ -509,7 +509,7 @@ defmodule ABSmartly.ContextTest do
       assert Context.pending(ctx) == 1
 
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.treatment(ctx, "exp_test_ab")
+      assert {:error, "ABsmartly Context is finalized."} = Context.treatment(ctx, "exp_test_ab")
     end
 
     test "should return full-on variant when full_on_variant is set" do
@@ -588,7 +588,7 @@ defmodule ABSmartly.ContextTest do
     test "should error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.variable_value(ctx, "banner.size", 17)
+      assert {:error, "ABsmartly Context is finalized."} = Context.variable_value(ctx, "banner.size", 17)
     end
 
     test "conflicting key disjoint audiences" do
@@ -696,7 +696,7 @@ defmodule ABSmartly.ContextTest do
     test "should error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.track(ctx, "goal1")
+      assert {:error, "ABsmartly Context is finalized."} = Context.track(ctx, "goal1")
     end
 
     test "should include goals with exposures in pending count" do
@@ -726,7 +726,7 @@ defmodule ABSmartly.ContextTest do
     test "should error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.publish(ctx)
+      assert {:error, "ABsmartly Context is finalized."} = Context.publish(ctx)
     end
 
     test "should include exposures and goals" do
@@ -788,10 +788,10 @@ defmodule ABSmartly.ContextTest do
       assert Context.treatment(ctx, "not_found") == 3
     end
 
-    test "should error after finalized call" do
+    test "should succeed after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.set_override(ctx, "exp_test_ab", 5)
+      assert :ok = Context.set_override(ctx, "exp_test_ab", 5)
     end
 
     test "should override multiple experiments" do
@@ -827,7 +827,7 @@ defmodule ABSmartly.ContextTest do
     test "should error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.set_custom_assignment(ctx, "exp_test_ab", 3)
+      assert {:error, "ABsmartly Context is finalized."} = Context.set_custom_assignment(ctx, "exp_test_ab", 3)
     end
 
     test "should set multiple custom assignments" do
@@ -899,7 +899,7 @@ defmodule ABSmartly.ContextTest do
     test "should error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, :finalized} = Context.refresh(ctx, @refresh_context_response)
+      assert {:error, "ABsmartly Context is finalized."} = Context.refresh(ctx, @refresh_context_response)
     end
 
     test "should keep overrides" do
@@ -1150,6 +1150,46 @@ defmodule ABSmartly.ContextTest do
     test "should return nil for unknown experiment" do
       ctx = start_context(@get_context_response)
       assert Context.custom_field_value_type(ctx, "not_found", "country") == nil
+    end
+  end
+
+  describe "close/is_closed?/is_closing? aliases" do
+    test "close is alias for finalize" do
+      ctx = start_context(@get_context_response)
+      assert Context.is_finalized?(ctx) == false
+      assert Context.close(ctx) == :ok
+      assert Context.is_finalized?(ctx) == true
+    end
+
+    test "is_closed? is alias for is_finalized?" do
+      ctx = start_context(@get_context_response)
+      assert Context.is_closed?(ctx) == false
+      Context.finalize(ctx)
+      assert Context.is_closed?(ctx) == true
+    end
+
+    test "is_closing? is alias for is_finalizing?" do
+      ctx = start_context(@get_context_response)
+      assert Context.is_closing?(ctx) == Context.is_finalizing?(ctx)
+    end
+  end
+
+  describe "standardized error messages" do
+    test "finalized error message" do
+      ctx = start_context(@get_context_response)
+      Context.finalize(ctx)
+      assert Context.track(ctx, "goal") == {:error, "ABsmartly Context is finalized."}
+    end
+
+    test "unit UID already set error message" do
+      ctx = start_context(@get_context_response)
+      assert {:error, msg} = Context.set_unit(ctx, "session_id", "different-uid")
+      assert msg =~ "UID already set."
+    end
+
+    test "unit UID must not be blank error message" do
+      ctx = start_context(@get_context_response)
+      assert {:error, "Unit 'new_unit' UID must not be blank."} = Context.set_unit(ctx, "new_unit", "")
     end
   end
 end

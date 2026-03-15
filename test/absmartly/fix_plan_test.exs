@@ -571,7 +571,7 @@ defmodule ABSmartly.FixPlanTest do
     test "set_units with duplicate returns error" do
       ctx = start_context(@get_context_response)
       result = Context.set_units(ctx, %{"session_id" => "different_id"})
-      assert {:error, {:duplicate_unit, "session_id"}} = result
+      assert {:error, "Unit 'session_id' UID already set."} = result
     end
 
     test "track with non-map properties sanitizes to nil" do
