@@ -117,9 +117,9 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #6: Map-based attributes
-  describe "fix #6 - map-based attributes" do
-    test "attributes stored as map for O(1) access" do
+  # Fix #6: Attribute list storage
+  describe "fix #6 - attribute list storage" do
+    test "attributes stored as list and get_attribute returns last value" do
       ctx = start_context(@get_context_response)
       Context.set_attribute(ctx, "key1", "val1")
       Context.set_attribute(ctx, "key2", "val2")
@@ -127,11 +127,19 @@ defmodule ABSmartly.FixPlanTest do
       assert Context.get_attribute(ctx, "key2") == "val2"
     end
 
-    test "set_attribute overwrites existing" do
+    test "set_attribute appends and get_attribute returns last value" do
       ctx = start_context(@get_context_response)
       Context.set_attribute(ctx, "key", "old")
       Context.set_attribute(ctx, "key", "new")
       assert Context.get_attribute(ctx, "key") == "new"
+    end
+
+    test "both entries stored in list when set twice" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "key", "old")
+      Context.set_attribute(ctx, "key", "new")
+      attrs = Context.get_attributes(ctx)
+      assert length(Enum.filter(attrs, fn a -> a.name == "key" end)) == 2
     end
 
     test "batch set_attributes with map" do
@@ -577,7 +585,7 @@ defmodule ABSmartly.FixPlanTest do
       Context.set_attribute(ctx, "key", "value")
       attrs = Context.get_attributes(ctx)
       assert is_list(attrs)
-      assert Enum.any?(attrs, fn attr -> attr["name"] == "key" && attr["value"] == "value" end)
+      assert Enum.any?(attrs, fn attr -> attr.name == "key" && attr.value == "value" end)
     end
   end
 
@@ -601,6 +609,126 @@ defmodule ABSmartly.FixPlanTest do
 
     test "non-map filter fails closed" do
       assert Matcher.evaluate("string", %{}) == false
+    end
+  end
+
+  # Phase 3.2: ready_error
+  describe "phase 3.2 - ready_error" do
+    test "ready_error returns nil when context loaded successfully" do
+      ctx = start_context(@get_context_response)
+      assert Context.ready_error(ctx) == nil
+    end
+
+    test "ready_error returns the reason when set_failed called" do
+      sdk_config = %Types.SDKConfig{
+        endpoint: "https://test.absmartly.io/v1",
+        api_key: "test-api-key",
+        application: "website",
+        environment: "development"
+      }
+      context_config = %Types.ContextConfig{
+        units: @context_params,
+        overrides: %{},
+        custom_assignments: %{}
+      }
+      {:ok, ctx} = Context.start_link_async(sdk_config, context_config)
+      Context.set_failed(ctx, :fetch_error)
+      assert Context.ready_error(ctx) == :fetch_error
+    end
+  end
+
+  # Phase 4.4: global custom_field_keys
+  describe "phase 4.4 - global custom_field_keys" do
+    @get_context_response_with_custom_fields %{
+      "experiments" => [
+        %{
+          "id" => 1,
+          "name" => "exp_test_ab",
+          "iteration" => 1,
+          "unitType" => "session_id",
+          "seedHi" => 3603515,
+          "seedLo" => 233373850,
+          "split" => [0.5, 0.5],
+          "trafficSeedHi" => 449867249,
+          "trafficSeedLo" => 455443629,
+          "trafficSplit" => [0.0, 1.0],
+          "fullOnVariant" => 0,
+          "applications" => [%{"name" => "website"}],
+          "variants" => [%{"name" => "A", "config" => nil}, %{"name" => "B", "config" => nil}],
+          "audience" => nil,
+          "customFieldValues" => [
+            %{"name" => "key1", "value" => "val1", "type" => "string"},
+            %{"name" => "key2", "value" => "val2", "type" => "string"}
+          ]
+        },
+        %{
+          "id" => 2,
+          "name" => "exp_test_abc",
+          "iteration" => 1,
+          "unitType" => "session_id",
+          "seedHi" => 55006150,
+          "seedLo" => 47189152,
+          "split" => [0.34, 0.33, 0.33],
+          "trafficSeedHi" => 705671872,
+          "trafficSeedLo" => 212903484,
+          "trafficSplit" => [0.0, 1.0],
+          "fullOnVariant" => 0,
+          "applications" => [%{"name" => "website"}],
+          "variants" => [%{"name" => "A", "config" => nil}, %{"name" => "B", "config" => nil}],
+          "audience" => nil,
+          "customFieldValues" => [
+            %{"name" => "key2", "value" => "val2b", "type" => "string"},
+            %{"name" => "key3", "value" => "val3", "type" => "string"}
+          ]
+        }
+      ]
+    }
+
+    test "custom_field_keys returns all unique keys across all experiments" do
+      ctx = start_context(@get_context_response_with_custom_fields)
+      keys = Context.custom_field_keys(ctx)
+      assert "key1" in keys
+      assert "key2" in keys
+      assert "key3" in keys
+      assert length(Enum.uniq(keys)) == length(keys)
+    end
+
+    test "custom_field_keys returns empty list when no custom fields" do
+      ctx = start_context(@get_context_response)
+      keys = Context.custom_field_keys(ctx)
+      assert keys == []
+    end
+  end
+
+  # Phase 4.5: attribute list storage model
+  describe "phase 4.5 - attribute list storage model" do
+    test "set_attribute appends entries, both in list" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "color", "red")
+      Context.set_attribute(ctx, "color", "blue")
+      attrs = Context.get_attributes(ctx)
+      color_attrs = Enum.filter(attrs, fn a -> a.name == "color" end)
+      assert length(color_attrs) == 2
+      assert Enum.at(color_attrs, 0).value == "red"
+      assert Enum.at(color_attrs, 1).value == "blue"
+    end
+
+    test "get_attribute returns last value for name" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "color", "red")
+      Context.set_attribute(ctx, "color", "blue")
+      assert Context.get_attribute(ctx, "color") == "blue"
+    end
+
+    test "attributes have set_at timestamp" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "key", "val")
+      attrs = Context.get_attributes(ctx)
+      assert length(attrs) == 1
+      attr = hd(attrs)
+      assert Map.has_key?(attr, :set_at)
+      assert is_integer(attr.set_at)
+      assert attr.set_at > 0
     end
   end
 

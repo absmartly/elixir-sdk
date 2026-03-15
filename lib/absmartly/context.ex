@@ -21,6 +21,7 @@ defmodule ABSmartly.Context do
     :data,
     :ready,
     :failed,
+    :failed_reason,
     :finalized,
     :finalizing,
     :units,
@@ -64,6 +65,10 @@ defmodule ABSmartly.Context do
 
   def set_failed(context, reason) do
     GenServer.call(context, {:set_failed, reason})
+  end
+
+  def ready_error(context) do
+    GenServer.call(context, :ready_error)
   end
 
   def wait_until_ready(context, timeout \\ 5000) do
@@ -142,8 +147,8 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:custom_field_value, experiment_name, field_name})
   end
 
-  def custom_field_keys(context, experiment_name) do
-    GenServer.call(context, {:custom_field_keys, experiment_name})
+  def custom_field_keys(context) do
+    GenServer.call(context, :custom_field_keys)
   end
 
   def custom_field_value_type(context, experiment_name, field_name) do
@@ -208,10 +213,11 @@ defmodule ABSmartly.Context do
       data: empty_data,
       ready: false,
       failed: false,
+      failed_reason: nil,
       finalized: false,
       finalizing: false,
       units: context_config.units,
-      attributes: attributes_to_map(context_config.attributes),
+      attributes: config_attributes_to_list(context_config.attributes),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
       assignments: %{},
@@ -238,10 +244,11 @@ defmodule ABSmartly.Context do
       data: data,
       ready: true,
       failed: false,
+      failed_reason: nil,
       finalized: false,
       finalizing: false,
       units: context_config.units,
-      attributes: attributes_to_map(context_config.attributes),
+      attributes: config_attributes_to_list(context_config.attributes),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
       assignments: %{},
@@ -283,12 +290,17 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call({:set_failed, reason}, _from, state) do
-    state = %{state | failed: true}
+    state = %{state | failed: true, failed_reason: reason}
     for waiter <- state.pending_waiters do
       GenServer.reply(waiter, {:error, reason})
     end
     state = %{state | pending_waiters: []}
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:ready_error, _from, state) do
+    {:reply, state.failed_reason, state}
   end
 
   @impl true
@@ -360,33 +372,37 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_attribute, name, value}, _from, state) do
     name_str = to_string(name)
-    attributes = Map.put(state.attributes, name_str, value)
-    state = %{state | attributes: attributes, attrs_seq: state.attrs_seq + 1}
+    entry = %{name: name_str, value: value, set_at: now_millis()}
+    state = %{state | attributes: state.attributes ++ [entry], attrs_seq: state.attrs_seq + 1}
     {:reply, :ok, state}
   end
 
   @impl true
   def handle_call({:set_attributes, attributes}, _from, state) do
-    new_attributes = Enum.reduce(attributes, state.attributes, fn {name, value}, acc ->
-      Map.put(acc, to_string(name), value)
+    set_at = now_millis()
+    new_entries = Enum.map(attributes, fn {name, value} ->
+      %{name: to_string(name), value: value, set_at: set_at}
     end)
-
-    state = %{state | attributes: new_attributes, attrs_seq: state.attrs_seq + 1}
+    state = %{state | attributes: state.attributes ++ new_entries, attrs_seq: state.attrs_seq + 1}
     {:reply, :ok, state}
   end
 
   @impl true
   def handle_call({:get_attribute, name}, _from, state) do
-    value = Map.get(state.attributes, to_string(name))
+    name_str = to_string(name)
+    value = state.attributes
+      |> Enum.filter(fn attr -> attr.name == name_str end)
+      |> List.last()
+      |> case do
+        nil -> nil
+        attr -> attr.value
+      end
     {:reply, value, state}
   end
 
   @impl true
   def handle_call(:get_attributes, _from, state) do
-    attrs_list = Enum.map(state.attributes, fn {name, value} ->
-      %{"name" => name, "value" => value}
-    end)
-    {:reply, attrs_list, state}
+    {:reply, state.attributes, state}
   end
 
   @impl true
@@ -487,8 +503,8 @@ defmodule ABSmartly.Context do
   end
 
   @impl true
-  def handle_call({:custom_field_keys, experiment_name}, _from, state) do
-    keys = do_custom_field_keys(state, experiment_name)
+  def handle_call(:custom_field_keys, _from, state) do
+    keys = do_custom_field_keys(state)
     {:reply, keys, state}
   end
 
@@ -630,13 +646,19 @@ defmodule ABSmartly.Context do
     uid_str
   end
 
-  defp attributes_to_map(attrs) when is_map(attrs), do: attrs
-  defp attributes_to_map(nil), do: %{}
-  defp attributes_to_map(attrs) when is_list(attrs) do
-    Enum.reduce(attrs, %{}, fn
-      %{"name" => name, "value" => value}, acc -> Map.put(acc, name, value)
-      {name, value}, acc -> Map.put(acc, to_string(name), value)
-      _, acc -> acc
+  defp config_attributes_to_list(nil), do: []
+  defp config_attributes_to_list(attrs) when is_map(attrs) do
+    set_at = now_millis()
+    Enum.map(attrs, fn {name, value} ->
+      %{name: to_string(name), value: value, set_at: set_at}
+    end)
+  end
+  defp config_attributes_to_list(attrs) when is_list(attrs) do
+    set_at = now_millis()
+    Enum.flat_map(attrs, fn
+      %{"name" => name, "value" => value} -> [%{name: name, value: value, set_at: set_at}]
+      {name, value} -> [%{name: to_string(name), value: value, set_at: set_at}]
+      _ -> []
     end)
   end
 
@@ -828,14 +850,17 @@ defmodule ABSmartly.Context do
     end
   end
 
-  defp do_custom_field_keys(state, experiment_name) do
-    experiment = Map.get(state.experiment_index, experiment_name)
-
-    if experiment && experiment.custom_field_values do
-      Enum.map(experiment.custom_field_values, & &1["name"])
-    else
-      []
-    end
+  defp do_custom_field_keys(state) do
+    state.experiment_index
+    |> Map.values()
+    |> Enum.flat_map(fn experiment ->
+      if experiment.custom_field_values do
+        Enum.map(experiment.custom_field_values, & &1["name"])
+      else
+        []
+      end
+    end)
+    |> Enum.uniq()
   end
 
   defp do_custom_field_value_type(state, experiment_name, field_name) do
@@ -967,8 +992,8 @@ defmodule ABSmartly.Context do
         }
       end)
 
-    attrs_list = Enum.map(state.attributes, fn {name, value} ->
-      %{"name" => name, "value" => value}
+    attrs_list = Enum.map(state.attributes, fn attr ->
+      %{"name" => attr.name, "value" => attr.value, "setAt" => attr.set_at}
     end)
 
     publish_event = %Types.PublishEvent{
@@ -1163,8 +1188,8 @@ defmodule ABSmartly.Context do
       _audience ->
         parsed = Map.get(state.audience_cache, experiment.name)
         if parsed do
-          attrs_list = Enum.map(state.attributes, fn {name, value} ->
-            %{"name" => name, "value" => value}
+          attrs_list = Enum.map(state.attributes, fn attr ->
+            %{"name" => attr.name, "value" => attr.value}
           end)
           Matcher.evaluate(parsed, attrs_list) == true
         else

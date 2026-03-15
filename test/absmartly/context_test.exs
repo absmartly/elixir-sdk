@@ -1023,9 +1023,9 @@ defmodule ABSmartly.ContextTest do
   end
 
   describe "custom_field_keys" do
-    test "should return custom field keys" do
+    test "should return all custom field keys across all experiments" do
       ctx = start_context(@get_context_response)
-      keys = Context.custom_field_keys(ctx, "exp_test_abc")
+      keys = Context.custom_field_keys(ctx)
       assert "country" in keys
       assert "json_object" in keys
       assert "json_array" in keys
@@ -1036,14 +1036,9 @@ defmodule ABSmartly.ContextTest do
       assert "json_invalid" in keys
     end
 
-    test "should return empty list for experiment without custom fields" do
-      ctx = start_context(@get_context_response)
-      assert Context.custom_field_keys(ctx, "exp_test_ab") == []
-    end
-
-    test "should return empty list for unknown experiment" do
-      ctx = start_context(@get_context_response)
-      assert Context.custom_field_keys(ctx, "not_found") == []
+    test "should return empty list when no experiments have custom fields" do
+      ctx = start_context(%{"experiments" => []})
+      assert Context.custom_field_keys(ctx) == []
     end
   end
 
