@@ -489,11 +489,12 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call({:treatment, experiment_name}, _from, state) do
-    if state.finalized do
-      {:reply, 0, state}
-    else
-      {variant, state} = do_treatment(state, experiment_name, true)
-      {:reply, variant, state}
+    cond do
+      not state.ready -> {:reply, 0, state}
+      state.finalized -> {:reply, 0, state}
+      true ->
+        {variant, state} = do_treatment(state, experiment_name, true)
+        {:reply, variant, state}
     end
   end
 
@@ -1080,8 +1081,7 @@ defmodule ABSmartly.Context do
     {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
 
     exposed_experiments = Enum.reduce(changed_names, state.exposed_experiments, fn name, acc ->
-      assignment = Map.get(state.assignments, name)
-      if assignment && assignment.overridden do
+      if Map.has_key?(state.overrides, name) do
         acc
       else
         MapSet.delete(acc, name)
