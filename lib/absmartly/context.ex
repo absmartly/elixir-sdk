@@ -1080,7 +1080,12 @@ defmodule ABSmartly.Context do
     {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
 
     exposed_experiments = Enum.reduce(changed_names, state.exposed_experiments, fn name, acc ->
-      MapSet.delete(acc, name)
+      assignment = Map.get(state.assignments, name)
+      if assignment && assignment.overridden do
+        acc
+      else
+        MapSet.delete(acc, name)
+      end
     end)
 
     state = %{
