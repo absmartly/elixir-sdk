@@ -490,7 +490,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:treatment, experiment_name}, _from, state) do
     if state.finalized do
-      {:reply, {:error, "ABsmartly Context is finalized."}, state}
+      {:reply, 0, state}
     else
       {variant, state} = do_treatment(state, experiment_name, true)
       {:reply, variant, state}
@@ -506,7 +506,7 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:variable_value, key, default_value}, _from, state) do
     if state.finalized do
-      {:reply, {:error, "ABsmartly Context is finalized."}, state}
+      {:reply, default_value, state}
     else
       {value, state} = do_variable_value(state, key, default_value, true)
       {:reply, value, state}
@@ -521,8 +521,10 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call(:variable_keys, _from, state) do
-    keys = Map.keys(state.variable_index)
-    {:reply, keys, state}
+    result = Map.new(state.variable_index, fn {key, experiments} ->
+      {key, Enum.map(experiments, & &1.name)}
+    end)
+    {:reply, result, state}
   end
 
   @impl true
@@ -1066,6 +1068,7 @@ defmodule ABSmartly.Context do
   end
 
   defp do_refresh_with_context_data(state, context_data) do
+    changed_names = changed_experiment_names(state.data.experiments, context_data.experiments)
 
     assignments =
       invalidate_changed_assignments(
@@ -1076,6 +1079,10 @@ defmodule ABSmartly.Context do
 
     {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
 
+    exposed_experiments = Enum.reduce(changed_names, state.exposed_experiments, fn name, acc ->
+      MapSet.delete(acc, name)
+    end)
+
     state = %{
       state
       | data: context_data,
@@ -1083,7 +1090,7 @@ defmodule ABSmartly.Context do
         variable_index: var_index,
         experiment_index: exp_index,
         audience_cache: aud_cache,
-        exposed_experiments: MapSet.new()
+        exposed_experiments: exposed_experiments
     }
 
     Logger.info("Context refreshed with #{length(context_data.experiments)} experiments")
@@ -1328,18 +1335,40 @@ defmodule ABSmartly.Context do
     end)
 
     var_index = Enum.reduce(experiments, %{}, fn experiment, index ->
-      Enum.reduce(experiment.variants || [], index, fn variant, inner_index ->
+      keys_in_experiment = Enum.reduce(experiment.variants || [], MapSet.new(), fn variant, keys ->
         config = parse_variant_config(variant["config"]) || %{}
+        Enum.reduce(Map.keys(config), keys, &MapSet.put(&2, &1))
+      end)
 
-        Enum.reduce(config, inner_index, fn {key, _value}, idx ->
-          Map.update(idx, key, [experiment], fn exps -> [experiment | exps] end)
-        end)
+      Enum.reduce(keys_in_experiment, index, fn key, idx ->
+        Map.update(idx, key, [experiment], fn exps -> [experiment | exps] end)
       end)
     end)
 
     reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
 
     {reversed_var_index, exp_index, aud_cache}
+  end
+
+  defp changed_experiment_names(old_experiments, new_experiments) do
+    old_exp_map = Enum.into(old_experiments, %{}, fn exp -> {exp.name, exp} end)
+    new_exp_map = Enum.into(new_experiments, %{}, fn exp -> {exp.name, exp} end)
+    all_names = MapSet.union(MapSet.new(Map.keys(old_exp_map)), MapSet.new(Map.keys(new_exp_map)))
+
+    Enum.filter(all_names, fn name ->
+      old_exp = Map.get(old_exp_map, name)
+      new_exp = Map.get(new_exp_map, name)
+
+      cond do
+        is_nil(old_exp) || is_nil(new_exp) -> true
+        old_exp.id != new_exp.id -> true
+        old_exp.iteration != new_exp.iteration -> true
+        old_exp.full_on_variant != new_exp.full_on_variant -> true
+        old_exp.traffic_split != new_exp.traffic_split -> true
+        old_exp.split != new_exp.split -> true
+        true -> false
+      end
+    end)
   end
 
   defp invalidate_changed_assignments(assignments, old_experiments, new_experiments) do

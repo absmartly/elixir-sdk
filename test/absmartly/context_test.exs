@@ -523,13 +523,13 @@ defmodule ABSmartly.ContextTest do
       assert Context.pending(ctx) == 2
     end
 
-    test "should error after finalized call" do
+    test "should return 0 after finalized call" do
       ctx = start_context(@get_context_response)
       Context.treatment(ctx, "exp_test_ab")
       assert Context.pending(ctx) == 1
 
       Context.finalize(ctx)
-      assert {:error, "ABsmartly Context is finalized."} = Context.treatment(ctx, "exp_test_ab")
+      assert Context.treatment(ctx, "exp_test_ab") == 0
     end
 
     test "should return full-on variant when full_on_variant is set" do
@@ -605,10 +605,10 @@ defmodule ABSmartly.ContextTest do
       assert Context.variable_value(ctx, "not.found", 17) == 17
     end
 
-    test "should error after finalized call" do
+    test "should return default_value after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, "ABsmartly Context is finalized."} = Context.variable_value(ctx, "banner.size", 17)
+      assert Context.variable_value(ctx, "banner.size", 17) == 17
     end
 
     test "conflicting key disjoint audiences" do
@@ -688,13 +688,16 @@ defmodule ABSmartly.ContextTest do
     test "should return all active variable keys" do
       ctx = start_context(@get_context_response)
       keys = Context.variable_keys(ctx)
-      assert "banner.border" in keys
-      assert "banner.size" in keys
-      assert "button.color" in keys
-      assert "card.width" in keys
-      assert "submit.color" in keys
-      assert "submit.shape" in keys
-      assert "submit.size" in keys
+      assert is_map(keys)
+      assert Map.has_key?(keys, "banner.border")
+      assert Map.has_key?(keys, "banner.size")
+      assert Map.has_key?(keys, "button.color")
+      assert Map.has_key?(keys, "card.width")
+      assert Map.has_key?(keys, "submit.color")
+      assert Map.has_key?(keys, "submit.shape")
+      assert Map.has_key?(keys, "submit.size")
+      assert "exp_test_ab" in keys["banner.border"]
+      assert "exp_test_ab" in keys["banner.size"]
     end
   end
 
@@ -878,7 +881,8 @@ defmodule ABSmartly.ContextTest do
         Context.treatment(ctx, exp["name"])
       end
 
-      assert Context.pending(ctx) == length(@get_context_response["experiments"])
+      num_old = length(@get_context_response["experiments"])
+      assert Context.pending(ctx) == num_old
 
       Context.refresh(ctx)
 
@@ -886,12 +890,11 @@ defmodule ABSmartly.ContextTest do
         Context.treatment(ctx, exp["name"])
       end
 
-      num_old = length(@get_context_response["experiments"])
-      num_new = length(@refresh_context_response["experiments"])
-      assert Context.pending(ctx) == num_old + num_new
+      num_added = length(@refresh_context_response["experiments"]) - num_old
+      assert Context.pending(ctx) == num_old + num_added
     end
 
-    test "should re-queue after refresh on audience mismatch" do
+    test "should not re-queue after refresh when experiment unchanged" do
       ctx = start_context_with_refresh(audience_strict_context_response(), audience_strict_context_response())
 
       assert Context.treatment(ctx, "exp_test_ab") == 0
@@ -900,10 +903,10 @@ defmodule ABSmartly.ContextTest do
       Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_ab") == 0
-      assert Context.pending(ctx) == 2
+      assert Context.pending(ctx) == 1
     end
 
-    test "should re-queue after refresh with override" do
+    test "should not re-queue after refresh with override when experiment unchanged" do
       ctx = start_context_with_refresh(audience_strict_context_response(), audience_strict_context_response())
 
       Context.set_override(ctx, "exp_test_ab", 3)
@@ -913,7 +916,7 @@ defmodule ABSmartly.ContextTest do
       Context.refresh(ctx)
 
       assert Context.treatment(ctx, "exp_test_ab") == 3
-      assert Context.pending(ctx) == 2
+      assert Context.pending(ctx) == 1
     end
 
     test "should error after finalized call" do

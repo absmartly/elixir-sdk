@@ -195,9 +195,11 @@ defmodule ABSmartly.FixPlanTest do
     test "variable index preserves experiment order" do
       ctx = start_context(@get_context_response)
       keys = Context.variable_keys(ctx)
-      assert is_list(keys)
-      assert "banner.border" in keys
-      assert "banner.size" in keys
+      assert is_map(keys)
+      assert Map.has_key?(keys, "banner.border")
+      assert Map.has_key?(keys, "banner.size")
+      assert "exp_test_ab" in keys["banner.border"]
+      assert "exp_test_ab" in keys["banner.size"]
     end
   end
 
