@@ -62,6 +62,7 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     end
   end
 
+  def evaluate(value, _vars) when is_number(value) or is_binary(value) or is_boolean(value), do: value
   def evaluate(_value, _vars), do: nil
 
   # Operator implementations
@@ -320,6 +321,20 @@ defmodule ABSmartly.JSONExpr.Evaluator do
       _ ->
         Logger.warning("Failed to compare complex values via JSON encoding")
         nil
+    end
+  end
+
+  def compare(lhs, rhs) when is_number(lhs) and is_binary(rhs) do
+    case Utils.to_number(rhs) do
+      nil -> nil
+      rhs_num -> compare(lhs, rhs_num)
+    end
+  end
+
+  def compare(lhs, rhs) when is_binary(lhs) and is_number(rhs) do
+    case Utils.to_number(lhs) do
+      nil -> nil
+      lhs_num -> compare(lhs_num, rhs)
     end
   end
 

@@ -75,7 +75,7 @@ defmodule ABSmartly.Utils do
   def to_number(true), do: 1
   def to_number(false), do: 0
 
-  def to_number(""), do: 0.0
+  def to_number(""), do: 0
 
   def to_number(s) when is_binary(s) do
     case Float.parse(s) do

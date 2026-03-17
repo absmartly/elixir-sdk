@@ -64,7 +64,7 @@ defmodule ABSmartly.UtilsTest do
     test "converts string to number" do
       assert Utils.to_number("123") == 123.0
       assert Utils.to_number("3.14") == 3.14
-      assert Utils.to_number("") == 0.0
+      assert Utils.to_number("") == 0
       assert Utils.to_number("abc") == nil
     end
   end

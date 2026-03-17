@@ -1,7 +1,7 @@
 import Config
 
 # Configure Jason as JSON library
-config :elixir_wrapper, :json_library, Jason
+config :absmartly, :json_library, Jason
 
 # Logger configuration
 config :logger, :console,

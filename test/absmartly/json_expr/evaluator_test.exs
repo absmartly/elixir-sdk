@@ -8,11 +8,11 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(nil, %{}) == nil
     end
 
-    test "returns nil for non-map non-list expressions" do
-      assert Evaluator.evaluate(42, %{}) == nil
-      assert Evaluator.evaluate("hello", %{}) == nil
-      assert Evaluator.evaluate(true, %{}) == nil
-      assert Evaluator.evaluate(false, %{}) == nil
+    test "returns scalar value for scalar expressions" do
+      assert Evaluator.evaluate(42, %{}) == 42
+      assert Evaluator.evaluate("hello", %{}) == "hello"
+      assert Evaluator.evaluate(true, %{}) == true
+      assert Evaluator.evaluate(false, %{}) == false
     end
 
     test "returns nil when no recognized operator" do

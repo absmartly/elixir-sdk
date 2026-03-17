@@ -2,9 +2,10 @@ defmodule ABSmartly.SDK do
   @moduledoc """
   Main SDK class for ABSmartly.
 
-  Provides two context creation methods:
-  - create_context/3: Async - fetches data from API
-  - create_context_with/3: Sync - uses pre-fetched data
+  Provides context creation methods:
+  - `create_context/3`: Synchronous - fetches data from API, blocks until complete
+  - `create_context_async/3`: Async - starts context immediately, fetches data in background
+  - `create_context_with/4`: Uses pre-fetched data directly
   """
 
   require Logger
@@ -29,30 +30,6 @@ defmodule ABSmartly.SDK do
   ## Optional Parameters
     * `:timeout` - Connection timeout in milliseconds (default: 3000)
     * `:retries` - Number of retry attempts for failed requests (default: 5)
-
-  ## Examples
-
-      # Basic usage with required parameters
-      sdk = ABSmartly.SDK.new(
-        endpoint: "https://your-company.absmartly.io/v1",
-        api_key: "YOUR-API-KEY",
-        application: "website",
-        environment: "development"
-      )
-
-      # With optional parameters
-      sdk = ABSmartly.SDK.new(
-        endpoint: "https://your-company.absmartly.io/v1",
-        api_key: "YOUR-API-KEY",
-        application: "website",
-        environment: "production",
-        timeout: 5000,
-        retries: 3
-      )
-
-  ## Returns
-    * `{:ok, sdk}` - Successfully created SDK instance
-    * `{:error, reason}` - Validation failed
   """
   def new(opts) when is_list(opts) do
     with :ok <- validate_required_params(opts),
@@ -63,11 +40,6 @@ defmodule ABSmartly.SDK do
 
   @doc """
   Set custom timeout for the SDK instance (pipe-friendly).
-
-  ## Examples
-
-      sdk = ABSmartly.SDK.new(endpoint: "...", api_key: "...")
-        |> ABSmartly.SDK.with_timeout(5000)
   """
   def with_timeout({:ok, %__MODULE__{config: config} = sdk}, timeout) when is_integer(timeout) do
     {:ok, %{sdk | config: %{config | timeout: timeout}}}
@@ -77,11 +49,6 @@ defmodule ABSmartly.SDK do
 
   @doc """
   Set custom retry count for the SDK instance (pipe-friendly).
-
-  ## Examples
-
-      sdk = ABSmartly.SDK.new(endpoint: "...", api_key: "...")
-        |> ABSmartly.SDK.with_retries(3)
   """
   def with_retries({:ok, %__MODULE__{config: config} = sdk}, retries) when is_integer(retries) do
     {:ok, %{sdk | config: %{config | retries: retries}}}
@@ -91,7 +58,6 @@ defmodule ABSmartly.SDK do
 
   defp validate_required_params(opts) do
     required = [:endpoint, :api_key, :application, :environment]
-    # Fixes LOW-01: Use Enum.reject instead of negated filter
     missing = Enum.reject(required, &Keyword.has_key?(opts, &1))
 
     case missing do
@@ -105,7 +71,6 @@ defmodule ABSmartly.SDK do
     end
   end
 
-  # Fixes MEDIUM-20, LOW-02: Narrower rescue scope
   defp build_config(opts) do
     config = %Types.SDKConfig{
       endpoint: Keyword.fetch!(opts, :endpoint),
@@ -123,18 +88,9 @@ defmodule ABSmartly.SDK do
   end
 
   @doc """
-  Create context with async data fetching (calls API endpoint).
+  Create context with synchronous data fetching (blocks until HTTP fetch completes).
 
-  ## Parameters
-
-    * `sdk` - SDK instance (unwrapped if coming from new/1)
-    * `units` - Map of unit types to UIDs (e.g., %{"session_id" => "abc123"})
-    * `options` - Optional configuration map
-
-  ## Returns
-
-    * `{:ok, context}` - Context successfully created
-    * `{:error, reason}` - Failed to fetch data or create context
+  Use `create_context_async/3` for non-blocking context creation.
   """
   def create_context(sdk_or_result, units, options \\ %{})
   def create_context({:ok, sdk}, units, options), do: create_context(sdk, units, options)
@@ -159,18 +115,10 @@ defmodule ABSmartly.SDK do
   end
 
   @doc """
-  Create context with pre-fetched data (synchronous).
+  Create context with async data fetching (non-blocking).
 
-  ## Parameters
-
-    * `sdk` - SDK instance (unwrapped if coming from new/1)
-    * `units` - Map of unit types to UIDs
-    * `data` - ContextData struct with experiments
-    * `options` - Optional configuration map
-
-  ## Returns
-
-    * `{:ok, context}` - Context successfully created
+  The context is created immediately and data is fetched in the background.
+  Use `Context.wait_until_ready/2` to block until data is available.
   """
   def create_context_async(sdk_or_result, units, options \\ %{})
   def create_context_async({:ok, sdk}, units, options), do: create_context_async(sdk, units, options)
@@ -183,9 +131,12 @@ defmodule ABSmartly.SDK do
       |> Map.put(:units, units)
       |> Types.ContextConfig.from_options()
 
-    case Context.start_link_async(config, context_config) do
+    case DynamicSupervisor.start_child(
+           ABSmartly.ContextSupervisor,
+           {Context, [config, context_config]}
+         ) do
       {:ok, ctx} ->
-        Task.start(fn ->
+        Task.start_link(fn ->
           case HTTP.Client.fetch_context(
                  config.endpoint,
                  config.api_key,
@@ -198,6 +149,7 @@ defmodule ABSmartly.SDK do
 
             {:error, reason} ->
               Logger.error("Async context fetch failed: #{inspect(reason)}")
+              Context.set_failed(ctx, reason)
           end
         end)
 
@@ -208,6 +160,9 @@ defmodule ABSmartly.SDK do
     end
   end
 
+  @doc """
+  Create context with pre-fetched data (synchronous).
+  """
   def create_context_with(sdk_or_result, units, data, options \\ %{})
 
   def create_context_with({:ok, sdk}, units, data, options),
@@ -219,6 +174,9 @@ defmodule ABSmartly.SDK do
       |> Map.put(:units, units)
       |> Types.ContextConfig.from_options()
 
-    Context.start_link(sdk.config, data, context_config)
+    DynamicSupervisor.start_child(
+      ABSmartly.ContextSupervisor,
+      {Context, [sdk.config, data, context_config]}
+    )
   end
 end

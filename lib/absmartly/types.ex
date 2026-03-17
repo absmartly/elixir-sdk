@@ -246,13 +246,10 @@ defmodule ABSmartly.Types do
     end
 
     defp get_opt(opts, string_key, atom_key, default) do
-      case Map.fetch(opts, string_key) do
-        {:ok, val} when not is_nil(val) -> val
-        _ ->
-          case Map.fetch(opts, atom_key) do
-            {:ok, val} when not is_nil(val) -> val
-            _ -> default
-          end
+      cond do
+        Map.has_key?(opts, string_key) -> Map.get(opts, string_key, default)
+        Map.has_key?(opts, atom_key) -> Map.get(opts, atom_key, default)
+        true -> default
       end
     end
   end

@@ -54,14 +54,7 @@ defmodule ABSmartly.HTTP.Client do
     url = "#{endpoint}/events"
     headers = build_headers(api_key, application, environment)
 
-    # Fixes CRITICAL-07: Use safe Jason.encode instead of encode!
-    body_data = %{
-      "application" => application,
-      "environment" => environment,
-      "events" => events
-    }
-
-    case Jason.encode(body_data) do
+    case Jason.encode(events) do
       {:ok, body} ->
         request_fn = fn ->
           HTTPoison.post(url, body, headers, timeout: 30_000, recv_timeout: 30_000, follow_redirect: true)
@@ -91,7 +84,13 @@ defmodule ABSmartly.HTTP.Client do
   # Fixes CRITICAL-16: Unified retry logic for GET and POST
   # Fixes CRITICAL-08: Handle 3xx redirects
   # Fixes CRITICAL-05: Sanitize HTTPoison errors to prevent API key exposure
-  defp with_retry(request_fn, max_retries, attempt \\ 0) do
+  defp with_retry(request_fn, max_retries, attempt \\ 0)
+
+  defp with_retry(request_fn, max_retries, attempt) when max_retries > 10 do
+    with_retry(request_fn, 10, attempt)
+  end
+
+  defp with_retry(request_fn, max_retries, attempt) do
     case request_fn.() do
       {:ok, %HTTPoison.Response{status_code: status, body: body}}
       when status >= 200 and status < 300 ->

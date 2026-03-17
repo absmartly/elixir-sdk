@@ -47,16 +47,9 @@ defmodule ABSmartly.Matcher do
         end
 
       filter_expr when is_list(filter_expr) ->
-        # Convert attributes to a map for JSONExpr evaluation
         vars = attributes_to_vars(attributes)
 
-        # Filter is an array of expressions (OR logic)
-        Enum.any?(filter_expr, fn expr ->
-          case Evaluator.evaluate(expr, vars) do
-            true -> true
-            _ -> false
-          end
-        end)
+        Evaluator.evaluate(filter_expr, vars) == true
 
       other ->
         # Fixes HIGH-07: Log and fail closed for non-list filter
