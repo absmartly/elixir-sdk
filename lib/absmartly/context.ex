@@ -985,8 +985,9 @@ defmodule ABSmartly.Context do
 
       new_state = %{state | exposures: [], goals: [], exposure_count: 0, goal_count: 0}
 
+      publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
       task = Task.async(fn ->
-        HTTP.Client.publish_events(
+        publisher.publish(
           state.sdk_config.endpoint,
           state.sdk_config.api_key,
           state.sdk_config.application,
@@ -1017,7 +1018,8 @@ defmodule ABSmartly.Context do
     if state.exposures != [] or state.goals != [] do
       event_map = build_publish_event_map(state)
 
-      case HTTP.Client.publish_events(
+      publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
+      case publisher.publish(
              state.sdk_config.endpoint,
              state.sdk_config.api_key,
              state.sdk_config.application,

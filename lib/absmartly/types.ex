@@ -14,7 +14,8 @@ defmodule ABSmartly.Types do
       :application,
       :environment,
       retries: 5,
-      timeout: 3000
+      timeout: 3000,
+      publisher: ABSmartly.DefaultContextPublisher
     ]
   end
 
