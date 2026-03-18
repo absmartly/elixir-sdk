@@ -441,9 +441,9 @@ after_parse({data, StreamID, IsFin, Data, State0=#state{opts=Opts, buffer=Buffer
 		cowboy:log(cowboy_stream:make_error_log(data,
 			[StreamID, IsFin, Data, StreamState0],
 			Class, Exception, Stacktrace), Opts),
-		%% @todo Should call parse after this.
-		stream_terminate(State0, StreamID, {internal_error, {Class, Exception},
-			'Unhandled exception in cowboy_stream:data/4.'})
+		State1 = stream_terminate(State0, StreamID, {internal_error, {Class, Exception},
+			'Unhandled exception in cowboy_stream:data/4.'}),
+		parse(Buffer, State1)
 	end;
 %% No corresponding stream. We must skip the body of the previous request
 %% in order to process the next one.

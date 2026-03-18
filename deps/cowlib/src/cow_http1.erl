@@ -181,16 +181,9 @@ parse_header(Data, Acc) ->
 parse_hd_name(<< C, Rest/bits >>, Acc, SoFar) ->
 	case C of
 		$: -> parse_hd_before_value(Rest, Acc, SoFar);
-		$\s -> parse_hd_name_ws(Rest, Acc, SoFar);
-		$\t -> parse_hd_name_ws(Rest, Acc, SoFar);
+		$\s -> erlang:error(badarg);
+		$\t -> erlang:error(badarg);
 		_ -> ?LOWER(parse_hd_name, Rest, Acc, SoFar)
-	end.
-
-parse_hd_name_ws(<< C, Rest/bits >>, Acc, Name) ->
-	case C of
-		$: -> parse_hd_before_value(Rest, Acc, Name);
-		$\s -> parse_hd_name_ws(Rest, Acc, Name);
-		$\t -> parse_hd_name_ws(Rest, Acc, Name)
 	end.
 
 parse_hd_before_value(<< $\s, Rest/bits >>, Acc, Name) ->

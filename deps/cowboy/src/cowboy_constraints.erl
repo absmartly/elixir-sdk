@@ -34,7 +34,7 @@ validate(Value, Constraint) ->
 -spec reverse(any(), constraint() | [constraint()])
 	-> {ok, binary()} | {error, reason()}.
 reverse(Value, Constraints) when is_list(Constraints) ->
-	apply_list(reverse, Value, Constraints);
+	apply_list(reverse, Value, lists:reverse(Constraints));
 reverse(Value, Constraint) ->
 	apply_list(reverse, Value, [Constraint]).
 
