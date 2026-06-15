@@ -217,34 +217,41 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
   end
 
   describe "in operator" do
+    # Operand order is haystack-first: [haystack, needle].
     test "checks string containment" do
-      expr = %{"in" => [%{"value" => "bc"}, %{"value" => "abcd"}]}
+      expr = %{"in" => [%{"value" => "abcd"}, %{"value" => "bc"}]}
       assert Evaluator.evaluate(expr, %{}) == true
     end
 
     test "checks string not contained" do
-      expr = %{"in" => [%{"value" => "xyz"}, %{"value" => "abcd"}]}
+      expr = %{"in" => [%{"value" => "abcd"}, %{"value" => "xyz"}]}
       assert Evaluator.evaluate(expr, %{}) == false
     end
 
     test "checks array containment" do
-      expr = %{"in" => [%{"value" => 2}, %{"value" => [1, 2, 3]}]}
+      expr = %{"in" => [%{"value" => [1, 2, 3]}, %{"value" => 2}]}
       assert Evaluator.evaluate(expr, %{}) == true
     end
 
     test "checks array not contained" do
-      expr = %{"in" => [%{"value" => 4}, %{"value" => [1, 2, 3]}]}
+      expr = %{"in" => [%{"value" => [1, 2, 3]}, %{"value" => 4}]}
       assert Evaluator.evaluate(expr, %{}) == false
     end
 
     test "returns false for nil needle" do
-      expr = %{"in" => [%{"value" => nil}, %{"value" => [1, 2]}]}
+      expr = %{"in" => [%{"value" => [1, 2]}, %{"value" => nil}]}
       assert Evaluator.evaluate(expr, %{}) == false
     end
 
     test "returns false for nil haystack" do
-      expr = %{"in" => [%{"value" => 1}, %{"value" => nil}]}
+      expr = %{"in" => [%{"value" => nil}, %{"value" => 1}]}
       assert Evaluator.evaluate(expr, %{}) == false
+    end
+
+    test "contains is an alias for in (haystack-first)" do
+      assert Evaluator.evaluate(%{"contains" => [%{"value" => [1, 2, 3]}, %{"value" => 2}]}, %{}) == true
+      assert Evaluator.evaluate(%{"contains" => [%{"value" => "abcd"}, %{"value" => "bc"}]}, %{}) == true
+      assert Evaluator.evaluate(%{"contains" => [%{"value" => [1, 2, 3]}, %{"value" => 4}]}, %{}) == false
     end
   end
 

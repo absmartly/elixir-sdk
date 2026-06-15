@@ -53,7 +53,8 @@ defmodule ABSmartly.JSONExpr.Evaluator do
       Map.has_key?(expr, "gte") -> eval_gte(expr["gte"], vars)
       Map.has_key?(expr, "lt") -> eval_lt(expr["lt"], vars)
       Map.has_key?(expr, "lte") -> eval_lte(expr["lte"], vars)
-      Map.has_key?(expr, "in") -> eval_in(expr["in"], vars)
+      Map.has_key?(expr, "in") -> eval_contains(expr["in"], vars)
+      Map.has_key?(expr, "contains") -> eval_contains(expr["contains"], vars)
       Map.has_key?(expr, "match") -> eval_match(expr["match"], vars)
       # Fixes MEDIUM-21: Log unknown operators
       true ->
@@ -197,9 +198,12 @@ defmodule ABSmartly.JSONExpr.Evaluator do
 
   defp eval_lte(_args, _vars), do: false
 
-  defp eval_in([needle_expr, haystack_expr], vars) do
-    needle = evaluate(needle_expr, vars)
+  # CONTAINS operator (also registered under the legacy alias "in").
+  # Operand order is haystack-first: [haystack, needle]. This matches the
+  # collector and the other ABsmartly SDKs.
+  defp eval_contains([haystack_expr, needle_expr], vars) do
     haystack = evaluate(haystack_expr, vars)
+    needle = evaluate(needle_expr, vars)
 
     cond do
       is_nil(needle) or is_nil(haystack) ->
@@ -221,7 +225,7 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     end
   end
 
-  defp eval_in(_args, _vars), do: false
+  defp eval_contains(_args, _vars), do: false
 
   # Fixes CRITICAL-04, HIGH-10: ReDoS protection with pattern validation and timeout
   defp eval_match([text_expr, pattern_expr], vars) do
