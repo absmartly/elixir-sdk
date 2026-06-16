@@ -57,8 +57,9 @@ defmodule ABSmartly.Context do
     GenServer.start_link(__MODULE__, {sdk_config, data, context_config, data_fetcher})
   end
 
-  def start_link_async(sdk_config, context_config) do
-    GenServer.start_link(__MODULE__, {:async, sdk_config, context_config})
+  def start_link_async(sdk_config, context_config, opts \\ []) do
+    data_fetcher = Keyword.get(opts, :data_fetcher)
+    GenServer.start_link(__MODULE__, {:async, sdk_config, context_config, data_fetcher})
   end
 
   def set_data(context, data) do
@@ -221,6 +222,10 @@ defmodule ABSmartly.Context do
 
   @impl true
   def init({:async, sdk_config, context_config}) do
+    init({:async, sdk_config, context_config, nil})
+  end
+
+  def init({:async, sdk_config, context_config, data_fetcher}) do
     empty_data = %Types.ContextData{experiments: []}
     state = %__MODULE__{
       sdk_config: sdk_config,
@@ -242,6 +247,7 @@ defmodule ABSmartly.Context do
       event_handler: context_config.event_handler,
       exposed_experiments: MapSet.new(),
       audience_cache: %{},
+      data_fetcher: data_fetcher,
       pending_waiters: [],
       exposure_count: 0,
       goal_count: 0
