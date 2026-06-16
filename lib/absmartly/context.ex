@@ -1410,18 +1410,18 @@ defmodule ABSmartly.Context do
 
   defp emit_event(state, event_type, data) do
     if state.event_handler do
-      Task.start(fn ->
-        try do
-          state.event_handler.(event_type, data)
-        rescue
-          exception ->
-            Logger.error("""
-            Event handler crashed for event #{event_type}
-            Exception: #{Exception.format(:error, exception, __STACKTRACE__)}
-            Data: #{inspect(data)}
-            """)
-        end
-      end)
+      # Deliver synchronously so events are observable immediately after the
+      # operation that produced them returns (e.g. track() -> goal event).
+      try do
+        state.event_handler.(event_type, data)
+      rescue
+        exception ->
+          Logger.error("""
+          Event handler crashed for event #{event_type}
+          Exception: #{Exception.format(:error, exception, __STACKTRACE__)}
+          Data: #{inspect(data)}
+          """)
+      end
     end
 
     :ok
