@@ -247,7 +247,66 @@ defmodule ABSmartly.Context do
       goal_count: 0
     }
 
-    {:ok, state}
+    {:ok, state, {:continue, :fetch_async}}
+  end
+
+  @impl true
+  def handle_continue(:fetch_async, state) do
+    # Fetch context data off the GenServer process so the context stays
+    # responsive (set_unit/set_attribute/set_failed/wait_until_ready) while the
+    # request is in flight, mirroring the future/callback model of the other SDKs.
+    server = self()
+    fetcher = state.data_fetcher
+
+    spawn(fn ->
+      result =
+        if fetcher do
+          fetcher.()
+        else
+          ABSmartly.HTTP.Client.fetch_context(
+            state.sdk_config.endpoint,
+            state.sdk_config.api_key,
+            state.sdk_config.application,
+            state.sdk_config.environment
+          )
+        end
+
+      send(server, {:fetch_async_complete, result})
+    end)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:fetch_async_complete, _result}, %{ready: true} = state), do: {:noreply, state}
+  def handle_info({:fetch_async_complete, _result}, %{failed: true} = state), do: {:noreply, state}
+
+  def handle_info({:fetch_async_complete, {:ok, data}}, state) do
+    context_data = Types.ContextData.from_map(data)
+    {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
+    state = %{state |
+      data: context_data,
+      ready: true,
+      variable_index: var_index,
+      experiment_index: exp_index,
+      audience_cache: aud_cache
+    }
+
+    for waiter <- state.pending_waiters do
+      GenServer.reply(waiter, :ok)
+    end
+    state = %{state | pending_waiters: []}
+
+    emit_event(state, :ready, %{experiments: context_data.experiments})
+    {:noreply, state}
+  end
+
+  def handle_info({:fetch_async_complete, {:error, reason}}, state) do
+    state = %{state | failed: true, failed_reason: reason}
+    for waiter <- state.pending_waiters do
+      GenServer.reply(waiter, {:error, reason})
+    end
+    {:noreply, %{state | pending_waiters: []}}
   end
 
   @impl true
