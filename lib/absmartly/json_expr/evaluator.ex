@@ -141,10 +141,15 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     lhs = evaluate(lhs_expr, vars)
     rhs = evaluate(rhs_expr, vars)
 
-    case compare(lhs, rhs) do
-      0 -> true
-      nil -> false
-      _ -> false
+    # A null operand short-circuits to null (canonical: eq does not treat
+    # null == null as a match), matching the other SDKs and the collector.
+    if is_nil(lhs) or is_nil(rhs) do
+      nil
+    else
+      case compare(lhs, rhs) do
+        0 -> true
+        _ -> false
+      end
     end
   end
 

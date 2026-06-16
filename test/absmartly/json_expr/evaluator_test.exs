@@ -164,7 +164,8 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(%{"eq" => [%{"value" => 1}, %{"value" => 1}]}, %{}) == true
       assert Evaluator.evaluate(%{"eq" => [%{"value" => "abc"}, %{"value" => "abc"}]}, %{}) == true
       assert Evaluator.evaluate(%{"eq" => [%{"value" => true}, %{"value" => true}]}, %{}) == true
-      assert Evaluator.evaluate(%{"eq" => [%{"value" => nil}, %{"value" => nil}]}, %{}) == true
+      # A null operand short-circuits to nil (canonical: null == null is not a match).
+      assert Evaluator.evaluate(%{"eq" => [%{"value" => nil}, %{"value" => nil}]}, %{}) == nil
     end
 
     test "compares unequal values" do
@@ -173,9 +174,9 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(%{"eq" => [%{"value" => true}, %{"value" => false}]}, %{}) == false
     end
 
-    test "returns false for incomparable types" do
-      assert Evaluator.evaluate(%{"eq" => [%{"value" => 1}, %{"value" => nil}]}, %{}) == false
-      assert Evaluator.evaluate(%{"eq" => [%{"value" => nil}, %{"value" => 1}]}, %{}) == false
+    test "returns nil for incomparable / null types" do
+      assert Evaluator.evaluate(%{"eq" => [%{"value" => 1}, %{"value" => nil}]}, %{}) == nil
+      assert Evaluator.evaluate(%{"eq" => [%{"value" => nil}, %{"value" => 1}]}, %{}) == nil
     end
   end
 
