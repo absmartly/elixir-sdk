@@ -51,13 +51,13 @@ defmodule ABSmartly.HTTP.Client do
   Fixes CRITICAL-07: Rescue Jason.encode! errors.
   """
   def publish_events(endpoint, api_key, application, environment, events, retries \\ 3) do
-    url = "#{endpoint}/events"
+    url = "#{endpoint}/context"
     headers = build_headers(api_key, application, environment)
 
     case Jason.encode(events) do
       {:ok, body} ->
         request_fn = fn ->
-          HTTPoison.post(url, body, headers, timeout: 30_000, recv_timeout: 30_000, follow_redirect: true)
+          HTTPoison.put(url, body, headers, timeout: 30_000, recv_timeout: 30_000, follow_redirect: true)
         end
 
         case with_retry(request_fn, retries) do
@@ -77,6 +77,8 @@ defmodule ABSmartly.HTTP.Client do
       {"X-API-Key", api_key},
       {"X-Application", application},
       {"X-Environment", environment},
+      {"X-Application-Version", "0"},
+      {"X-Agent", "absmartly-elixir-sdk"},
       {"Content-Type", "application/json"}
     ]
   end
