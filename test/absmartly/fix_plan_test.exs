@@ -460,6 +460,9 @@ defmodule ABSmartly.FixPlanTest do
   # Fix #39: Retry cap
   describe "fix #39 - retry cap" do
     test "HTTP client caps retries at 10" do
+      # function_exported?/3 does not load the module; without this the result
+      # depends on whether an earlier test already loaded it.
+      Code.ensure_loaded!(ABSmartly.HTTP.Client)
       assert function_exported?(ABSmartly.HTTP.Client, :fetch_context, 5)
     end
   end
