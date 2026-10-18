@@ -251,7 +251,8 @@ defmodule ABSmartly.ContextTest do
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
       application: "website",
-      environment: "development"
+      environment: "development",
+      publisher: ABSmartly.Test.OkPublisher
     }
     context_data = Types.ContextData.from_map(response)
     context_config = %Types.ContextConfig{
@@ -269,7 +270,8 @@ defmodule ABSmartly.ContextTest do
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
       application: "website",
-      environment: "development"
+      environment: "development",
+      publisher: ABSmartly.Test.OkPublisher
     }
     context_data = Types.ContextData.from_map(response)
     context_config = %Types.ContextConfig{

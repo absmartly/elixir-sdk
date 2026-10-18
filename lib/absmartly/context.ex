@@ -308,11 +308,7 @@ defmodule ABSmartly.Context do
   end
 
   def handle_info({:fetch_async_complete, {:error, reason}}, state) do
-    state = %{state | failed: true, failed_reason: reason}
-    for waiter <- state.pending_waiters do
-      GenServer.reply(waiter, {:error, reason})
-    end
-    {:noreply, %{state | pending_waiters: []}}
+    {:noreply, mark_failed(state, reason)}
   end
 
   @impl true
@@ -374,12 +370,7 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call({:set_failed, reason}, _from, state) do
-    state = %{state | failed: true, failed_reason: reason}
-    for waiter <- state.pending_waiters do
-      GenServer.reply(waiter, {:error, reason})
-    end
-    state = %{state | pending_waiters: []}
-    {:reply, :ok, state}
+    {:reply, :ok, mark_failed(state, reason)}
   end
 
   @impl true
@@ -393,7 +384,7 @@ defmodule ABSmartly.Context do
       state.ready ->
         {:reply, :ok, state}
       state.failed ->
-        {:reply, {:error, :failed}, state}
+        {:reply, {:error, state.failed_reason}, state}
       true ->
         {:noreply, %{state | pending_waiters: [from | state.pending_waiters]}}
     end
@@ -636,13 +627,17 @@ defmodule ABSmartly.Context do
     if state.finalized or state.finalizing do
       {:reply, :ok, state}
     else
-      state = %{state | finalizing: true}
+      case do_publish(%{state | finalizing: true}) do
+        {:ok, new_state} ->
+          new_state = %{new_state | finalized: true, finalizing: false}
+          emit_event(new_state, :finalize, nil)
+          {:reply, :ok, new_state}
 
-      {_result, new_state} = do_publish(state)
-
-      new_state = %{new_state | finalized: true, finalizing: false}
-      emit_event(new_state, :finalize, nil)
-      {:reply, :ok, new_state}
+        # The context stays open with its events queued, so finalize/1 can be
+        # retried.
+        {{:error, _reason} = error, new_state} ->
+          {:reply, error, %{new_state | finalizing: false}}
+      end
     end
   end
 
@@ -1042,40 +1037,63 @@ defmodule ABSmartly.Context do
     state
   end
 
+  # Sends the queued exposures and goals to the publisher. The queues are only
+  # cleared once the publisher accepts them; on any failure they are kept for
+  # the next publish/finalize, an `:error` event is emitted and
+  # `{:error, reason}` is returned. The `:publish` event is emitted only after
+  # the publisher succeeds.
+  #
+  # The GenServer is blocked for the duration of the call, so no events can be
+  # queued in between and the state can be used as-is on either outcome.
   defp do_publish(state) do
     if state.exposures != [] or state.goals != [] do
       event_map = build_publish_event_map(state)
 
-      emit_event(state, :publish, event_map)
-
-      new_state = %{state | exposures: [], goals: [], exposure_count: 0, goal_count: 0}
-
-      publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
-      task = Task.async(fn ->
-        publisher.publish(
-          state.sdk_config.endpoint,
-          state.sdk_config.api_key,
-          state.sdk_config.application,
-          state.sdk_config.environment,
-          event_map,
-          state.sdk_config.retries
-        )
-      end)
-
-      case Task.yield(task, 5000) || Task.shutdown(task) do
-        {:ok, :ok} ->
+      case run_publisher(state, event_map) do
+        :ok ->
           Logger.info("Successfully published #{state.exposure_count} exposures and #{state.goal_count} goals")
+          emit_event(state, :publish, event_map)
+          {:ok, %{state | exposures: [], goals: [], exposure_count: 0, goal_count: 0}}
 
-        {:ok, {:error, reason}} ->
-          Logger.error("Failed to publish events: #{inspect(reason)}")
-
-        nil ->
-          Logger.error("Publish timed out, events may be lost")
+        {:error, reason} ->
+          Logger.error("Failed to publish events, keeping them queued: #{inspect(reason)}")
+          emit_event(state, :error, reason)
+          {{:error, reason}, state}
       end
-
-      {:ok, new_state}
     else
       {:ok, state}
+    end
+  end
+
+  @publish_timeout 5000
+
+  defp run_publisher(state, event_map) do
+    publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
+
+    task =
+      Task.async(fn ->
+        try do
+          publisher.publish(
+            state.sdk_config.endpoint,
+            state.sdk_config.api_key,
+            state.sdk_config.application,
+            state.sdk_config.environment,
+            event_map,
+            state.sdk_config.retries
+          )
+        rescue
+          exception -> {:error, Exception.message(exception)}
+        catch
+          kind, reason -> {:error, {kind, reason}}
+        end
+      end)
+
+    case Task.yield(task, @publish_timeout) || Task.shutdown(task) do
+      {:ok, :ok} -> :ok
+      {:ok, {:error, _reason} = error} -> error
+      {:ok, other} -> {:error, {:unexpected_publisher_result, other}}
+      {:exit, reason} -> {:error, {:exit, reason}}
+      nil -> {:error, "Publish timed out"}
     end
   end
 
@@ -1471,6 +1489,18 @@ defmodule ABSmartly.Context do
         acc
       end
     end)
+  end
+
+  # Marks the context as failed to load, wakes up wait_until_ready/2 callers
+  # with the reason, and reports it through the `:error` event.
+  defp mark_failed(state, reason) do
+    for waiter <- state.pending_waiters do
+      GenServer.reply(waiter, {:error, reason})
+    end
+
+    state = %{state | failed: true, failed_reason: reason, pending_waiters: []}
+    emit_event(state, :error, reason)
+    state
   end
 
   defp emit_event(state, event_type, data) do

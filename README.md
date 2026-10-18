@@ -246,18 +246,22 @@ Context.track(context, "purchase", %{
 Sometimes it is necessary to ensure all events have been published to the ABsmartly collector before proceeding. You can explicitly call the `publish/1` function.
 
 ```elixir
-Context.publish(context)
+:ok = Context.publish(context)
 ```
+
+If the publisher fails, `publish/1` returns `{:error, reason}`, emits an `error` event and keeps the pending exposures and goals queued, so a later `publish/1` or `finalize/1` sends them again.
 
 ### Finalizing
 
 The `finalize/1` function will ensure all events have been published to the ABsmartly collector, like `publish/1`, and will also "seal" the context, preventing any further events from being tracked.
 
 ```elixir
-Context.finalize(context)
+:ok = Context.finalize(context)
 
 true = Context.is_finalized?(context)
 ```
+
+If publishing fails, `finalize/1` returns `{:error, reason}` and the context stays open with its events queued, so `finalize/1` can be called again.
 
 ### Custom Event Logger
 
@@ -267,7 +271,7 @@ The ABsmartly SDK supports custom event logging for debugging, analytics, or int
 
 | Event      | When                                         | Data                                 |
 |------------|----------------------------------------------|--------------------------------------|
-| `error`    | Context receives an error                    | Error details                        |
+| `error`    | Context data fails to load, or `publish/1` / `finalize/1` fails | Error reason                         |
 | `ready`    | Context turns ready                          | ContextData used to initialize       |
 | `refresh`  | `refresh/2` succeeds                         | ContextData used to refresh          |
 | `publish`  | `publish/1` succeeds                         | Published events data                |

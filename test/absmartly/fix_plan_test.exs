@@ -62,7 +62,8 @@ defmodule ABSmartly.FixPlanTest do
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
       application: "website",
-      environment: "development"
+      environment: "development",
+      publisher: ABSmartly.Test.OkPublisher
     }
     context_data = Types.ContextData.from_map(response)
     context_config = %Types.ContextConfig{
@@ -80,7 +81,8 @@ defmodule ABSmartly.FixPlanTest do
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
       application: "website",
-      environment: "development"
+      environment: "development",
+      publisher: ABSmartly.Test.OkPublisher
     }
     context_data = Types.ContextData.from_map(response)
     context_config = %Types.ContextConfig{
@@ -274,7 +276,8 @@ defmodule ABSmartly.FixPlanTest do
         endpoint: "https://test.absmartly.io/v1",
         api_key: "test-api-key",
         application: "website",
-        environment: "development"
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
       }
       context_config = %Types.ContextConfig{
         units: @context_params,
@@ -294,7 +297,8 @@ defmodule ABSmartly.FixPlanTest do
         endpoint: "https://test.absmartly.io/v1",
         api_key: "test-api-key",
         application: "website",
-        environment: "development"
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
       }
       context_config = %Types.ContextConfig{
         units: @context_params,
@@ -467,7 +471,8 @@ defmodule ABSmartly.FixPlanTest do
         endpoint: "https://test.absmartly.io/v1",
         api_key: "test-api-key",
         application: "website",
-        environment: "development"
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
       }
       context_data = Types.ContextData.from_map(@get_context_response)
       context_config = %Types.ContextConfig{
@@ -510,7 +515,8 @@ defmodule ABSmartly.FixPlanTest do
         endpoint: "https://test.absmartly.io/v1",
         api_key: "test-api-key",
         application: "website",
-        environment: "development"
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
       }
       context_data = Types.ContextData.from_map(@get_context_response)
       context_config = %Types.ContextConfig{
@@ -645,7 +651,8 @@ defmodule ABSmartly.FixPlanTest do
         endpoint: "https://test.absmartly.io/v1",
         api_key: "test-api-key",
         application: "website",
-        environment: "development"
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
       }
       context_config = %Types.ContextConfig{
         units: @context_params,
