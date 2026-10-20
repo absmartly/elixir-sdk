@@ -25,7 +25,7 @@ defmodule ABSmartly.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:httpoison, "~> 2.0"},
+      {:httpoison, "~> 3.0"},
       {:murmur, "~> 2.0"},
       {:ex_doc, "~> 0.30", only: :dev, runtime: false}
     ]
