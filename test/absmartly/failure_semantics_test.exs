@@ -271,5 +271,23 @@ defmodule ABSmartly.FailureSemanticsTest do
 
       assert_receive {:DOWN, ^ref, :process, ^ctx, _}, 1_000
     end
+
+    test "dispose/1 is not held up by a blocking publisher at termination" do
+      defmodule BlockingPublisher do
+        def publish(_e, _k, _a, _env, _events, _retries), do: {:error, "first"}
+      end
+
+      {:ok, sdk} =
+        ABSmartly.SDK.new(endpoint: "http://127.0.0.1:1", api_key: "k", application: "app", environment: "test", retries: 0, timeout: 50)
+
+      sdk = %{sdk | config: Map.put(sdk.config, :publisher, BlockingPublisher)}
+      {:ok, ctx} = ABSmartly.SDK.create_context_async(sdk, %{"user_id" => "u1"})
+      :ok = Context.set_data(ctx, %{"experiments" => []})
+      :ok = Context.track(ctx, "goal", %{})
+      t0 = System.monotonic_time(:millisecond)
+      assert {:error, {:disposed_unpublished, "first"}} = Context.dispose(ctx, attempts: 1)
+      assert System.monotonic_time(:millisecond) - t0 < 2_000
+      refute Process.alive?(ctx)
+    end
   end
 end

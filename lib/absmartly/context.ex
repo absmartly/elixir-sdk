@@ -181,8 +181,8 @@ defmodule ABSmartly.Context do
   Use this at the end of a request/session lifecycle. Disposal always releases
   the process: if the final publish keeps failing, it is retried up to
   `:attempts` times (default 3, with `:backoff` ms between attempts, default
-  100), after which the process is stopped anyway (one last publish is
-  attempted on termination) and `{:error, {:disposed_unpublished, reason}}` is
+  100), after which the unpublished events are discarded, the process is
+  stopped anyway and `{:error, {:disposed_unpublished, reason}}` is
   returned so the caller can observe that events were not delivered. Returns
   `:ok` when everything was published.
 
@@ -194,6 +194,16 @@ defmodule ABSmartly.Context do
     backoff = Keyword.get(opts, :backoff, 100)
 
     result = finalize_with_retries(context, attempts, backoff)
+
+    # Events that could not be published are dropped (and reported below) so the
+    # termination hook makes no further, unbounded publisher call.
+    if result != :ok do
+      try do
+        GenServer.call(context, :discard_pending, 5_000)
+      catch
+        :exit, _ -> :ok
+      end
+    end
 
     try do
       GenServer.stop(context, :normal)
@@ -711,6 +721,11 @@ defmodule ABSmartly.Context do
   end
 
   @impl true
+  def handle_call(:discard_pending, _from, state) do
+    {:reply, :ok, %{state | exposures: [], goals: []}}
+  end
+
+  @impl true
   def handle_call(:refresh, _from, state) do
     fetch_result = if state.data_fetcher do
       state.data_fetcher.()
@@ -1190,9 +1205,9 @@ defmodule ABSmartly.Context do
   defp do_publish_sync(state) do
     if state.exposures != [] or state.goals != [] do
       event_map = build_publish_event_map(state)
+      sync_state = %{state | sdk_config: %{state.sdk_config | retries: min(state.sdk_config.retries, 1)}}
 
-      publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
-      case call_publisher(publisher, %{state.sdk_config | retries: min(state.sdk_config.retries, 1)}, event_map) do
+      case run_publisher(sync_state, event_map) do
         :ok ->
           Logger.info("Successfully published pending data on terminate")
 
