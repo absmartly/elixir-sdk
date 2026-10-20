@@ -238,5 +238,18 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert {:error, _} = ABSmartly.HTTP.Client.fetch_context("http://127.0.0.1:#{port}", "k", "a", "e", 0, 100)
       assert System.monotonic_time(:millisecond) - t0 < 1_000
     end
+
+    test "dispose/1 finalizes and releases the supervised context process" do
+      {:ok, sdk} =
+        ABSmartly.SDK.new(endpoint: "http://127.0.0.1:1", api_key: "k", application: "app", environment: "test", retries: 0, timeout: 200)
+
+      {:ok, ctx} = ABSmartly.SDK.create_context_async(sdk, %{"user_id" => "u1"})
+      ref = Process.monitor(ctx)
+      before = DynamicSupervisor.count_children(ABSmartly.ContextSupervisor).active
+      assert :ok = Context.dispose(ctx)
+      assert_receive {:DOWN, ^ref, :process, ^ctx, _}, 1_000
+      refute Process.alive?(ctx)
+      assert DynamicSupervisor.count_children(ABSmartly.ContextSupervisor).active < before
+    end
   end
 end

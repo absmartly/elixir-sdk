@@ -263,6 +263,8 @@ true = Context.is_finalized?(context)
 
 If publishing fails, `finalize/1` returns `{:error, reason}` and the context stays open with its events queued, so `finalize/1` can be called again.
 
+`finalize/1` keeps the context process alive so it can still be inspected. For request- or session-scoped contexts, call `Context.dispose/1` instead: it finalizes and then stops the process, releasing the supervised process and its retained state. Inspect the context (for example `is_finalized?/1`) before disposing, since the pid is dead afterwards.
+
 ### Custom Event Logger
 
 The ABsmartly SDK supports custom event logging for debugging, analytics, or integrating with other systems. Event loggers can be set at the SDK level or per-context.
@@ -354,7 +356,7 @@ defmodule MyAppWeb.ProductController do
         treatment = Context.treatment(context, "exp_product_layout")
 
         Context.publish(context)
-        Context.finalize(context)
+        Context.dispose(context)
 
         case treatment do
           0 -> render(conn, "show_control.html")
@@ -417,7 +419,7 @@ defmodule MyAppWeb.ProductLive do
 
   def terminate(_reason, socket) do
     if context = socket.assigns.context do
-      Context.finalize(context)
+      Context.dispose(context)
     end
 
     :ok
@@ -481,7 +483,7 @@ defmodule MyAppWeb.Plugs.ABSmartlyContext do
   defp finalize_context(conn) do
     if context = conn.assigns[:absmartly_context] do
       Context.publish(context)
-      Context.finalize(context)
+      Context.dispose(context)
     end
 
     conn

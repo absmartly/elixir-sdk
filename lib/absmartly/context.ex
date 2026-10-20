@@ -174,6 +174,29 @@ defmodule ABSmartly.Context do
     finalize(context)
   end
 
+  @doc """
+  Finalizes the context and then stops its process, releasing the supervised
+  process and everything it retains (data, attributes, assignment caches).
+
+  Use this at the end of a request/session lifecycle. Returns `:ok` once the
+  process has been stopped, or `{:error, reason}` (leaving the context running
+  so it can be retried) if the final publish fails. After `dispose/1` the pid is
+  dead, so inspection helpers such as `is_finalized?/1` must be called before it.
+  """
+  def dispose(context) do
+    case finalize(context) do
+      :ok ->
+        try do
+          GenServer.stop(context, :normal)
+        catch
+          :exit, _ -> :ok
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   def refresh(context) do
     GenServer.call(context, :refresh, :infinity)
   end

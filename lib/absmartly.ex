@@ -26,8 +26,8 @@ defmodule ABSmartly do
       # Publish events
       ABSmartly.Context.publish(context)
 
-      # Finalize
-      ABSmartly.Context.finalize(context)
+      # Finalize and release the context process
+      ABSmartly.Context.dispose(context)
 
   ## Pipe-friendly API
 
