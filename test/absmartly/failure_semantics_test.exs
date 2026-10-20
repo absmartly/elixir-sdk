@@ -207,5 +207,22 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Context.ready_error(ctx) == :fetch_error
       assert_received {:context_event, :error, :fetch_error}
     end
+
+    test "SDK.create_context_async/3 starts a supervised context that reaches a terminal state" do
+      {:ok, sdk} =
+        ABSmartly.SDK.new(
+          endpoint: "http://127.0.0.1:1",
+          api_key: "k",
+          application: "app",
+          environment: "test",
+          retries: 0,
+          timeout: 500
+        )
+
+      assert {:ok, ctx} = ABSmartly.SDK.create_context_async(sdk, %{"user_id" => "u1"})
+      assert is_pid(ctx)
+      assert {:error, _reason} = Context.wait_until_ready(ctx, 5_000)
+      assert Context.is_failed?(ctx) == true
+    end
   end
 end

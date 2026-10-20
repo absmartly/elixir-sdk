@@ -131,28 +131,25 @@ defmodule ABSmartly.SDK do
       |> Map.put(:units, units)
       |> Types.ContextConfig.from_options()
 
-    case DynamicSupervisor.start_child(
-           ABSmartly.ContextSupervisor,
-           {Context, [config, context_config]}
-         ) do
+    fetcher = fn ->
+      HTTP.Client.fetch_context(
+        config.endpoint,
+        config.api_key,
+        config.application,
+        config.environment,
+        config.retries
+      )
+    end
+
+    child_spec = %{
+      id: Context,
+      start: {Context, :start_link_async, [config, context_config, [data_fetcher: fetcher]]},
+      type: :worker,
+      restart: :temporary
+    }
+
+    case DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, child_spec) do
       {:ok, ctx} ->
-        Task.start_link(fn ->
-          case HTTP.Client.fetch_context(
-                 config.endpoint,
-                 config.api_key,
-                 config.application,
-                 config.environment,
-                 config.retries
-               ) do
-            {:ok, data} ->
-              Context.set_data(ctx, data)
-
-            {:error, reason} ->
-              Logger.error("Async context fetch failed: #{inspect(reason)}")
-              Context.set_failed(ctx, reason)
-          end
-        end)
-
         {:ok, ctx}
 
       {:error, reason} ->
