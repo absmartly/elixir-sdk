@@ -263,7 +263,7 @@ true = Context.is_finalized?(context)
 
 If publishing fails, `finalize/1` returns `{:error, reason}` and the context stays open with its events queued, so `finalize/1` can be called again.
 
-`finalize/1` keeps the context process alive so it can still be inspected. For request- or session-scoped contexts, call `Context.dispose/1` instead: it finalizes and then stops the process, releasing the supervised process and its retained state. Inspect the context (for example `is_finalized?/1`) before disposing, since the pid is dead afterwards.
+`finalize/1` keeps the context process alive so it can still be inspected. For request- or session-scoped contexts, call `Context.dispose/1` instead: it finalizes (retrying a failed final publish up to `:attempts` times, default 3) and then always stops the process, releasing it and its retained state. If events could not be published it returns `{:error, {:disposed_unpublished, reason}}` so you can observe the loss; the documented integrations ignore the result because the process is released either way. Inspect the context (for example `is_finalized?/1`) before disposing, since the pid is dead afterwards.
 
 ### Custom Event Logger
 
