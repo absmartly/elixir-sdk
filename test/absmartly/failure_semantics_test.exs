@@ -251,5 +251,25 @@ defmodule ABSmartly.FailureSemanticsTest do
       refute Process.alive?(ctx)
       assert DynamicSupervisor.count_children(ABSmartly.ContextSupervisor).active < before
     end
+
+    test "dispose/1 releases the process even when the final publish keeps failing" do
+      defmodule FailingPublisher do
+        def publish(_e, _k, _a, _env, _events, _retries), do: {:error, "collector down"}
+      end
+
+      {:ok, sdk} =
+        ABSmartly.SDK.new(endpoint: "http://127.0.0.1:1", api_key: "k", application: "app", environment: "test", retries: 0, timeout: 200)
+
+      sdk = %{sdk | config: Map.put(sdk.config, :publisher, FailingPublisher)}
+      {:ok, ctx} = ABSmartly.SDK.create_context_async(sdk, %{"user_id" => "u1"})
+      :ok = Context.set_data(ctx, %{"experiments" => []})
+      :ok = Context.track(ctx, "goal", %{})
+      ref = Process.monitor(ctx)
+
+      assert {:error, {:disposed_unpublished, "collector down"}} =
+               Context.dispose(ctx, attempts: 2, backoff: 1)
+
+      assert_receive {:DOWN, ^ref, :process, ^ctx, _}, 1_000
+    end
   end
 end

@@ -178,23 +178,49 @@ defmodule ABSmartly.Context do
   Finalizes the context and then stops its process, releasing the supervised
   process and everything it retains (data, attributes, assignment caches).
 
-  Use this at the end of a request/session lifecycle. Returns `:ok` once the
-  process has been stopped, or `{:error, reason}` (leaving the context running
-  so it can be retried) if the final publish fails. After `dispose/1` the pid is
-  dead, so inspection helpers such as `is_finalized?/1` must be called before it.
+  Use this at the end of a request/session lifecycle. Disposal always releases
+  the process: if the final publish keeps failing, it is retried up to
+  `:attempts` times (default 3, with `:backoff` ms between attempts, default
+  100), after which the process is stopped anyway (one last publish is
+  attempted on termination) and `{:error, {:disposed_unpublished, reason}}` is
+  returned so the caller can observe that events were not delivered. Returns
+  `:ok` when everything was published.
+
+  After `dispose/1` the pid is dead, so inspection helpers such as
+  `is_finalized?/1` must be called before it.
   """
-  def dispose(context) do
+  def dispose(context, opts \\ []) do
+    attempts = max(Keyword.get(opts, :attempts, 3), 1)
+    backoff = Keyword.get(opts, :backoff, 100)
+
+    result = finalize_with_retries(context, attempts, backoff)
+
+    try do
+      GenServer.stop(context, :normal)
+    catch
+      :exit, _ -> :ok
+    end
+
+    case result do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:disposed_unpublished, reason}}
+    end
+  end
+
+  defp finalize_with_retries(context, attempts, backoff) do
     case finalize(context) do
       :ok ->
-        try do
-          GenServer.stop(context, :normal)
-        catch
-          :exit, _ -> :ok
-        end
+        :ok
 
-      {:error, _reason} = error ->
+      {:error, _reason} = error when attempts <= 1 ->
         error
+
+      {:error, _reason} ->
+        Process.sleep(backoff)
+        finalize_with_retries(context, attempts - 1, backoff)
     end
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
   end
 
   def refresh(context) do
