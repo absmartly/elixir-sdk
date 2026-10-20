@@ -1096,6 +1096,15 @@ defmodule ABSmartly.Context do
     (retries + 1) * 2 * timeout + backoff + 1_000
   end
 
+  # Custom publishers that only implement publish/6 carry no timeout budget, so
+  # keep the historical 5s floor for them; the HTTP-derived deadline is a floor too.
+  defp publish_deadline(sdk_config, publisher) do
+    Code.ensure_loaded(publisher)
+    derived = publish_deadline(sdk_config)
+
+    if function_exported?(publisher, :publish, 7), do: derived, else: max(derived, 5_000)
+  end
+
   defp call_publisher(publisher, c, event_map) do
     Code.ensure_loaded(publisher)
 
@@ -1120,7 +1129,7 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    case Task.yield(task, publish_deadline(state.sdk_config)) || Task.shutdown(task) do
+    case Task.yield(task, publish_deadline(state.sdk_config, publisher)) || Task.shutdown(task) do
       {:ok, :ok} -> :ok
       {:ok, {:error, _reason} = error} -> error
       {:ok, other} -> {:error, {:unexpected_publisher_result, other}}
@@ -1134,14 +1143,7 @@ defmodule ABSmartly.Context do
       event_map = build_publish_event_map(state)
 
       publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
-      case publisher.publish(
-             state.sdk_config.endpoint,
-             state.sdk_config.api_key,
-             state.sdk_config.application,
-             state.sdk_config.environment,
-             event_map,
-             min(state.sdk_config.retries, 1)
-           ) do
+      case call_publisher(publisher, %{state.sdk_config | retries: min(state.sdk_config.retries, 1)}, event_map) do
         :ok ->
           Logger.info("Successfully published pending data on terminate")
 
