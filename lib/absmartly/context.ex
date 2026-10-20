@@ -162,12 +162,14 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:track, goal_name, properties})
   end
 
+  @call_timeout 30_000
+
   def publish(context) do
-    GenServer.call(context, :publish)
+    GenServer.call(context, :publish, @call_timeout)
   end
 
   def finalize(context) do
-    GenServer.call(context, :finalize)
+    GenServer.call(context, :finalize, @call_timeout)
   end
 
   def close(context) do
@@ -266,15 +268,21 @@ defmodule ABSmartly.Context do
 
     spawn(fn ->
       result =
-        if fetcher do
-          fetcher.()
-        else
-          ABSmartly.HTTP.Client.fetch_context(
-            state.sdk_config.endpoint,
-            state.sdk_config.api_key,
-            state.sdk_config.application,
-            state.sdk_config.environment
-          )
+        try do
+          if fetcher do
+            fetcher.()
+          else
+            ABSmartly.HTTP.Client.fetch_context(
+              state.sdk_config.endpoint,
+              state.sdk_config.api_key,
+              state.sdk_config.application,
+              state.sdk_config.environment
+            )
+          end
+        rescue
+          exception -> {:error, Exception.message(exception)}
+        catch
+          kind, reason -> {:error, {kind, reason}}
         end
 
       send(server, {:fetch_async_complete, result})
@@ -288,7 +296,23 @@ defmodule ABSmartly.Context do
   def handle_info({:fetch_async_complete, _result}, %{failed: true} = state), do: {:noreply, state}
 
   def handle_info({:fetch_async_complete, {:ok, data}}, state) do
-    context_data = Types.ContextData.from_map(data)
+    case safe_context_data(data) do
+      {:ok, context_data} -> complete_fetch(context_data, state)
+      {:error, reason} -> handle_info({:fetch_async_complete, {:error, reason}}, state)
+    end
+  end
+
+  def handle_info({:fetch_async_complete, {:error, reason}}, state) do
+    {:noreply, mark_failed(state, reason)}
+  end
+
+  defp safe_context_data(data) do
+    {:ok, Types.ContextData.from_map(data)}
+  rescue
+    exception -> {:error, Exception.message(exception)}
+  end
+
+  defp complete_fetch(context_data, state) do
     {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
     state = %{state |
       data: context_data,
@@ -305,10 +329,6 @@ defmodule ABSmartly.Context do
 
     emit_event(state, :ready, %{experiments: context_data.experiments})
     {:noreply, state}
-  end
-
-  def handle_info({:fetch_async_complete, {:error, reason}}, state) do
-    {:noreply, mark_failed(state, reason)}
   end
 
   @impl true
@@ -1514,8 +1534,11 @@ defmodule ABSmartly.Context do
           Logger.error("""
           Event handler crashed for event #{event_type}
           Exception: #{Exception.format(:error, exception, __STACKTRACE__)}
-          Data: #{inspect(data)}
+          Data: <redacted>
           """)
+      catch
+        kind, reason ->
+          Logger.error("Event handler for #{event_type} exited with #{inspect(kind)}: #{inspect(reason)}")
       end
     end
 

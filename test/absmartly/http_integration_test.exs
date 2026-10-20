@@ -86,13 +86,13 @@ defmodule ABSmartly.HTTPIntegrationTest do
 
     # ---- GET /context (fetch -> ready) ----
     assert get
-    assert String.starts_with?(get.path, "/context")
+    assert get.path == "/context"
     assert get.query =~ "application=website"
     assert get.query =~ "environment=test"
 
     # ---- PUT /context (publish) ----
     assert put
-    assert String.starts_with?(put.path, "/context")
+    assert put.path == "/context"
     refute put.path =~ "?"
 
     # Required auth / identity headers (exact names per the wire contract).
@@ -105,8 +105,9 @@ defmodule ABSmartly.HTTPIntegrationTest do
 
     # Body must carry the required publish fields.
     body = Jason.decode!(put.body)
-    assert is_boolean(body["hashed"])
+    assert body["hashed"] == true
     assert is_list(body["units"])
+    assert length(body["units"]) >= 1
     assert is_integer(body["publishedAt"]) and body["publishedAt"] > 0
     # We tracked a goal, so goals must be present and non-empty.
     assert is_list(body["goals"])
