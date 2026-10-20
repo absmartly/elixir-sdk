@@ -162,14 +162,12 @@ defmodule ABSmartly.Context do
     GenServer.call(context, {:track, goal_name, properties})
   end
 
-  @call_timeout 30_000
-
   def publish(context) do
-    GenServer.call(context, :publish, @call_timeout)
+    GenServer.call(context, :publish, :infinity)
   end
 
   def finalize(context) do
-    GenServer.call(context, :finalize, @call_timeout)
+    GenServer.call(context, :finalize, :infinity)
   end
 
   def close(context) do
@@ -177,7 +175,7 @@ defmodule ABSmartly.Context do
   end
 
   def refresh(context) do
-    GenServer.call(context, :refresh)
+    GenServer.call(context, :refresh, :infinity)
   end
 
   def refresh(context, new_data) do
@@ -276,7 +274,9 @@ defmodule ABSmartly.Context do
               state.sdk_config.endpoint,
               state.sdk_config.api_key,
               state.sdk_config.application,
-              state.sdk_config.environment
+              state.sdk_config.environment,
+              state.sdk_config.retries,
+              state.sdk_config.timeout
             )
           end
         rescue
@@ -670,7 +670,9 @@ defmodule ABSmartly.Context do
         state.sdk_config.endpoint,
         state.sdk_config.api_key,
         state.sdk_config.application,
-        state.sdk_config.environment
+        state.sdk_config.environment,
+        state.sdk_config.retries,
+        state.sdk_config.timeout
       )
     end
 
@@ -1085,7 +1087,24 @@ defmodule ABSmartly.Context do
     end
   end
 
-  @publish_timeout 5000
+  # Worst case for the default HTTP publisher: every attempt may spend the
+  # connect plus receive timeout, plus the exponential backoff between attempts.
+  defp publish_deadline(sdk_config) do
+    retries = min(Map.get(sdk_config, :retries) || 0, 10)
+    timeout = Map.get(sdk_config, :timeout) || 30_000
+    backoff = 50 * (:erlang.bsl(1, retries) - 1)
+    (retries + 1) * 2 * timeout + backoff + 1_000
+  end
+
+  defp call_publisher(publisher, c, event_map) do
+    Code.ensure_loaded(publisher)
+
+    if function_exported?(publisher, :publish, 7) do
+      publisher.publish(c.endpoint, c.api_key, c.application, c.environment, event_map, c.retries, c.timeout)
+    else
+      publisher.publish(c.endpoint, c.api_key, c.application, c.environment, event_map, c.retries)
+    end
+  end
 
   defp run_publisher(state, event_map) do
     publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
@@ -1093,14 +1112,7 @@ defmodule ABSmartly.Context do
     task =
       Task.async(fn ->
         try do
-          publisher.publish(
-            state.sdk_config.endpoint,
-            state.sdk_config.api_key,
-            state.sdk_config.application,
-            state.sdk_config.environment,
-            event_map,
-            state.sdk_config.retries
-          )
+          call_publisher(publisher, state.sdk_config, event_map)
         rescue
           exception -> {:error, Exception.message(exception)}
         catch
@@ -1108,7 +1120,7 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    case Task.yield(task, @publish_timeout) || Task.shutdown(task) do
+    case Task.yield(task, publish_deadline(state.sdk_config)) || Task.shutdown(task) do
       {:ok, :ok} -> :ok
       {:ok, {:error, _reason} = error} -> error
       {:ok, other} -> {:error, {:unexpected_publisher_result, other}}

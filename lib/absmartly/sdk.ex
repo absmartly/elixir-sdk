@@ -103,7 +103,8 @@ defmodule ABSmartly.SDK do
            config.api_key,
            config.application,
            config.environment,
-           config.retries
+           config.retries,
+           config.timeout
          ) do
       {:ok, data} ->
         context_data = Types.ContextData.from_map(data)
@@ -137,7 +138,8 @@ defmodule ABSmartly.SDK do
         config.api_key,
         config.application,
         config.environment,
-        config.retries
+        config.retries,
+        config.timeout
       )
     end
 

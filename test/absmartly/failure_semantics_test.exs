@@ -224,5 +224,19 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert {:error, _reason} = Context.wait_until_ready(ctx, 5_000)
       assert Context.is_failed?(ctx) == true
     end
+
+    test "SDK timeout bounds each HTTP request" do
+      {:ok, l} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(l)
+      spawn_link(fn ->
+        {:ok, c} = :gen_tcp.accept(l)
+        Process.sleep(2_000)
+        :gen_tcp.close(c)
+      end)
+
+      t0 = System.monotonic_time(:millisecond)
+      assert {:error, _} = ABSmartly.HTTP.Client.fetch_context("http://127.0.0.1:#{port}", "k", "a", "e", 0, 100)
+      assert System.monotonic_time(:millisecond) - t0 < 1_000
+    end
   end
 end

@@ -11,6 +11,8 @@ defmodule ABSmartly.HTTP.Client do
 
   require Logger
 
+  @default_timeout 30_000
+
   @doc """
   Fetch context data from API endpoint.
 
@@ -19,7 +21,7 @@ defmodule ABSmartly.HTTP.Client do
   - Don't retry on 4xx status codes
   - Exponential backoff: 50ms × 2^attempt
   """
-  def fetch_context(endpoint, api_key, application, environment, retries \\ 3) do
+  def fetch_context(endpoint, api_key, application, environment, retries \\ 3, timeout \\ @default_timeout) do
     url = "#{endpoint}/context"
     headers = build_headers(api_key, application, environment)
 
@@ -31,7 +33,7 @@ defmodule ABSmartly.HTTP.Client do
     request_fn = fn ->
       query_string = URI.encode_query(query_params)
       full_url = "#{url}?#{query_string}"
-      HTTPoison.get(full_url, headers, timeout: 30_000, recv_timeout: 30_000, follow_redirect: true)
+      HTTPoison.get(full_url, headers, timeout: timeout, recv_timeout: timeout, follow_redirect: true)
     end
 
     case with_retry(request_fn, retries) do
@@ -50,14 +52,14 @@ defmodule ABSmartly.HTTP.Client do
   Publish events to API endpoint.
   Fixes CRITICAL-07: Rescue Jason.encode! errors.
   """
-  def publish_events(endpoint, api_key, application, environment, events, retries \\ 3) do
+  def publish_events(endpoint, api_key, application, environment, events, retries \\ 3, timeout \\ @default_timeout) do
     url = "#{endpoint}/context"
     headers = build_headers(api_key, application, environment)
 
     case Jason.encode(events) do
       {:ok, body} ->
         request_fn = fn ->
-          HTTPoison.put(url, body, headers, timeout: 30_000, recv_timeout: 30_000, follow_redirect: true)
+          HTTPoison.put(url, body, headers, timeout: timeout, recv_timeout: timeout, follow_redirect: true)
         end
 
         case with_retry(request_fn, retries) do
