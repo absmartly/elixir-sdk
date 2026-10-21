@@ -304,5 +304,39 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Process.alive?(ctx)
       assert :ok = Context.refresh(ctx, %{"experiments" => []})
     end
+
+    test "split with a non-list value is rejected without killing the context" do
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      bad = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "user", "split" => 42}]}
+      assert {:error, _} = Context.refresh(ctx, bad)
+      assert Process.alive?(ctx)
+    end
+
+    test "adding a missing unit and refreshing audience targeting recalculate cached assignments" do
+      exp = fn aud ->
+        %{"id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
+          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+          "variants" => [%{"config" => nil}, %{"config" => nil}],
+          "audienceStrict" => true, "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})}
+      end
+
+      cfg = %{context_config() | units: %{}}
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), cfg,
+          data_fetcher: fn -> {:ok, %{"experiments" => [exp.(true)]}} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      assert Context.peek(ctx, "e") == 0
+      assert :ok = Context.set_unit(ctx, "user", "u")
+      assert Context.peek(ctx, "e") == 1
+      assert :ok = Context.refresh(ctx, %{"experiments" => [exp.(false)]})
+      assert Context.peek(ctx, "e") == 0
+    end
   end
 end

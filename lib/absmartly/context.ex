@@ -489,7 +489,7 @@ defmodule ABSmartly.Context do
             {:reply, {:error, "Unit '#{key}' UID already set."}, state}
           else
             state = %{state | units: Map.put(state.units, key, uid_str)}
-            {:reply, :ok, state}
+            {:reply, :ok, invalidate_assignments_for_new_units(state, [key])}
           end
       end
     end
@@ -516,8 +516,9 @@ defmodule ABSmartly.Context do
           Map.put(acc, key, uid_str)
         end)
 
+        added = Map.keys(new_units) -- Map.keys(state.units)
         state = %{state | units: new_units}
-        {:reply, :ok, state}
+        {:reply, :ok, invalidate_assignments_for_new_units(state, added)}
       catch
         {:duplicate_unit, key} ->
           {:reply, {:error, "Unit '#{key}' UID already set."}, state}
@@ -1572,6 +1573,24 @@ defmodule ABSmartly.Context do
     end)
   end
 
+  # A previously absent unit may make cached ineligible assignments stale, so
+  # drop non-overridden assignments for experiments using the newly added units.
+  defp invalidate_assignments_for_new_units(state, []), do: state
+
+  defp invalidate_assignments_for_new_units(state, added_keys) do
+    affected =
+      state.data.experiments
+      |> Enum.filter(&(to_string(&1.unit_type) in added_keys))
+      |> MapSet.new(& &1.name)
+
+    assignments =
+      Map.reject(state.assignments, fn {name, assignment} ->
+        MapSet.member?(affected, name) and not assignment.overridden
+      end)
+
+    %{state | assignments: assignments}
+  end
+
   defp invalidate_changed_assignments(assignments, old_experiments, new_experiments) do
     old_exp_map = Enum.into(old_experiments, %{}, fn exp -> {exp.name, exp} end)
     new_exp_map = Enum.into(new_experiments, %{}, fn exp -> {exp.name, exp} end)
@@ -1591,6 +1610,8 @@ defmodule ABSmartly.Context do
           old_exp.full_on_variant != new_exp.full_on_variant -> false
           old_exp.traffic_split != new_exp.traffic_split -> false
           old_exp.split != new_exp.split -> false
+          old_exp.audience != new_exp.audience -> false
+          old_exp.audience_strict != new_exp.audience_strict -> false
           true -> true
         end
 

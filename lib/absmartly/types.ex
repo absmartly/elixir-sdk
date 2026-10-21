@@ -49,6 +49,8 @@ defmodule ABSmartly.Types do
       :custom_field_values
     ]
 
+    defp validate_assignment_fields!(map, split), do: ABSmartly.Types.ExperimentValidation.validate!(map, split)
+
     @doc """
     Create ExperimentData from API JSON.
     Fixes CRITICAL-11: Validates required fields.
@@ -67,6 +69,8 @@ defmodule ABSmartly.Types do
       if is_list(split) and length(split) > 100 do
         raise ArgumentError, "Split array too large (#{length(split)}), maximum 100 variants allowed"
       end
+
+      validate_assignment_fields!(map, split)
 
       %__MODULE__{
         id: map["id"],
@@ -87,6 +91,37 @@ defmodule ABSmartly.Types do
         custom_field_values: map["customFieldValues"]
       }
     end
+  end
+
+  defmodule ExperimentValidation do
+    @moduledoc false
+    # Shape checks for the fields consumed by assignment, so schema-invalid
+    # collector payloads are rejected up front instead of crashing evaluation.
+    def validate!(map, split) do
+      check!(is_binary(map["name"]), "name must be a string")
+      check!(is_binary(map["unitType"]), "unitType must be a string")
+      check!(number_list?(split), "split must be a list of numbers")
+
+      traffic = map["trafficSplit"]
+      check!(is_nil(traffic) or number_list?(traffic), "trafficSplit must be a list of numbers")
+
+      for key <- ["iteration", "seedHi", "seedLo", "trafficSeedHi", "trafficSeedLo", "fullOnVariant"] do
+        value = map[key]
+        check!(is_nil(value) or is_integer(value), "#{key} must be an integer")
+      end
+
+      for key <- ["variants", "applications"] do
+        value = map[key]
+        check!(is_nil(value) or is_list(value), "#{key} must be a list")
+      end
+
+      :ok
+    end
+
+    defp number_list?(list), do: is_list(list) and Enum.all?(list, &is_number/1)
+
+    defp check!(true, _msg), do: :ok
+    defp check!(_, msg), do: raise(ArgumentError, "Invalid experiment data: " <> msg)
   end
 
   defmodule ContextData do
