@@ -33,7 +33,7 @@ defmodule ABSmartly.HTTP.Client do
     request_fn = fn ->
       query_string = URI.encode_query(query_params)
       full_url = "#{url}?#{query_string}"
-      HTTPoison.get(full_url, headers, timeout: timeout, recv_timeout: timeout)
+      HTTPoison.get(full_url, headers, request_options(timeout))
     end
 
     case with_retry(request_fn, retries) do
@@ -59,7 +59,7 @@ defmodule ABSmartly.HTTP.Client do
     case Jason.encode(events) do
       {:ok, body} ->
         request_fn = fn ->
-          HTTPoison.put(url, body, headers, timeout: timeout, recv_timeout: timeout)
+          HTTPoison.put(url, body, headers, request_options(timeout))
         end
 
         case with_retry(request_fn, retries) do
@@ -71,6 +71,15 @@ defmodule ABSmartly.HTTP.Client do
         Logger.error("Failed to encode events: #{Exception.message(error)}")
         {:error, "Failed to encode events: #{Exception.message(error)}"}
     end
+  end
+
+  # Direct (unpooled) connections: the SDK makes few requests, and tasks that are
+  # cancelled mid-request (shutdown, publish deadline) must not leak slots in
+  # Hackney's shared pool / per-host load regulation, which surfaces as spurious
+  # :checkout_timeout errors. Redirects are deliberately not followed (a
+  # redirected event PUT must never be acknowledged).
+  defp request_options(timeout) do
+    [timeout: timeout, recv_timeout: timeout, pool: false]
   end
 
   # Fixes HIGH-25: Extract common header construction
