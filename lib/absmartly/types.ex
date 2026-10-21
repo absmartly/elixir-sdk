@@ -118,12 +118,19 @@ defmodule ABSmartly.Types do
       cfv = map["customFieldValues"]
 
       check!(
-        is_nil(cfv) or (is_list(cfv) and Enum.all?(cfv, &is_map/1)),
-        "customFieldValues must be a list of objects"
+        is_nil(cfv) or (is_list(cfv) and Enum.all?(cfv, &custom_field?/1)),
+        "customFieldValues must be a list of objects with a string name, optional string type and scalar value"
       )
 
       :ok
     end
+
+    defp custom_field?(%{} = f) do
+      is_binary(f["name"]) and (is_nil(f["type"]) or is_binary(f["type"])) and
+        (is_nil(f["value"]) or is_binary(f["value"]) or is_number(f["value"]) or is_boolean(f["value"]))
+    end
+
+    defp custom_field?(_), do: false
 
     defp number_list?(list), do: is_list(list) and Enum.all?(list, &is_number/1)
 

@@ -149,7 +149,8 @@ defmodule ABSmartly.SDK do
       id: Context,
       start: {Context, :start_link_async, [config, context_config, [data_fetcher: fetcher]]},
       type: :worker,
-      restart: :temporary
+      restart: :temporary,
+      shutdown: Context.shutdown_timeout(config)
     }
 
     case DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, child_spec) do

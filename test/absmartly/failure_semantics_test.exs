@@ -388,5 +388,69 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert_receive {:published, ev2}, 1_000
       assert Enum.any?(ev2["exposures"], &(&1["name"] == "e"))
     end
+
+    test "json custom field with non-string value does not kill the context" do
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      data = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "user", "split" => [0, 1],
+        "customFieldValues" => [%{"name" => "meta", "type" => "json", "value" => 42}]}]}
+      assert :ok = Context.refresh(ctx, data)
+      assert Context.custom_field_value(ctx, "e", "meta") == nil
+      assert Process.alive?(ctx)
+    end
+
+    test "successful refresh recovers a failed context" do
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), context_config(),
+          data_fetcher: fn -> {:error, "down"} end
+        )
+
+      assert {:error, "down"} = Context.wait_until_ready(ctx, 1_000)
+      data = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "session_id", "iteration" => 1,
+        "seedHi" => 1, "seedLo" => 2, "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4,
+        "trafficSplit" => [0, 1], "variants" => [%{"config" => nil}, %{"config" => nil}]}]}
+      assert :ok = Context.refresh(ctx, data)
+      assert Context.is_ready?(ctx)
+      refute Context.is_failed?(ctx)
+      assert Context.treatment(ctx, "e") == 1
+    end
+
+    test "unchanged set_unit keeps exposure dedup; supervisor shutdown publishes pending events" do
+      defmodule ShutdownPublisher do
+        def publish(_e, _k, _a, _env, events, _r) do
+          send(:shutdown_pub, {:published, events})
+          :ok
+        end
+      end
+
+      Process.register(self(), :shutdown_pub)
+      sdk = %{sdk_config("unused") | publisher: ShutdownPublisher}
+
+      data = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "session_id", "iteration" => 1,
+        "seedHi" => 1, "seedLo" => 2, "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4,
+        "trafficSplit" => [0, 1], "variants" => [%{"config" => nil}, %{"config" => nil}]}]}
+
+      spec = %{
+        id: Context,
+        start: {Context, :start_link_async, [sdk, context_config(), [data_fetcher: fn -> {:ok, data} end]]},
+        restart: :temporary,
+        shutdown: 5_000
+      }
+
+      {:ok, ctx} = DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, spec)
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      assert Context.treatment(ctx, "e") == 1
+      :ok = Context.set_unit(ctx, "session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec")
+      assert Context.treatment(ctx, "e") == 1
+      :ok = Context.track(ctx, "g", %{})
+      :ok = DynamicSupervisor.terminate_child(ABSmartly.ContextSupervisor, ctx)
+      assert_receive {:published, ev}, 2_000
+      assert length(ev["exposures"]) == 1
+      assert length(ev["goals"]) == 1
+    end
   end
 end

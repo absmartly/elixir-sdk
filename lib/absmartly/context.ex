@@ -285,6 +285,8 @@ defmodule ABSmartly.Context do
   end
 
   def init({:async, sdk_config, context_config, data_fetcher}) do
+    # Trap exits so supervisor-driven shutdown runs terminate/2 (pending-event publish).
+    Process.flag(:trap_exit, true)
     empty_data = %Types.ContextData{experiments: []}
     state = %__MODULE__{
       sdk_config: sdk_config,
@@ -401,6 +403,7 @@ defmodule ABSmartly.Context do
   end
 
   def init({sdk_config, data, context_config, data_fetcher}) do
+    Process.flag(:trap_exit, true)
     {var_index, exp_index, aud_cache} = build_indexes(data.experiments)
     state = %__MODULE__{
       sdk_config: sdk_config,
@@ -488,8 +491,9 @@ defmodule ABSmartly.Context do
           if Map.has_key?(state.units, key) && Map.get(state.units, key) != uid_str do
             {:reply, {:error, "Unit '#{key}' UID already set."}, state}
           else
+            added = if Map.has_key?(state.units, key), do: [], else: [key]
             state = %{state | units: Map.put(state.units, key, uid_str)}
-            {:reply, :ok, invalidate_assignments_for_new_units(state, [key])}
+            {:reply, :ok, invalidate_assignments_for_new_units(state, added)}
           end
       end
     end
@@ -823,6 +827,8 @@ defmodule ABSmartly.Context do
   end
 
   @impl true
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+
   def handle_info({:EXIT, _pid, reason}, state) do
     Logger.warning("Context received EXIT signal: #{inspect(reason)}")
     {:noreply, state}
@@ -1096,6 +1102,8 @@ defmodule ABSmartly.Context do
   defp parse_custom_field(value, "number"), do: Utils.to_number(value)
   defp parse_custom_field(value, "boolean"), do: value == "true" or value == true
 
+  defp parse_custom_field(value, "json") when not is_binary(value), do: nil
+
   defp parse_custom_field(value, "json") do
     case Jason.decode(value) do
       {:ok, decoded} ->
@@ -1165,6 +1173,13 @@ defmodule ABSmartly.Context do
     else
       {:ok, state}
     end
+  end
+
+  @doc """
+  Supervisor shutdown budget (ms) so a context can finish its bounded final publish.
+  """
+  def shutdown_timeout(sdk_config) do
+    publish_deadline(%{sdk_config | retries: min(sdk_config.retries || 0, 1)}) + 1_000
   end
 
   # Worst case for the default HTTP publisher: every attempt may spend the
@@ -1292,7 +1307,10 @@ defmodule ABSmartly.Context do
         variable_index: var_index,
         experiment_index: exp_index,
         audience_cache: aud_cache,
-        exposed_experiments: exposed_experiments
+        exposed_experiments: exposed_experiments,
+        ready: true,
+        failed: false,
+        failed_reason: nil
     }
 
     Logger.info("Context refreshed with #{length(context_data.experiments)} experiments")
