@@ -497,5 +497,81 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert_received {:publisher_pid, pub}
       refute Process.alive?(pub)
     end
+
+    @tag timeout: 60_000
+    test "queue overflow evicts the oldest pending exposures and goals" do
+      defmodule OverflowPublisher do
+        def publish(_e, _k, _a, _env, events, _r) do
+          send(:overflow_pub, {:published, events})
+          :ok
+        end
+      end
+
+      Process.register(self(), :overflow_pub)
+      sdk = %{sdk_config("unused") | publisher: OverflowPublisher}
+
+      {:ok, ctx} =
+        Context.start_link_async(sdk, context_config(), data_fetcher: fn -> {:ok, %{"experiments" => []}} end)
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+
+      for i <- 1..10_002 do
+        Context.set_override(ctx, "exp_#{i}", 1)
+        Context.treatment(ctx, "exp_#{i}")
+        Context.track(ctx, "goal_#{i}", nil)
+      end
+
+      assert Context.pending(ctx) == 20_000
+      :ok = Context.publish(ctx)
+      assert_receive {:published, ev}, 30_000
+
+      exp_names = MapSet.new(ev["exposures"], & &1["name"])
+      goal_names = MapSet.new(ev["goals"], & &1["name"])
+      assert MapSet.size(exp_names) == 10_000
+      assert MapSet.size(goal_names) == 10_000
+
+      for i <- [1, 2] do
+        refute MapSet.member?(exp_names, "exp_#{i}")
+        refute MapSet.member?(goal_names, "goal_#{i}")
+      end
+
+      for i <- [3, 10_001, 10_002] do
+        assert MapSet.member?(exp_names, "exp_#{i}")
+        assert MapSet.member?(goal_names, "goal_#{i}")
+      end
+    end
+
+    @tag timeout: 30_000
+    test "supervisor shutdown during an in-flight publish stays within the child budget" do
+      defmodule InflightPublisher do
+        def publish(_e, _k, _a, _env, _events, _r) do
+          Process.flag(:trap_exit, true)
+          send(:inflight_pub, {:publisher_pid, self()})
+          Process.sleep(:infinity)
+        end
+      end
+
+      Process.register(self(), :inflight_pub)
+      sdk = %{sdk_config("unused") | publisher: InflightPublisher, timeout: 500, retries: 10}
+      spec = Context.child_spec([sdk, %Types.ContextData{}, context_config()])
+      {:ok, ctx} = DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, spec)
+      :ok = Context.track(ctx, "g", %{})
+      ref = Process.monitor(ctx)
+      spawn(fn -> Context.publish(ctx) end)
+      assert_receive {:publisher_pid, pub1}, 2_000
+
+      t0 = System.monotonic_time(:millisecond)
+      :ok = DynamicSupervisor.terminate_child(ABSmartly.ContextSupervisor, ctx)
+      assert_receive {:DOWN, ^ref, :process, ^ctx, reason}, 20_000
+      assert reason == :shutdown
+      assert System.monotonic_time(:millisecond) - t0 < spec.shutdown
+      refute Process.alive?(pub1)
+      # the termination publish's task must not be orphaned either
+      receive do
+        {:publisher_pid, pub2} -> refute Process.alive?(pub2)
+      after
+        0 -> :ok
+      end
+    end
   end
 end

@@ -976,7 +976,7 @@ defmodule ABSmartly.Context do
             "Exposure queue size limit reached (#{@max_queue_size}), dropping oldest"
           )
 
-          %{state | exposures: Enum.drop(state.exposures, 1), exposure_count: state.exposure_count - 1}
+          %{state | exposures: Enum.drop(state.exposures, -1), exposure_count: state.exposure_count - 1}
         else
           state
         end
@@ -1144,7 +1144,7 @@ defmodule ABSmartly.Context do
     state =
       if state.goal_count >= @max_queue_size do
         Logger.error("Goal queue size limit reached (#{@max_queue_size}), dropping oldest")
-        %{state | goals: Enum.drop(state.goals, 1), goal_count: state.goal_count - 1}
+        %{state | goals: Enum.drop(state.goals, -1), goal_count: state.goal_count - 1}
       else
         state
       end
@@ -1233,12 +1233,55 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    case Task.yield(task, publish_deadline(state.sdk_config, publisher)) || Task.shutdown(task, :brutal_kill) do
-      {:ok, :ok} -> :ok
-      {:ok, {:error, _reason} = error} -> error
-      {:ok, other} -> {:error, {:unexpected_publisher_result, other}}
-      {:exit, reason} -> {:error, {:exit, reason}}
-      nil -> {:error, "Publish timed out"}
+    await_publisher(task, publish_deadline(state.sdk_config, publisher))
+  end
+
+  # Waits for the publisher task, but also reacts to the supervisor's shutdown
+  # signal (we trap exits) so an in-flight publish cannot outlive the child
+  # shutdown budget: the task is killed and the shutdown reason is re-raised so
+  # terminate/2 runs its bounded final publish.
+  defp await_publisher(%Task{ref: ref, pid: task_pid} = task, timeout) do
+    parent = parent_pid()
+
+    receive do
+      {^ref, result} ->
+        Process.demonitor(ref, [:flush])
+        normalize_publish_result(result)
+
+      {:DOWN, ^ref, _, _, reason} ->
+        {:error, {:exit, reason}}
+
+      {:EXIT, ^parent, reason} when parent != nil ->
+        Task.shutdown(task, :brutal_kill)
+        exit(reason)
+    after
+      timeout ->
+        case Task.shutdown(task, :brutal_kill) do
+          {:ok, result} -> normalize_publish_result(result)
+          {:exit, reason} -> {:error, {:exit, reason}}
+          nil -> {:error, "Publish timed out"}
+        end
+    end
+    |> tap(fn _ -> flush_task_exit(task_pid) end)
+  end
+
+  defp normalize_publish_result(:ok), do: :ok
+  defp normalize_publish_result({:error, _reason} = error), do: error
+  defp normalize_publish_result(other), do: {:error, {:unexpected_publisher_result, other}}
+
+  defp flush_task_exit(task_pid) do
+    receive do
+      {:EXIT, ^task_pid, _} -> :ok
+    after
+      0 -> :ok
+    end
+  end
+
+  defp parent_pid do
+    case Process.get(:"$ancestors") do
+      [parent | _] when is_pid(parent) -> parent
+      [name | _] when is_atom(name) -> Process.whereis(name)
+      _ -> nil
     end
   end
 
