@@ -4,7 +4,7 @@ The official Elixir SDK for [ABsmartly](https://www.absmartly.com) - A/B testing
 
 ## Compatibility
 
-The ABsmartly Elixir SDK is compatible with Elixir 1.14+ and Erlang/OTP 24+. It provides both synchronous and asynchronous context creation for variant assignment and goal tracking. The Context is implemented as a GenServer process.
+The ABsmartly Elixir SDK is compatible with Elixir 1.17+ and Erlang/OTP 25+. It provides both synchronous and asynchronous context creation for variant assignment and goal tracking. The Context is implemented as a GenServer process.
 
 ## Installation
 

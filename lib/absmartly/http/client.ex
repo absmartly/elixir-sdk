@@ -121,7 +121,7 @@ defmodule ABSmartly.HTTP.Client do
 
   defp retry_or_fail(request_fn, max_retries, attempt, error_msg) do
     if attempt < max_retries do
-      backoff = 50 * :math.pow(2, attempt)
+      backoff = Application.get_env(:absmartly, :retry_backoff_base, 50) * :math.pow(2, attempt)
       Logger.info("Retrying request after #{round(backoff)}ms (attempt #{attempt + 1}/#{max_retries})")
       Process.sleep(round(backoff))
       with_retry(request_fn, max_retries, attempt + 1)

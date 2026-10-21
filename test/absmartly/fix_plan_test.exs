@@ -460,10 +460,39 @@ defmodule ABSmartly.FixPlanTest do
   # Fix #39: Retry cap
   describe "fix #39 - retry cap" do
     test "HTTP client caps retries at 10" do
-      # function_exported?/3 does not load the module; without this the result
-      # depends on whether an earlier test already loaded it.
-      Code.ensure_loaded!(ABSmartly.HTTP.Client)
-      assert function_exported?(ABSmartly.HTTP.Client, :fetch_context, 5)
+      Application.put_env(:absmartly, :retry_backoff_base, 0)
+      on_exit(fn -> Application.delete_env(:absmartly, :retry_backoff_base) end)
+
+      {:ok, l} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(l)
+      counter = :counters.new(1, [])
+
+      acceptor =
+        spawn_link(fn ->
+          loop = fn loop ->
+            case :gen_tcp.accept(l, 20_000) do
+              {:ok, c} ->
+                :counters.add(counter, 1, 1)
+                {:ok, _} = :gen_tcp.recv(c, 0, 1_000)
+                :gen_tcp.send(c, "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                :gen_tcp.close(c)
+                loop.(loop)
+
+              _ ->
+                :ok
+            end
+          end
+
+          loop.(loop)
+        end)
+
+      assert {:error, _} =
+               ABSmartly.HTTP.Client.fetch_context("http://127.0.0.1:#{port}", "k", "a", "e", 50, 1_000)
+
+      Process.unlink(acceptor)
+      Process.exit(acceptor, :kill)
+      # 1 initial attempt + 10 retries
+      assert :counters.get(counter, 1) == 11
     end
   end
 

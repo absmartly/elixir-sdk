@@ -5,7 +5,7 @@ defmodule ABSmartly.MixProject do
     [
       app: :absmartly,
       version: "1.0.0",
-      elixir: "~> 1.14",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: "ABSmartly SDK for Elixir",
