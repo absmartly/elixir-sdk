@@ -1233,7 +1233,7 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    case Task.yield(task, publish_deadline(state.sdk_config, publisher)) || Task.shutdown(task) do
+    case Task.yield(task, publish_deadline(state.sdk_config, publisher)) || Task.shutdown(task, :brutal_kill) do
       {:ok, :ok} -> :ok
       {:ok, {:error, _reason} = error} -> error
       {:ok, other} -> {:error, {:unexpected_publisher_result, other}}

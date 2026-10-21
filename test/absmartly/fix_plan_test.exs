@@ -590,16 +590,23 @@ defmodule ABSmartly.FixPlanTest do
       assert Context.is_ready?(ctx) == true
     end
 
-    test "queue overflow drops oldest exposure" do
+    test "exposure queue overflow keeps at most 10_000 entries (drops oldest)" do
       ctx = start_context(@get_context_response, %{})
 
-      for i <- 1..100 do
-        Context.set_unit(ctx, "session_id", "uid_#{i}")
+      for i <- 1..10_001 do
         Context.set_override(ctx, "exp_#{i}", 1)
         Context.treatment(ctx, "exp_#{i}")
       end
 
-      assert Context.pending(ctx) == 100
+      assert Context.pending(ctx) == 10_000
+    end
+
+    test "goal queue overflow keeps at most 10_000 entries (drops oldest)" do
+      ctx = start_context(@get_context_response, %{})
+
+      for i <- 1..10_001, do: Context.track(ctx, "goal_#{i}", nil)
+
+      assert Context.pending(ctx) == 10_000
     end
 
     test "data returns context data" do

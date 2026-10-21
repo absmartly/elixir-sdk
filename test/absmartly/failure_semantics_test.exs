@@ -473,5 +473,29 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Context.child_spec([cfg, %Types.ContextData{}, context_config()]).shutdown >= 7_000
       assert Context.shutdown_timeout(%{cfg | publisher: ABSmartly.DefaultContextPublisher}) >= 2_000
     end
+
+    @tag timeout: 20_000
+    test "supervisor shutdown cancels a blocking trap_exit publisher within the child budget" do
+      defmodule StuckPublisher do
+        def publish(_e, _k, _a, _env, _events, _r) do
+          Process.flag(:trap_exit, true)
+          send(:stuck_pub, {:publisher_pid, self()})
+          Process.sleep(:infinity)
+        end
+      end
+
+      Process.register(self(), :stuck_pub)
+      sdk = %{sdk_config("unused") | publisher: StuckPublisher, timeout: 50, retries: 0}
+      spec = Context.child_spec([sdk, %Types.ContextData{}, context_config()])
+
+      {:ok, ctx} = DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, spec)
+      :ok = Context.track(ctx, "g", %{})
+      ref = Process.monitor(ctx)
+      :ok = DynamicSupervisor.terminate_child(ABSmartly.ContextSupervisor, ctx)
+      assert_receive {:DOWN, ^ref, :process, ^ctx, reason}, 10_000
+      assert reason == :shutdown
+      assert_received {:publisher_pid, pub}
+      refute Process.alive?(pub)
+    end
   end
 end
