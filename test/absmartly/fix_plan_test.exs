@@ -195,13 +195,18 @@ defmodule ABSmartly.FixPlanTest do
   # Fix #8: Variable index ordering
   describe "fix #8 - variable index ordering" do
     test "variable index preserves experiment order" do
-      ctx = start_context(@get_context_response)
-      keys = Context.variable_keys(ctx)
-      assert is_map(keys)
-      assert Map.has_key?(keys, "banner.border")
-      assert Map.has_key?(keys, "banner.size")
-      assert "exp_test_ab" in keys["banner.border"]
-      assert "exp_test_ab" in keys["banner.size"]
+      shared = fn name, color ->
+        %{
+          "id" => 1, "name" => name, "unitType" => "session_id", "iteration" => 1,
+          "seedHi" => 1, "seedLo" => 2, "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1], "fullOnVariant" => 1,
+          "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]
+        }
+      end
+
+      ctx = start_context(%{"experiments" => [shared.("first", "red"), shared.("second", "blue")]})
+      assert Context.variable_keys(ctx)["color"] == ["first", "second"]
+      assert Context.variable_value(ctx, "color", "none") == "red"
     end
   end
 
@@ -805,6 +810,13 @@ defmodule ABSmartly.FixPlanTest do
       Context.finalize(ctx)
       assert Context.is_finalized?(ctx) == true
       assert Context.set_overrides(ctx, %{"exp_test_ab" => 2}) == :ok
+    end
+
+    test "integer unit set at creation is not treated as a changed identity" do
+      ctx = start_context(@get_context_response, %{"user" => 123})
+      assert :ok = Context.set_unit(ctx, "user", 123)
+      assert :ok = Context.set_units(ctx, %{"user" => 123})
+      assert {:error, _} = Context.set_unit(ctx, "user", 124)
     end
   end
 end

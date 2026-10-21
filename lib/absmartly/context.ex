@@ -303,7 +303,7 @@ defmodule ABSmartly.Context do
       failed_reason: nil,
       finalized: false,
       finalizing: false,
-      units: context_config.units,
+      units: normalize_units(context_config.units),
       attributes: config_attributes_to_list(context_config.attributes),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
@@ -420,7 +420,7 @@ defmodule ABSmartly.Context do
       failed_reason: nil,
       finalized: false,
       finalizing: false,
-      units: context_config.units,
+      units: normalize_units(context_config.units),
       attributes: config_attributes_to_list(context_config.attributes),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
@@ -846,6 +846,14 @@ defmodule ABSmartly.Context do
     end
 
     uid_str
+  end
+
+  # Store units as string => string so later setter comparisons are consistent
+  # (hash_unit/1 yields the same hash for an integer and its string form).
+  defp normalize_units(nil), do: %{}
+
+  defp normalize_units(units) when is_map(units) do
+    Map.new(units, fn {k, v} -> {to_string(k), to_string(v)} end)
   end
 
   defp validate_uid_or_error(uid, unit_type) do
