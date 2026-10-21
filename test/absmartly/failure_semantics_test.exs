@@ -452,5 +452,26 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert length(ev["exposures"]) == 1
       assert length(ev["goals"]) == 1
     end
+
+    test "refresh releases readiness waiters of a loading context" do
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), context_config(),
+          data_fetcher: fn ->
+            Process.sleep(3_000)
+            {:ok, %{"experiments" => []}}
+          end
+        )
+
+      waiter = Task.async(fn -> Context.wait_until_ready(ctx, 2_000) end)
+      Process.sleep(100)
+      assert :ok = Context.refresh(ctx, %{"experiments" => []})
+      assert :ok = Task.await(waiter, 3_000)
+    end
+
+    test "child_spec shutdown budget covers the publisher-aware termination deadline" do
+      cfg = %{sdk_config("unused") | timeout: 50, retries: 0}
+      assert Context.child_spec([cfg, %Types.ContextData{}, context_config()]).shutdown >= 7_000
+      assert Context.shutdown_timeout(%{cfg | publisher: ABSmartly.DefaultContextPublisher}) >= 2_000
+    end
   end
 end

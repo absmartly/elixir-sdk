@@ -44,11 +44,18 @@ defmodule ABSmartly.Context do
   ]
 
   def child_spec(opts) do
+    shutdown =
+      case opts do
+        [%{} = sdk_config | _] -> shutdown_timeout(sdk_config)
+        _ -> 5_000
+      end
+
     %{
       id: __MODULE__,
       start: {__MODULE__, :start_link, opts},
       type: :worker,
-      restart: :temporary
+      restart: :temporary,
+      shutdown: shutdown
     }
   end
 
@@ -1179,7 +1186,9 @@ defmodule ABSmartly.Context do
   Supervisor shutdown budget (ms) so a context can finish its bounded final publish.
   """
   def shutdown_timeout(sdk_config) do
-    publish_deadline(%{sdk_config | retries: min(sdk_config.retries || 0, 1)}) + 1_000
+    publisher = Map.get(sdk_config, :publisher) || ABSmartly.DefaultContextPublisher
+    capped = Map.put(sdk_config, :retries, min(Map.get(sdk_config, :retries) || 0, 1))
+    publish_deadline(capped, publisher) + 2_000
   end
 
   # Worst case for the default HTTP publisher: every attempt may spend the
@@ -1312,6 +1321,14 @@ defmodule ABSmartly.Context do
         failed: false,
         failed_reason: nil
     }
+
+    state =
+      if state.pending_waiters != [] do
+        for waiter <- state.pending_waiters, do: GenServer.reply(waiter, :ok)
+        %{state | pending_waiters: []}
+      else
+        state
+      end
 
     Logger.info("Context refreshed with #{length(context_data.experiments)} experiments")
     emit_event(state, :refresh, %{experiments: context_data.experiments})

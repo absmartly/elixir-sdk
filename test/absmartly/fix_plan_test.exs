@@ -473,7 +473,7 @@ defmodule ABSmartly.FixPlanTest do
             case :gen_tcp.accept(l, 20_000) do
               {:ok, c} ->
                 :counters.add(counter, 1, 1)
-                {:ok, _} = :gen_tcp.recv(c, 0, 1_000)
+                _ = :gen_tcp.recv(c, 0, 1_000)
                 :gen_tcp.send(c, "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
                 :gen_tcp.close(c)
                 loop.(loop)
