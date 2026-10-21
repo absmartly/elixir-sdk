@@ -79,7 +79,7 @@ defmodule ABSmartly.HTTP.Client do
   # :checkout_timeout errors. Redirects are deliberately not followed (a
   # redirected event PUT must never be acknowledged).
   defp request_options(timeout) do
-    [timeout: timeout, recv_timeout: timeout, pool: false]
+    [timeout: timeout, recv_timeout: timeout, hackney: [pool: false]]
   end
 
   # Fixes HIGH-25: Extract common header construction

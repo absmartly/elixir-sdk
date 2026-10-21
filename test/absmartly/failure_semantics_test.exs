@@ -709,5 +709,55 @@ defmodule ABSmartly.FailureSemanticsTest do
       Process.unlink(acceptor)
       Process.exit(acceptor, :kill)
     end
+
+    @tag timeout: 30_000
+    test "SDK requests bypass an exhausted default hackney pool" do
+      {:ok, l} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(l)
+
+      acceptor =
+        spawn_link(fn ->
+          loop = fn loop ->
+            case :gen_tcp.accept(l, 20_000) do
+              {:ok, c} ->
+                spawn(fn ->
+                  _ = :gen_tcp.recv(c, 0, 5_000)
+                  body = ~s({"experiments":[]})
+                  :gen_tcp.send(c, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n#{body}")
+                  :gen_tcp.close(c)
+                end)
+
+                loop.(loop)
+
+              _ ->
+                :ok
+            end
+          end
+
+          loop.(loop)
+        end)
+
+      # Occupy every default-pool per-host slot with a request that never completes.
+      hog_url = "http://127.0.0.1:#{port}/hog"
+
+      {:ok, hog_listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      {:ok, hog_port} = :inet.port(hog_listen)
+      _ = hog_url
+
+      hogs =
+        for _ <- 1..60 do
+          spawn(fn -> HTTPoison.get("http://127.0.0.1:#{hog_port}/x", [], recv_timeout: 20_000) end)
+        end
+
+      Process.sleep(500)
+
+      # SDK fetch to the responsive server on the same host must still work.
+      assert {:ok, %{"experiments" => []}} =
+               ABSmartly.HTTP.Client.fetch_context("http://127.0.0.1:#{port}", "k", "a", "e", 0, 1_000)
+
+      Enum.each(hogs, &Process.exit(&1, :kill))
+      Process.unlink(acceptor)
+      Process.exit(acceptor, :kill)
+    end
   end
 end
