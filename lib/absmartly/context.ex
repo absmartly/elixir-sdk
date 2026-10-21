@@ -365,10 +365,15 @@ defmodule ABSmartly.Context do
     {:noreply, mark_failed(state, reason)}
   end
 
-  defp safe_context_data(data) do
-    {:ok, Types.ContextData.from_map(data)}
+  @doc false
+  # Converts raw context data and dry-runs the index build so schema-invalid
+  # nested fields are reported as errors instead of crashing a context later.
+  def safe_context_data(data) do
+    context_data = Types.ContextData.from_map(data)
+    _ = build_indexes(context_data.experiments)
+    {:ok, context_data}
   rescue
-    exception -> {:error, Exception.message(exception)}
+    exception -> {:error, "Invalid context data: " <> Exception.message(exception)}
   end
 
   defp complete_fetch(context_data, state) do
@@ -755,7 +760,12 @@ defmodule ABSmartly.Context do
     else
       case convert_refresh_data(new_data) do
         {:ok, context_data} ->
-          {:reply, :ok, do_refresh(state, context_data)}
+          try do
+            {:reply, :ok, do_refresh(state, context_data)}
+          rescue
+            exception ->
+              {:reply, {:error, "Invalid context data: " <> Exception.message(exception)}, state}
+          end
 
         {:error, reason} ->
           {:reply, {:error, reason}, state}

@@ -181,9 +181,5 @@ defmodule ABSmartly.SDK do
     )
   end
 
-  defp convert_context_data(data) do
-    {:ok, Types.ContextData.from_map(data)}
-  rescue
-    exception -> {:error, "Invalid context data: " <> Exception.message(exception)}
-  end
+  defp convert_context_data(data), do: Context.safe_context_data(data)
 end

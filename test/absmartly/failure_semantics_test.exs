@@ -299,6 +299,9 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert :ok = Context.wait_until_ready(ctx, 1_000)
       assert {:error, _} = Context.refresh(ctx, %{"experiments" => %{"x" => 1}})
       assert Process.alive?(ctx)
+      bad = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "user", "split" => [0.5, 0.5], "variants" => 42}]}
+      assert {:error, _} = Context.refresh(ctx, bad)
+      assert Process.alive?(ctx)
       assert :ok = Context.refresh(ctx, %{"experiments" => []})
     end
   end
