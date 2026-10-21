@@ -338,5 +338,55 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert :ok = Context.refresh(ctx, %{"experiments" => [exp.(false)]})
       assert Context.peek(ctx, "e") == 0
     end
+
+    test "malformed customFieldValues is rejected without killing the context" do
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      bad = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "user", "split" => [0, 1], "customFieldValues" => 42}]}
+      assert {:error, _} = Context.refresh(ctx, bad)
+      assert Process.alive?(ctx)
+      assert Context.custom_field_keys(ctx) == []
+    end
+
+    test "recalculated treatments after unit add / audience refresh are exposed again" do
+      defmodule CapturePublisher do
+        def publish(_e, _k, _a, _env, events, _r) do
+          send(:capture_pub, {:published, events})
+          :ok
+        end
+      end
+
+      exp = fn aud ->
+        %{"id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
+          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+          "variants" => [%{"config" => nil}, %{"config" => nil}],
+          "audienceStrict" => true, "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})}
+      end
+
+      Process.register(self(), :capture_pub)
+      cfg = %{context_config() | units: %{}}
+      sdk = %{sdk_config("unused") | publisher: CapturePublisher}
+
+      {:ok, ctx} =
+        Context.start_link_async(sdk, cfg, data_fetcher: fn -> {:ok, %{"experiments" => [exp.(true)]}} end)
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      assert Context.treatment(ctx, "e") == 0
+      :ok = Context.set_unit(ctx, "user", "u")
+      assert Context.treatment(ctx, "e") == 1
+      :ok = Context.publish(ctx)
+      assert_receive {:published, ev1}, 1_000
+      assert Enum.any?(ev1["exposures"], &(&1["variant"] == 1))
+
+      :ok = Context.refresh(ctx, %{"experiments" => [exp.(false)]})
+      assert Context.treatment(ctx, "e") == 0
+      :ok = Context.publish(ctx)
+      assert_receive {:published, ev2}, 1_000
+      assert Enum.any?(ev2["exposures"], &(&1["name"] == "e"))
+    end
   end
 end

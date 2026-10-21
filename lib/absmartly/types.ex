@@ -115,6 +115,13 @@ defmodule ABSmartly.Types do
         check!(is_nil(value) or is_list(value), "#{key} must be a list")
       end
 
+      cfv = map["customFieldValues"]
+
+      check!(
+        is_nil(cfv) or (is_list(cfv) and Enum.all?(cfv, &is_map/1)),
+        "customFieldValues must be a list of objects"
+      )
+
       :ok
     end
 

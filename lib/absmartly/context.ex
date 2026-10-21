@@ -1568,6 +1568,8 @@ defmodule ABSmartly.Context do
         old_exp.full_on_variant != new_exp.full_on_variant -> true
         old_exp.traffic_split != new_exp.traffic_split -> true
         old_exp.split != new_exp.split -> true
+        old_exp.audience != new_exp.audience -> true
+        old_exp.audience_strict != new_exp.audience_strict -> true
         true -> false
       end
     end)
@@ -1588,7 +1590,12 @@ defmodule ABSmartly.Context do
         MapSet.member?(affected, name) and not assignment.overridden
       end)
 
-    %{state | assignments: assignments}
+    exposed =
+      Enum.reduce(affected, state.exposed_experiments, fn name, acc ->
+        if Map.has_key?(state.overrides, name), do: acc, else: MapSet.delete(acc, name)
+      end)
+
+    %{state | assignments: assignments, exposed_experiments: exposed}
   end
 
   defp invalidate_changed_assignments(assignments, old_experiments, new_experiments) do
