@@ -673,5 +673,41 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert_received {:published, ev}
       assert length(ev["goals"]) == 1
     end
+
+    test "a redirected event upload is not acknowledged and keeps events queued" do
+      {:ok, l} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(l)
+      parent = self()
+
+      acceptor =
+        spawn_link(fn ->
+          loop = fn loop ->
+            case :gen_tcp.accept(l, 10_000) do
+              {:ok, c} ->
+                {:ok, req} = :gen_tcp.recv(c, 0, 1_000)
+                send(parent, {:request, hd(String.split(req, " "))})
+                :gen_tcp.send(c, "HTTP/1.1 301 Moved Permanently\r\nlocation: /canonical/context\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                :gen_tcp.close(c)
+                loop.(loop)
+
+              _ ->
+                :ok
+            end
+          end
+
+          loop.(loop)
+        end)
+
+      sdk = %{sdk_config("unused") | endpoint: "http://127.0.0.1:#{port}", retries: 0, timeout: 500, publisher: ABSmartly.DefaultContextPublisher}
+      {:ok, ctx} = Context.start_link_async(sdk, context_config(), data_fetcher: fn -> {:ok, %{"experiments" => []}} end)
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      :ok = Context.track(ctx, "g", %{})
+      assert {:error, _} = Context.publish(ctx)
+      assert Context.pending(ctx) == 1
+      assert_receive {:request, "PUT"}, 1_000
+      refute_receive {:request, "GET"}, 300
+      Process.unlink(acceptor)
+      Process.exit(acceptor, :kill)
+    end
   end
 end

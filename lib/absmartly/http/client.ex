@@ -33,7 +33,7 @@ defmodule ABSmartly.HTTP.Client do
     request_fn = fn ->
       query_string = URI.encode_query(query_params)
       full_url = "#{url}?#{query_string}"
-      HTTPoison.get(full_url, headers, timeout: timeout, recv_timeout: timeout, follow_redirect: true)
+      HTTPoison.get(full_url, headers, timeout: timeout, recv_timeout: timeout)
     end
 
     case with_retry(request_fn, retries) do
@@ -59,7 +59,7 @@ defmodule ABSmartly.HTTP.Client do
     case Jason.encode(events) do
       {:ok, body} ->
         request_fn = fn ->
-          HTTPoison.put(url, body, headers, timeout: timeout, recv_timeout: timeout, follow_redirect: true)
+          HTTPoison.put(url, body, headers, timeout: timeout, recv_timeout: timeout)
         end
 
         case with_retry(request_fn, retries) do
