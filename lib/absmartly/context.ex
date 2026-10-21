@@ -744,18 +744,7 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call(:refresh, _from, state) do
-    fetch_result = if state.data_fetcher do
-      state.data_fetcher.()
-    else
-      ABSmartly.HTTP.Client.fetch_context(
-        state.sdk_config.endpoint,
-        state.sdk_config.api_key,
-        state.sdk_config.application,
-        state.sdk_config.environment,
-        state.sdk_config.retries,
-        state.sdk_config.timeout
-      )
-    end
+    fetch_result = run_fetch(state)
 
     case fetch_result do
       {:ok, new_data} ->
@@ -999,7 +988,11 @@ defmodule ABSmartly.Context do
     experiments = Map.get(state.variable_index, key, [])
 
     {result, state} =
-      Enum.reduce(experiments, {nil, state}, fn exp, {found, acc_state} ->
+      Enum.reduce(experiments, {nil, state}, fn
+        _exp, {found, acc_state} when found != nil ->
+          {found, acc_state}
+
+        exp, {found, acc_state} ->
         {assignment, acc_state} = get_or_assign(acc_state, exp)
 
         acc_state =
@@ -1219,6 +1212,40 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # Runs the refresh fetch in a task so the context can still react to the
+  # supervisor's shutdown signal while HTTP retries/backoff are in progress.
+  defp run_fetch(state) do
+    task =
+      Task.async(fn ->
+        try do
+          if state.data_fetcher do
+            state.data_fetcher.()
+          else
+            ABSmartly.HTTP.Client.fetch_context(
+              state.sdk_config.endpoint,
+              state.sdk_config.api_key,
+              state.sdk_config.application,
+              state.sdk_config.environment,
+              state.sdk_config.retries,
+              state.sdk_config.timeout
+            )
+          end
+        rescue
+          exception -> {:error, Exception.message(exception)}
+        catch
+          kind, reason -> {:error, {kind, reason}}
+        end
+      end)
+
+    case await_task(task, publish_deadline(state.sdk_config)) do
+      {:ok, {:ok, _} = ok} -> ok
+      {:ok, {:error, _} = error} -> error
+      {:ok, other} -> {:error, {:unexpected_fetch_result, other}}
+      {:exit, reason} -> {:error, {:exit, reason}}
+      nil -> {:error, "Context refresh timed out"}
+    end
+  end
+
   defp run_publisher(state, event_map) do
     publisher = Map.get(state.sdk_config, :publisher, ABSmartly.DefaultContextPublisher)
 
@@ -1236,33 +1263,39 @@ defmodule ABSmartly.Context do
     await_publisher(task, publish_deadline(state.sdk_config, publisher))
   end
 
-  # Waits for the publisher task, but also reacts to the supervisor's shutdown
-  # signal (we trap exits) so an in-flight publish cannot outlive the child
-  # shutdown budget: the task is killed and the shutdown reason is re-raised so
-  # terminate/2 runs its bounded final publish.
-  defp await_publisher(%Task{ref: ref, pid: task_pid} = task, timeout) do
+  # Waits for the task, but also reacts to the supervisor's shutdown signal (we
+  # trap exits) so in-flight work cannot outlive the child shutdown budget: the
+  # task is killed and the shutdown reason is re-raised so terminate/2 runs its
+  # bounded final publish.
+  defp await_task(%Task{ref: ref, pid: task_pid} = task, timeout) do
     parent = parent_pid()
 
-    receive do
-      {^ref, result} ->
-        Process.demonitor(ref, [:flush])
-        normalize_publish_result(result)
+    result =
+      receive do
+        {^ref, result} ->
+          Process.demonitor(ref, [:flush])
+          {:ok, result}
 
-      {:DOWN, ^ref, _, _, reason} ->
-        {:error, {:exit, reason}}
+        {:DOWN, ^ref, _, _, reason} ->
+          {:exit, reason}
 
-      {:EXIT, ^parent, reason} when parent != nil ->
-        Task.shutdown(task, :brutal_kill)
-        exit(reason)
-    after
-      timeout ->
-        case Task.shutdown(task, :brutal_kill) do
-          {:ok, result} -> normalize_publish_result(result)
-          {:exit, reason} -> {:error, {:exit, reason}}
-          nil -> {:error, "Publish timed out"}
-        end
+        {:EXIT, ^parent, reason} when parent != nil ->
+          Task.shutdown(task, :brutal_kill)
+          exit(reason)
+      after
+        timeout -> Task.shutdown(task, :brutal_kill)
+      end
+
+    flush_task_exit(task_pid)
+    result
+  end
+
+  defp await_publisher(task, timeout) do
+    case await_task(task, timeout) do
+      {:ok, result} -> normalize_publish_result(result)
+      {:exit, reason} -> {:error, {:exit, reason}}
+      nil -> {:error, "Publish timed out"}
     end
-    |> tap(fn _ -> flush_task_exit(task_pid) end)
   end
 
   defp normalize_publish_result(:ok), do: :ok
@@ -1406,7 +1439,7 @@ defmodule ABSmartly.Context do
       if cached != nil do
         custom = Map.get(state.custom_assignments, name)
 
-        if custom != nil && !cached.full_on && cached.eligible do
+        if custom != nil && !cached.full_on && cached.eligible && !strict_excluded?(cached, experiment) do
           custom_assignment = %{cached | variant: custom, custom: true}
           {custom_assignment, state}
         else
@@ -1418,7 +1451,7 @@ defmodule ABSmartly.Context do
 
         custom = Map.get(state.custom_assignments, name)
 
-        if custom != nil && !assignment.full_on && assignment.eligible do
+        if custom != nil && !assignment.full_on && assignment.eligible && !strict_excluded?(assignment, experiment) do
           custom_assignment = %Types.Assignment{
             assignment
             | variant: custom,
@@ -1432,6 +1465,9 @@ defmodule ABSmartly.Context do
       end
     end
   end
+
+  defp strict_excluded?(assignment, experiment),
+    do: assignment.audience_mismatch == true and experiment.audience_strict == true
 
   defp maybe_reassign_for_audience(nil, state, _experiment, _name), do: {nil, state}
   defp maybe_reassign_for_audience(cached, state, experiment, name) do
@@ -1646,6 +1682,7 @@ defmodule ABSmartly.Context do
         old_exp.full_on_variant != new_exp.full_on_variant -> true
         old_exp.traffic_split != new_exp.traffic_split -> true
         old_exp.split != new_exp.split -> true
+        old_exp.unit_type != new_exp.unit_type -> true
         old_exp.audience != new_exp.audience -> true
         old_exp.audience_strict != new_exp.audience_strict -> true
         true -> false
@@ -1695,6 +1732,7 @@ defmodule ABSmartly.Context do
           old_exp.full_on_variant != new_exp.full_on_variant -> false
           old_exp.traffic_split != new_exp.traffic_split -> false
           old_exp.split != new_exp.split -> false
+          old_exp.unit_type != new_exp.unit_type -> false
           old_exp.audience != new_exp.audience -> false
           old_exp.audience_strict != new_exp.audience_strict -> false
           true -> true

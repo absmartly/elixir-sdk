@@ -573,5 +573,105 @@ defmodule ABSmartly.FailureSemanticsTest do
         0 -> :ok
       end
     end
+
+    defp exp_map(name, unit, extra \\ %{}) do
+      Map.merge(
+        %{"id" => 1, "name" => name, "unitType" => unit, "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
+          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+          "variants" => [%{"config" => nil}, %{"config" => nil}]},
+        extra
+      )
+    end
+
+    defp ready_ctx(experiments, cfg \\ nil, sdk \\ nil) do
+      {:ok, ctx} =
+        Context.start_link_async(sdk || sdk_config("unused"), cfg || context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => experiments}} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      ctx
+    end
+
+    test "custom assignment cannot bypass strict audience exclusion" do
+      aud = Jason.encode!(%{"filter" => [%{"value" => false}]})
+      e = exp_map("e", "session_id", %{"audienceStrict" => true, "audience" => aud})
+
+      ctx = ready_ctx([e])
+      assert Context.peek(ctx, "e") == 0
+      :ok = Context.set_custom_assignment(ctx, "e", 1)
+      assert Context.peek(ctx, "e") == 0
+
+      ctx2 = ready_ctx([e])
+      :ok = Context.set_custom_assignment(ctx2, "e", 1)
+      assert Context.peek(ctx2, "e") == 0
+    end
+
+    test "variable_value stops exposing candidates after the winner" do
+      full = fn name, color ->
+        exp_map(name, "session_id", %{"fullOnVariant" => 1, "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]})
+      end
+
+      defmodule VarPublisher do
+        def publish(_e, _k, _a, _env, events, _r) do
+          send(:var_pub, {:published, events})
+          :ok
+        end
+      end
+
+      Process.register(self(), :var_pub)
+      ctx = ready_ctx([full.("e", "red"), full.("f", "blue")], nil, %{sdk_config("unused") | publisher: VarPublisher})
+      assert Context.variable_value(ctx, "color", "d") == "red"
+      :ok = Context.publish(ctx)
+      assert_receive {:published, ev}, 1_000
+      assert Enum.map(ev["exposures"], & &1["name"]) == ["e"]
+    end
+
+    test "refreshing only the unit type recalculates and re-exposes" do
+      defmodule UnitTypePublisher do
+        def publish(_e, _k, _a, _env, events, _r) do
+          send(:ut_pub, {:published, events})
+          :ok
+        end
+      end
+
+      Process.register(self(), :ut_pub)
+      ctx = ready_ctx([exp_map("e", "session_id")], nil, %{sdk_config("unused") | publisher: UnitTypePublisher})
+      assert Context.treatment(ctx, "e") == 1
+      :ok = Context.publish(ctx)
+      assert_receive {:published, _}, 1_000
+
+      :ok = Context.refresh(ctx, %{"experiments" => [exp_map("e", "device")]})
+      assert Context.treatment(ctx, "e") == 0
+      :ok = Context.publish(ctx)
+      assert_receive {:published, ev}, 1_000
+      assert [%{"name" => "e", "assigned" => false}] = Enum.map(ev["exposures"], &Map.take(&1, ["name", "assigned"]))
+    end
+
+    @tag timeout: 30_000
+    test "supervisor shutdown during an in-flight refresh stays within the child budget" do
+      defmodule RefreshPublisher do
+        def publish(_e, _k, _a, _env, events, _r) do
+          send(:rf_pub, {:published, events})
+          :ok
+        end
+      end
+
+      Process.register(self(), :rf_pub)
+      sdk = %{sdk_config("unused") | publisher: RefreshPublisher, endpoint: "http://127.0.0.1:1", timeout: 50, retries: 10}
+      spec = Context.child_spec([sdk, %Types.ContextData{}, context_config()])
+      {:ok, ctx} = DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, spec)
+      :ok = Context.track(ctx, "g", %{})
+      ref = Process.monitor(ctx)
+      spawn(fn -> catch_exit(Context.refresh(ctx)) end)
+      Process.sleep(200)
+
+      t0 = System.monotonic_time(:millisecond)
+      :ok = DynamicSupervisor.terminate_child(ABSmartly.ContextSupervisor, ctx)
+      assert_receive {:DOWN, ^ref, :process, ^ctx, :shutdown}, 20_000
+      assert System.monotonic_time(:millisecond) - t0 < spec.shutdown
+      assert_received {:published, ev}
+      assert length(ev["goals"]) == 1
+    end
   end
 end

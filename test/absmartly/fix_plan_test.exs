@@ -622,9 +622,21 @@ defmodule ABSmartly.FixPlanTest do
     end
 
     test "track with non-map properties sanitizes to nil" do
+      test_pid = self()
       ctx = start_context(@get_context_response)
-      Context.track(ctx, "goal1", "not a map")
-      assert Context.pending(ctx) == 1
+      # install an event handler through a fresh context config
+      {:ok, ctx2} =
+        Context.start_link(
+          %Types.SDKConfig{endpoint: "https://t.absmartly.io/v1", api_key: "k", application: "a", environment: "e", publisher: ABSmartly.Test.OkPublisher},
+          Context.data(ctx),
+          %Types.ContextConfig{units: %{"session_id" => "x"}, overrides: %{}, custom_assignments: %{},
+            event_handler: fn type, data -> send(test_pid, {:ev, type, data}) end}
+        )
+
+      Context.track(ctx2, "goal1", "not a map")
+      assert Context.pending(ctx2) == 1
+      assert_received {:ev, :goal, goal}
+      assert goal.properties == nil
     end
 
     test "get_attributes returns list format" do

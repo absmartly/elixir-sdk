@@ -501,9 +501,27 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should queue exposure with audienceMismatch true on audience mismatch in non-strict mode" do
-      ctx = start_context(audience_context_response())
+      test_pid = self()
+      context_data = Types.ContextData.from_map(audience_context_response())
+      sdk_config = %Types.SDKConfig{
+        endpoint: "https://test.absmartly.io/v1",
+        api_key: "test-api-key",
+        application: "website",
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+      context_config = %Types.ContextConfig{
+        units: @context_params,
+        overrides: %{},
+        custom_assignments: %{},
+        event_handler: fn type, data -> send(test_pid, {:ev, type, data}) end
+      }
+      {:ok, ctx} = Context.start_link(sdk_config, context_data, context_config)
+
       assert Context.treatment(ctx, "exp_test_ab") == 1
       assert Context.pending(ctx) == 1
+      assert_received {:ev, :exposure, exposure}
+      assert exposure.audience_mismatch == true
     end
 
     test "should return control variant on audience mismatch in strict mode" do
