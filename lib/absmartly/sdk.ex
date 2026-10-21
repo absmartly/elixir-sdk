@@ -107,8 +107,10 @@ defmodule ABSmartly.SDK do
            config.timeout
          ) do
       {:ok, data} ->
-        context_data = Types.ContextData.from_map(data)
-        create_context_with(sdk, units, context_data, options)
+        case convert_context_data(data) do
+          {:ok, context_data} -> create_context_with(sdk, units, context_data, options)
+          {:error, reason} -> {:error, reason}
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -177,5 +179,11 @@ defmodule ABSmartly.SDK do
       ABSmartly.ContextSupervisor,
       {Context, [sdk.config, data, context_config]}
     )
+  end
+
+  defp convert_context_data(data) do
+    {:ok, Types.ContextData.from_map(data)}
+  rescue
+    exception -> {:error, "Invalid context data: " <> Exception.message(exception)}
   end
 end

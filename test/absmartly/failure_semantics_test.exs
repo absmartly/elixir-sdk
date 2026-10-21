@@ -289,5 +289,17 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert System.monotonic_time(:millisecond) - t0 < 2_000
       refute Process.alive?(ctx)
     end
+
+    test "malformed refresh data returns an error and keeps the context alive" do
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      assert {:error, _} = Context.refresh(ctx, %{"experiments" => %{"x" => 1}})
+      assert Process.alive?(ctx)
+      assert :ok = Context.refresh(ctx, %{"experiments" => []})
+    end
   end
 end

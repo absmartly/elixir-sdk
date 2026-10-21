@@ -753,8 +753,13 @@ defmodule ABSmartly.Context do
     if state.finalized do
       {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
-      state = do_refresh(state, new_data)
-      {:reply, :ok, state}
+      case convert_refresh_data(new_data) do
+        {:ok, context_data} ->
+          {:reply, :ok, do_refresh(state, context_data)}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     end
   end
 
@@ -1246,10 +1251,8 @@ defmodule ABSmartly.Context do
     do_refresh_with_context_data(state, new_data)
   end
 
-  defp do_refresh(state, new_data) do
-    context_data = Types.ContextData.from_map(new_data)
-    do_refresh_with_context_data(state, context_data)
-  end
+  defp convert_refresh_data(%Types.ContextData{} = data), do: {:ok, data}
+  defp convert_refresh_data(data), do: safe_context_data(data)
 
   defp do_refresh_with_context_data(state, context_data) do
     changed_names = changed_experiment_names(state.data.experiments, context_data.experiments)
