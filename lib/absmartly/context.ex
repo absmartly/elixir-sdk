@@ -853,7 +853,11 @@ defmodule ABSmartly.Context do
   defp normalize_units(nil), do: %{}
 
   defp normalize_units(units) when is_map(units) do
-    Map.new(units, fn {k, v} -> {to_string(k), to_string(v)} end)
+    # An absent (nil) UID stays absent so the experiment's unit is treated as
+    # missing rather than becoming a shared empty-string identity.
+    units
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Map.new(fn {k, v} -> {to_string(k), to_string(v)} end)
   end
 
   defp validate_uid_or_error(uid, unit_type) do

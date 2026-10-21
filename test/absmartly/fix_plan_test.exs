@@ -818,5 +818,18 @@ defmodule ABSmartly.FixPlanTest do
       assert :ok = Context.set_units(ctx, %{"user" => 123})
       assert {:error, _} = Context.set_unit(ctx, "user", 124)
     end
+
+    test "a nil initial UID is treated as a missing unit, not an empty identity" do
+      exp = %{
+        "id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
+        "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+        "variants" => [%{"config" => nil}, %{"config" => nil}]
+      }
+
+      ctx = start_context(%{"experiments" => [exp]}, %{"user" => nil})
+      assert Context.peek(ctx, "e") == 0
+      assert :ok = Context.set_unit(ctx, "user", "real-user")
+      assert Context.peek(ctx, "e") == 1
+    end
   end
 end
