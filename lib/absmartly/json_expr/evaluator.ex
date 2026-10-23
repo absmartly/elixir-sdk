@@ -19,9 +19,7 @@ defmodule ABSmartly.JSONExpr.Evaluator do
 
   require Logger
 
-  # Maximum regex pattern length (ReDoS protection)
   @max_regex_length 1000
-  # Regex timeout in milliseconds (ReDoS protection)
   @regex_timeout_ms 100
 
   @binary_operators ~w(eq gt gte lt lte in contains match)
@@ -88,10 +86,7 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   defp get_nested([], value), do: value
 
   defp get_nested([key | rest], value) when is_map(value) do
-    case Map.fetch(value, key) do
-      {:ok, next} -> get_nested(rest, next)
-      :error -> nil
-    end
+    get_nested(rest, Map.get(value, key))
   end
 
   defp get_nested([key | rest], value) when is_list(value) do
@@ -258,10 +253,24 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   def string_convert(x) when is_boolean(x), do: Atom.to_string(x)
 
   def string_convert(x) when is_number(x) do
-    # JS: x.toFixed(15).replace(/\.?0{0,15}$/, "")
-    (x * 1.0)
-    |> :erlang.float_to_binary(decimals: 15)
-    |> String.replace(~r/\.?0{0,15}$/, "", global: false)
+    x = x * 1.0
+
+    cond do
+      x == 0 ->
+        "0"
+
+      abs(x) >= 1.0e21 ->
+        # JS toFixed falls back to exponent notation, e.g. "1e+21".
+        [mantissa, exp] = String.split(:erlang.float_to_binary(x, [:short]), "e")
+        exp = if String.starts_with?(exp, "-"), do: exp, else: "+" <> exp
+        String.replace_suffix(mantissa, ".0", "") <> "e" <> exp
+
+      true ->
+        # JS: x.toFixed(15).replace(/\.?0{0,15}$/, "")
+        x
+        |> :erlang.float_to_binary(decimals: 15)
+        |> String.replace(~r/\.?0{0,15}$/, "", global: false)
+    end
   end
 
   def string_convert(_), do: nil
@@ -269,20 +278,20 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   # JS parseFloat: leading whitespace is skipped and the longest numeric
   # prefix is used; anything that is not a finite number gives nil.
   defp parse_float(s) do
-    trimmed = String.trim_leading(s)
+    regex = ~r/^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?/
+    [_, sign, int, frac, exp] = Regex.run(regex, String.trim_leading(s)) ++ ["", "", "", ""] |> Enum.take(5)
 
-    normalized =
-      case trimmed do
-        "." <> _ -> "0" <> trimmed
-        "-." <> rest -> "-0." <> rest
-        "+." <> rest -> "0." <> rest
-        "+" <> rest -> rest
-        _ -> trimmed
+    if int == "" and frac == "" do
+      nil
+    else
+      digits = fn d -> if d == "", do: "0", else: d end
+
+      case Float.parse("#{sign}#{digits.(int)}.#{digits.(frac)}e#{digits.(exp)}") do
+        {num, ""} -> num
+        _ -> nil
       end
-
-    case Float.parse(normalized) do
-      {num, _rest} -> num
-      :error -> nil
     end
+  rescue
+    ArgumentError -> nil
   end
 end

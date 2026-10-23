@@ -3,6 +3,23 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
 
   alias ABSmartly.JSONExpr.Evaluator
 
+  describe "JS numeric conversion boundaries" do
+    test "number_convert follows parseFloat for exponent forms" do
+      assert Evaluator.number_convert("1.e2") == 100.0
+      assert Evaluator.number_convert(" 12abc") == 12.0
+      assert Evaluator.number_convert("-.5e1") == -5.0
+      assert Evaluator.number_convert("e5") == nil
+      assert Evaluator.compare(1, "1.e2") == -1
+    end
+
+    test "string_convert follows toFixed for negative zero and large numbers" do
+      assert Evaluator.string_convert(-0.0) == "0"
+      assert Evaluator.string_convert(1.0e21) == "1e+21"
+      assert Evaluator.compare("0", -0.0) == 0
+      assert Evaluator.compare("1e+21", 1.0e21) == 0
+    end
+  end
+
   describe "evaluate/2" do
     test "returns nil for nil expression" do
       assert Evaluator.evaluate(nil, %{}) == nil

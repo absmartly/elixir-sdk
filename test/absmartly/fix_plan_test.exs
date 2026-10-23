@@ -299,7 +299,6 @@ defmodule ABSmartly.FixPlanTest do
 
       Context.set_failed(ctx, :fetch_error)
       assert Context.is_failed?(ctx) == true
-      # A failed context is ready with empty data so reads return defaults.
       assert Context.is_ready?(ctx) == true
       assert Context.treatment(ctx, "exp_test_ab") == 0
       assert Context.variable_value(ctx, "banner.size", 17) == 17

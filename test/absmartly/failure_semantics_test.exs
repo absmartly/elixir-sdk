@@ -318,8 +318,8 @@ defmodule ABSmartly.FailureSemanticsTest do
     end
 
     # D7 / JS context.ts:363-376,579-631 - a plain cached assignment is not
-    # evicted by adding its unit, nor by an audience-only refresh.
-    test "adding a missing unit and refreshing audience targeting keep cached assignments" do
+    # evicted by adding its unit.
+    test "adding a missing unit keeps a cached assignment" do
       exp = fn aud ->
         %{"id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
           "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
@@ -337,8 +337,25 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Context.peek(ctx, "e") == 0
       assert :ok = Context.set_unit(ctx, "user", "u")
       assert Context.peek(ctx, "e") == 0
+    end
+
+    test "an audience-only refresh keeps a cached assignment the new audience would reject" do
+      exp = fn aud ->
+        %{"id" => 1, "name" => "e", "unitType" => "session_id", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
+          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+          "variants" => [%{"config" => nil}, %{"config" => nil}],
+          "audienceStrict" => true, "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})}
+      end
+
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"), context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => [exp.(true)]}} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      assert Context.peek(ctx, "e") == 1
       assert :ok = Context.refresh(ctx, %{"experiments" => [exp.(false)]})
-      assert Context.peek(ctx, "e") == 0
+      assert Context.peek(ctx, "e") == 1
     end
 
     test "malformed customFieldValues is rejected without killing the context" do
