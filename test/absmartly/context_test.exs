@@ -549,7 +549,8 @@ defmodule ABSmartly.ContextTest do
       assert Context.pending(ctx) == 1
 
       Context.finalize(ctx)
-      assert Context.treatment(ctx, "exp_test_ab") == 0
+      # JS context.ts:533-540,505-508 - _checkReady(true) throws after finalize
+      assert Context.treatment(ctx, "exp_test_ab") == {:error, "ABsmartly Context is finalized."}
     end
 
     test "should return full-on variant when full_on_variant is set" do
@@ -625,10 +626,11 @@ defmodule ABSmartly.ContextTest do
       assert Context.variable_value(ctx, "not.found", 17) == 17
     end
 
-    test "should return default_value after finalized call" do
+    # JS context.ts:445-448,533-540 - variableValue calls _checkReady(true)
+    test "should return a finalized error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert Context.variable_value(ctx, "banner.size", 17) == 17
+      assert Context.variable_value(ctx, "banner.size", 17) == {:error, "ABsmartly Context is finalized."}
     end
 
     test "conflicting key disjoint audiences" do

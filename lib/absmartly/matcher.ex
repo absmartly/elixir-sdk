@@ -16,6 +16,7 @@ defmodule ABSmartly.Matcher do
   - nil if filter is nil
   - true if filter is empty map (matches all)
   - result of filter evaluation otherwise
+  - nil when the filter value is not a list or map
   - false for invalid filter structures (fail closed)
 
   ## Examples
@@ -46,15 +47,16 @@ defmodule ABSmartly.Matcher do
           true
         end
 
-      filter_expr when is_list(filter_expr) ->
+      filter_expr when is_list(filter_expr) or is_map(filter_expr) ->
         vars = attributes_to_vars(attributes)
 
         Evaluator.evaluate(filter_expr, vars) == true
 
       other ->
-        # Fixes HIGH-07: Log and fail closed for non-list filter
-        Logger.error("Filter key is not a list: #{inspect(other)}")
-        false
+        # Like the JavaScript SDK: a filter that is neither an array nor an
+        # object cannot be evaluated, so it is neither a match nor a mismatch.
+        Logger.error("Filter key is not a list or map: #{inspect(other)}")
+        nil
     end
   end
 

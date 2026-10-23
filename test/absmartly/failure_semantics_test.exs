@@ -185,7 +185,7 @@ defmodule ABSmartly.FailureSemanticsTest do
 
       assert {:error, "Context load failed"} = Context.wait_until_ready(ctx, 1_000)
       assert Context.is_failed?(ctx) == true
-      assert Context.is_ready?(ctx) == false
+      assert Context.is_ready?(ctx) == true
       assert Context.ready_error(ctx) == "Context load failed"
 
       assert_received {:context_event, :error, "Context load failed"}
@@ -317,7 +317,9 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Process.alive?(ctx)
     end
 
-    test "adding a missing unit and refreshing audience targeting recalculate cached assignments" do
+    # D7 / JS context.ts:363-376,579-631 - a plain cached assignment is not
+    # evicted by adding its unit, nor by an audience-only refresh.
+    test "adding a missing unit and refreshing audience targeting keep cached assignments" do
       exp = fn aud ->
         %{"id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
           "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
@@ -334,7 +336,7 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert :ok = Context.wait_until_ready(ctx, 1_000)
       assert Context.peek(ctx, "e") == 0
       assert :ok = Context.set_unit(ctx, "user", "u")
-      assert Context.peek(ctx, "e") == 1
+      assert Context.peek(ctx, "e") == 0
       assert :ok = Context.refresh(ctx, %{"experiments" => [exp.(false)]})
       assert Context.peek(ctx, "e") == 0
     end
@@ -352,7 +354,10 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Context.custom_field_keys(ctx) == []
     end
 
-    test "recalculated treatments after unit add / audience refresh are exposed again" do
+    # D7 / JS context.ts:363-376,579-631: adding a unit does not evict a plain
+    # assignment and audience is only re-evaluated on attribute change, so
+    # neither a later unit nor an audience-only refresh recalculates it.
+    test "treatments stay sticky after unit add / audience-only refresh" do
       defmodule CapturePublisher do
         def publish(_e, _k, _a, _env, events, _r) do
           send(:capture_pub, {:published, events})
@@ -377,16 +382,14 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert :ok = Context.wait_until_ready(ctx, 1_000)
       assert Context.treatment(ctx, "e") == 0
       :ok = Context.set_unit(ctx, "user", "u")
-      assert Context.treatment(ctx, "e") == 1
+      assert Context.treatment(ctx, "e") == 0
       :ok = Context.publish(ctx)
       assert_receive {:published, ev1}, 1_000
-      assert Enum.any?(ev1["exposures"], &(&1["variant"] == 1))
+      assert [%{"name" => "e", "variant" => 0}] = ev1["exposures"]
 
       :ok = Context.refresh(ctx, %{"experiments" => [exp.(false)]})
       assert Context.treatment(ctx, "e") == 0
-      :ok = Context.publish(ctx)
-      assert_receive {:published, ev2}, 1_000
-      assert Enum.any?(ev2["exposures"], &(&1["name"] == "e"))
+      assert Context.pending(ctx) == 0
     end
 
     test "json custom field with non-string value does not kill the context" do
@@ -403,7 +406,8 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Process.alive?(ctx)
     end
 
-    test "successful refresh recovers a failed context" do
+    # D4 / JS context.ts:1323-1346 - refresh on a failed context is a no-op success
+    test "refresh on a failed context is a successful no-op" do
       {:ok, ctx} =
         Context.start_link_async(sdk_config("unused"), context_config(),
           data_fetcher: fn -> {:error, "down"} end
@@ -414,9 +418,8 @@ defmodule ABSmartly.FailureSemanticsTest do
         "seedHi" => 1, "seedLo" => 2, "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4,
         "trafficSplit" => [0, 1], "variants" => [%{"config" => nil}, %{"config" => nil}]}]}
       assert :ok = Context.refresh(ctx, data)
-      assert Context.is_ready?(ctx)
-      refute Context.is_failed?(ctx)
-      assert Context.treatment(ctx, "e") == 1
+      assert Context.is_failed?(ctx)
+      assert Context.treatment(ctx, "e") == 0
     end
 
     test "unchanged set_unit keeps exposure dedup; supervisor shutdown publishes pending events" do
@@ -453,18 +456,20 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert length(ev["goals"]) == 1
     end
 
-    test "refresh releases readiness waiters of a loading context" do
+    # D1 / JS context.ts:318-319,533-536 - refresh before ready is rejected;
+    # readiness waiters are still released when the load completes.
+    test "refresh on a loading context is rejected and waiters still resolve" do
       {:ok, ctx} =
         Context.start_link_async(sdk_config("unused"), context_config(),
           data_fetcher: fn ->
-            Process.sleep(3_000)
+            Process.sleep(300)
             {:ok, %{"experiments" => []}}
           end
         )
 
       waiter = Task.async(fn -> Context.wait_until_ready(ctx, 2_000) end)
-      Process.sleep(100)
-      assert :ok = Context.refresh(ctx, %{"experiments" => []})
+      Process.sleep(50)
+      assert {:error, "ABsmartly Context is not yet ready."} = Context.refresh(ctx, %{"experiments" => []})
       assert :ok = Task.await(waiter, 3_000)
     end
 

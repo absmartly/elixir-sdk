@@ -475,10 +475,10 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call(:wait_until_ready, from, state) do
     cond do
-      state.ready ->
-        {:reply, :ok, state}
       state.failed ->
         {:reply, {:error, state.failed_reason}, state}
+      state.ready ->
+        {:reply, :ok, state}
       true ->
         {:noreply, %{state | pending_waiters: [from | state.pending_waiters]}}
     end
@@ -498,9 +498,7 @@ defmodule ABSmartly.Context do
           if Map.has_key?(state.units, key) && Map.get(state.units, key) != uid_str do
             {:reply, {:error, "Unit '#{key}' UID already set."}, state}
           else
-            added = if Map.has_key?(state.units, key), do: [], else: [key]
-            state = %{state | units: Map.put(state.units, key, uid_str)}
-            {:reply, :ok, invalidate_assignments_for_new_units(state, added)}
+            {:reply, :ok, %{state | units: Map.put(state.units, key, uid_str)}}
           end
       end
     end
@@ -527,9 +525,7 @@ defmodule ABSmartly.Context do
           Map.put(acc, key, uid_str)
         end)
 
-        added = Map.keys(new_units) -- Map.keys(state.units)
-        state = %{state | units: new_units}
-        {:reply, :ok, invalidate_assignments_for_new_units(state, added)}
+        {:reply, :ok, %{state | units: new_units}}
       catch
         {:duplicate_unit, key} ->
           {:reply, {:error, "Unit '#{key}' UID already set."}, state}
@@ -641,61 +637,59 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call({:treatment, experiment_name}, _from, state) do
-    cond do
-      not state.ready -> {:reply, 0, state}
-      state.finalized -> {:reply, 0, state}
-      true ->
-        {variant, state} = do_treatment(state, experiment_name, true)
-        {:reply, variant, state}
-    end
+    with_ready(state, true, fn ->
+      do_treatment(state, experiment_name, true)
+    end)
   end
 
   @impl true
   def handle_call({:peek, experiment_name}, _from, state) do
-    {variant, state} = do_treatment(state, experiment_name, false)
-    {:reply, variant, state}
+    with_ready(state, true, fn ->
+      do_treatment(state, experiment_name, false)
+    end)
   end
 
   @impl true
   def handle_call({:variable_value, key, default_value}, _from, state) do
-    if state.finalized do
-      {:reply, default_value, state}
-    else
-      {value, state} = do_variable_value(state, key, default_value, true)
-      {:reply, value, state}
-    end
+    with_ready(state, true, fn ->
+      do_variable_value(state, key, default_value, true)
+    end)
   end
 
   @impl true
   def handle_call({:peek_variable_value, key, default_value}, _from, state) do
-    {value, state} = do_variable_value(state, key, default_value, false)
-    {:reply, value, state}
+    with_ready(state, true, fn ->
+      do_variable_value(state, key, default_value, false)
+    end)
   end
 
   @impl true
   def handle_call(:variable_keys, _from, state) do
-    result = Map.new(state.variable_index, fn {key, experiments} ->
-      {key, Enum.map(experiments, & &1.name)}
+    with_ready(state, true, fn ->
+      result = Map.new(state.variable_index, fn {key, experiments} ->
+        {key, Enum.map(experiments, & &1.name)}
+      end)
+      {result, state}
     end)
-    {:reply, result, state}
   end
 
   @impl true
   def handle_call({:custom_field_value, experiment_name, field_name}, _from, state) do
-    value = do_custom_field_value(state, experiment_name, field_name)
-    {:reply, value, state}
+    with_ready(state, true, fn ->
+      {do_custom_field_value(state, experiment_name, field_name), state}
+    end)
   end
 
   @impl true
   def handle_call(:custom_field_keys, _from, state) do
-    keys = do_custom_field_keys(state)
-    {:reply, keys, state}
+    with_ready(state, true, fn -> {do_custom_field_keys(state), state} end)
   end
 
   @impl true
   def handle_call({:custom_field_value_type, experiment_name, field_name}, _from, state) do
-    type = do_custom_field_value_type(state, experiment_name, field_name)
-    {:reply, type, state}
+    with_ready(state, true, fn ->
+      {do_custom_field_value_type(state, experiment_name, field_name), state}
+    end)
   end
 
   @impl true
@@ -710,11 +704,13 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call(:publish, _from, state) do
-    if state.finalized do
-      {:reply, {:error, "ABsmartly Context is finalized."}, state}
-    else
-      {result, new_state} = do_publish(state)
-      {:reply, result, new_state}
+    case check_ready(state, true) do
+      :ok ->
+        {result, new_state} = do_publish(state)
+        {:reply, result, new_state}
+
+      error ->
+        {:reply, error, state}
     end
   end
 
@@ -742,35 +738,39 @@ defmodule ABSmartly.Context do
     {:reply, :ok, %{state | exposures: [], goals: []}}
   end
 
+  # Like the JavaScript SDK, refreshing a context whose data failed to load is a
+  # successful no-op: a failed context is never recovered by a refresh.
   @impl true
   def handle_call(:refresh, _from, state) do
-    fetch_result = run_fetch(state)
+    case check_ready(state, true) do
+      :ok when state.failed ->
+        {:reply, :ok, state}
 
-    case fetch_result do
-      {:ok, new_data} ->
-        handle_call({:refresh, new_data}, nil, state)
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+      :ok ->
+        case run_fetch(state) do
+          {:ok, new_data} ->
+            handle_call({:refresh, new_data}, nil, state)
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+
+      error ->
+        {:reply, error, state}
     end
   end
 
   @impl true
   def handle_call({:refresh, new_data}, _from, state) do
-    if state.finalized do
-      {:reply, {:error, "ABsmartly Context is finalized."}, state}
-    else
-      case convert_refresh_data(new_data) do
-        {:ok, context_data} ->
-          try do
-            {:reply, :ok, do_refresh(state, context_data)}
-          rescue
-            exception ->
-              {:reply, {:error, "Invalid context data: " <> Exception.message(exception)}, state}
-          end
+    case check_ready(state, true) do
+      :ok when state.failed ->
+        {:reply, :ok, state}
 
-        {:error, reason} ->
-          {:reply, {:error, reason}, state}
-      end
+      :ok ->
+        apply_refresh(state, new_data)
+
+      error ->
+        {:reply, error, state}
     end
   end
 
@@ -801,13 +801,57 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call(:data, _from, state) do
-    {:reply, state.data, state}
+    case check_ready(state, false) do
+      :ok -> {:reply, state.data, state}
+      error -> {:reply, error, state}
+    end
   end
 
   @impl true
   def handle_call(:experiments, _from, state) do
-    names = Enum.map(state.data.experiments, & &1.name)
-    {:reply, names, state}
+    case check_ready(state, false) do
+      :ok -> {:reply, Enum.map(state.data.experiments, & &1.name), state}
+      error -> {:reply, error, state}
+    end
+  end
+
+  defp apply_refresh(state, new_data) do
+    case convert_refresh_data(new_data) do
+      {:ok, context_data} ->
+        try do
+          {:reply, :ok, do_refresh(state, context_data)}
+        rescue
+          exception ->
+            {:reply, {:error, "Invalid context data: " <> Exception.message(exception)}, state}
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  # Mirrors the JavaScript SDK's `_checkReady(expectNotFinalized)`: reads before
+  # the context data has settled (loaded or failed) return a "not yet ready"
+  # error, and reads after finalize (or while finalizing) return a finalized
+  # error. A failed context counts as ready and reads from its empty data.
+  defp check_ready(state, expect_not_finalized) do
+    cond do
+      not (state.ready or state.failed) -> {:error, "ABsmartly Context is not yet ready."}
+      expect_not_finalized and state.finalized -> {:error, "ABsmartly Context is finalized."}
+      expect_not_finalized and state.finalizing -> {:error, "ABsmartly Context is finalizing."}
+      true -> :ok
+    end
+  end
+
+  defp with_ready(state, expect_not_finalized, fun) do
+    case check_ready(state, expect_not_finalized) do
+      :ok ->
+        {result, state} = fun.()
+        {:reply, result, state}
+
+      error ->
+        {:reply, error, state}
+    end
   end
 
   @impl true
@@ -1404,19 +1448,8 @@ defmodule ABSmartly.Context do
         variable_index: var_index,
         experiment_index: exp_index,
         audience_cache: aud_cache,
-        exposed_experiments: exposed_experiments,
-        ready: true,
-        failed: false,
-        failed_reason: nil
+        exposed_experiments: exposed_experiments
     }
-
-    state =
-      if state.pending_waiters != [] do
-        for waiter <- state.pending_waiters, do: GenServer.reply(waiter, :ok)
-        %{state | pending_waiters: []}
-      else
-        state
-      end
 
     Logger.info("Context refreshed with #{length(context_data.experiments)} experiments")
     emit_event(state, :refresh, %{experiments: context_data.experiments})
@@ -1451,7 +1484,7 @@ defmodule ABSmartly.Context do
       if cached != nil do
         custom = Map.get(state.custom_assignments, name)
 
-        if custom != nil && !cached.full_on && cached.eligible && !strict_excluded?(cached, experiment) do
+        if custom_applies?(custom, cached) do
           custom_assignment = %{cached | variant: custom, custom: true}
           {custom_assignment, state}
         else
@@ -1463,7 +1496,7 @@ defmodule ABSmartly.Context do
 
         custom = Map.get(state.custom_assignments, name)
 
-        if custom != nil && !assignment.full_on && assignment.eligible && !strict_excluded?(assignment, experiment) do
+        if custom_applies?(custom, assignment) do
           custom_assignment = %Types.Assignment{
             assignment
             | variant: custom,
@@ -1478,16 +1511,27 @@ defmodule ABSmartly.Context do
     end
   end
 
-  defp strict_excluded?(assignment, experiment),
-    do: assignment.audience_mismatch == true and experiment.audience_strict == true
+  # As in the JavaScript SDK, a custom assignment only replaces a randomized
+  # assignment: not a full-on, traffic-excluded, missing-unit or strict
+  # audience-excluded one (those are all unassigned or ineligible).
+  defp custom_applies?(custom, assignment),
+    do: custom != nil and assignment.assigned and assignment.eligible and not assignment.full_on
 
   defp maybe_reassign_for_audience(nil, state, _experiment, _name), do: {nil, state}
   defp maybe_reassign_for_audience(cached, state, experiment, name) do
     has_audience = experiment.audience != nil and experiment.audience != ""
 
     if has_audience and cached.audience_match_seq < state.attrs_seq do
-      new_assignment = assign_variant(state, experiment)
-      if new_assignment.audience_mismatch != cached.audience_mismatch do
+      # An indeterminate (nil) audience result keeps the cached flag, like the
+      # JavaScript SDK's `audienceMatches`.
+      new_mismatch =
+        case audience_result(state, experiment) do
+          nil -> cached.audience_mismatch
+          result -> not result
+        end
+
+      if new_mismatch != cached.audience_mismatch do
+        new_assignment = assign_variant(state, experiment)
         state = %{state |
           assignments: Map.put(state.assignments, name, new_assignment),
           exposed_experiments: MapSet.delete(state.exposed_experiments, name)
@@ -1503,55 +1547,48 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # Same decision order as the JavaScript SDK's `_assign` (context.ts): the
+  # audience is evaluated first, a strict mismatch forces variant 0, a full-on
+  # experiment is assigned its full-on variant even without a unit, and only a
+  # running experiment needs the unit for the traffic and variant split.
   defp assign_variant(state, experiment) do
     unit_type = experiment.unit_type || "session_id"
     uid = Map.get(state.units, unit_type)
     base = %{base_assignment(experiment) | audience_match_seq: state.attrs_seq}
 
+    audience_mismatch =
+      case audience_result(state, experiment) do
+        false -> true
+        _ -> false
+      end
+
+    base = %{base | audience_mismatch: audience_mismatch}
+
     cond do
+      audience_mismatch and experiment.audience_strict == true ->
+        base
+
+      full_on?(experiment) ->
+        %{base | variant: experiment.full_on_variant, assigned: true, full_on: true}
+
       is_nil(uid) ->
-        %{base | eligible: false}
+        base
 
       true ->
         hashed_unit = Utils.hash_unit(uid)
-        audience_matched = audience_match?(state, experiment)
 
-        cond do
-          not audience_matched && experiment.audience_strict ->
-            %{base | audience_mismatch: true}
+        if traffic_eligible?(hashed_unit, experiment) do
+          variant =
+            VariantAssigner.assign(
+              hashed_unit,
+              experiment.split,
+              experiment.seed_hi,
+              experiment.seed_lo
+            )
 
-          full_on?(experiment) ->
-            %{
-              base
-              | variant: experiment.full_on_variant,
-                assigned: true,
-                full_on: true,
-                audience_mismatch: !audience_matched
-            }
-
-          not traffic_eligible?(hashed_unit, experiment) ->
-            %{
-              base
-              | assigned: true,
-                eligible: false,
-                audience_mismatch: !audience_matched
-            }
-
-          true ->
-            variant =
-              VariantAssigner.assign(
-                hashed_unit,
-                experiment.split,
-                experiment.seed_hi,
-                experiment.seed_lo
-              )
-
-            %{
-              base
-              | variant: variant,
-                assigned: true,
-                audience_mismatch: !audience_matched
-            }
+          %{base | variant: variant, assigned: true}
+        else
+          %{base | assigned: true, eligible: false}
         end
     end
   end
@@ -1572,20 +1609,19 @@ defmodule ABSmartly.Context do
     }
   end
 
-  defp audience_match?(state, experiment) do
+  # true / false, or nil when the audience cannot be evaluated (no filter,
+  # invalid JSON or an invalid filter), which the JavaScript SDK treats as
+  # neither a match nor a mismatch.
+  defp audience_result(state, experiment) do
     case experiment.audience do
-      nil -> true
-      "" -> true
+      nil -> nil
+      "" -> nil
       _audience ->
-        parsed = Map.get(state.audience_cache, experiment.name)
-        if parsed do
-          attrs_list = Enum.map(state.attributes, fn attr ->
-            %{"name" => attr.name, "value" => attr.value}
-          end)
-          Matcher.evaluate(parsed, attrs_list) == true
-        else
-          true
-        end
+        attrs_list = Enum.map(state.attributes, fn attr ->
+          %{"name" => attr.name, "value" => attr.value}
+        end)
+
+        Matcher.evaluate(Map.get(state.audience_cache, experiment.name), attrs_list)
     end
   end
 
@@ -1678,6 +1714,11 @@ defmodule ABSmartly.Context do
     {reversed_var_index, exp_index, aud_cache}
   end
 
+  # Assignments are sticky across a refresh, as in the JavaScript SDK's
+  # `experimentMatches` (context.ts): only a change of id, iteration,
+  # fullOnVariant, trafficSplit or unitType invalidates a cached assignment.
+  # Seeds, split, variant configs and audience edits deliberately do not, so a
+  # refresh never re-buckets a user or queues a duplicate exposure for them.
   defp changed_experiment_names(old_experiments, new_experiments) do
     old_exp_map = Enum.into(old_experiments, %{}, fn exp -> {exp.name, exp} end)
     new_exp_map = Enum.into(new_experiments, %{}, fn exp -> {exp.name, exp} end)
@@ -1693,36 +1734,10 @@ defmodule ABSmartly.Context do
         old_exp.iteration != new_exp.iteration -> true
         old_exp.full_on_variant != new_exp.full_on_variant -> true
         old_exp.traffic_split != new_exp.traffic_split -> true
-        old_exp.split != new_exp.split -> true
         old_exp.unit_type != new_exp.unit_type -> true
-        old_exp.audience != new_exp.audience -> true
-        old_exp.audience_strict != new_exp.audience_strict -> true
         true -> false
       end
     end)
-  end
-
-  # A previously absent unit may make cached ineligible assignments stale, so
-  # drop non-overridden assignments for experiments using the newly added units.
-  defp invalidate_assignments_for_new_units(state, []), do: state
-
-  defp invalidate_assignments_for_new_units(state, added_keys) do
-    affected =
-      state.data.experiments
-      |> Enum.filter(&(to_string(&1.unit_type) in added_keys))
-      |> MapSet.new(& &1.name)
-
-    assignments =
-      Map.reject(state.assignments, fn {name, assignment} ->
-        MapSet.member?(affected, name) and not assignment.overridden
-      end)
-
-    exposed =
-      Enum.reduce(affected, state.exposed_experiments, fn name, acc ->
-        if Map.has_key?(state.overrides, name), do: acc, else: MapSet.delete(acc, name)
-      end)
-
-    %{state | assignments: assignments, exposed_experiments: exposed}
   end
 
   defp invalidate_changed_assignments(assignments, old_experiments, new_experiments) do
@@ -1743,10 +1758,7 @@ defmodule ABSmartly.Context do
           old_exp.iteration != new_exp.iteration -> false
           old_exp.full_on_variant != new_exp.full_on_variant -> false
           old_exp.traffic_split != new_exp.traffic_split -> false
-          old_exp.split != new_exp.split -> false
           old_exp.unit_type != new_exp.unit_type -> false
-          old_exp.audience != new_exp.audience -> false
-          old_exp.audience_strict != new_exp.audience_strict -> false
           true -> true
         end
 
@@ -1765,7 +1777,18 @@ defmodule ABSmartly.Context do
       GenServer.reply(waiter, {:error, reason})
     end
 
-    state = %{state | failed: true, failed_reason: reason, pending_waiters: []}
+    # Like the JS SDK, a failed context is ready with empty data so reads
+    # return control/default values.
+    state = %{state |
+      failed: true,
+      ready: true,
+      failed_reason: reason,
+      pending_waiters: [],
+      data: %Types.ContextData{experiments: []},
+      variable_index: %{},
+      experiment_index: %{},
+      audience_cache: %{}
+    }
     emit_event(state, :error, reason)
     state
   end

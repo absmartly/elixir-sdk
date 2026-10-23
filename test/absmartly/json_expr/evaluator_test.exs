@@ -8,11 +8,12 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(nil, %{}) == nil
     end
 
-    test "returns scalar value for scalar expressions" do
-      assert Evaluator.evaluate(42, %{}) == 42
-      assert Evaluator.evaluate("hello", %{}) == "hello"
-      assert Evaluator.evaluate(true, %{}) == true
-      assert Evaluator.evaluate(false, %{}) == false
+    # JS jsonexpr/evaluator.ts:65-79 - a bare scalar (not array/object) evaluates to null
+    test "returns nil for bare scalar expressions" do
+      assert Evaluator.evaluate(42, %{}) == nil
+      assert Evaluator.evaluate("hello", %{}) == nil
+      assert Evaluator.evaluate(true, %{}) == nil
+      assert Evaluator.evaluate(false, %{}) == nil
     end
 
     test "returns nil when no recognized operator" do
@@ -93,9 +94,10 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(expr, %{}) == false
     end
 
-    test "returns nil when encountering nil" do
+    # JS operators/and.ts:7-9 - null is booleanConverted to false
+    test "returns false when encountering nil" do
       expr = %{"and" => [%{"value" => nil}]}
-      assert Evaluator.evaluate(expr, %{}) == nil
+      assert Evaluator.evaluate(expr, %{}) == false
     end
   end
 
@@ -110,8 +112,9 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(expr, %{}) == false
     end
 
-    test "returns false for empty list" do
-      assert Evaluator.evaluate(%{"or" => []}, %{}) == false
+    # JS operators/or.ts:11 - returns args.length === 0
+    test "returns true for empty list" do
+      assert Evaluator.evaluate(%{"or" => []}, %{}) == true
     end
 
     test "short-circuits on true" do
@@ -119,9 +122,10 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(expr, %{}) == true
     end
 
-    test "returns nil when encountering nil" do
+    # JS operators/or.ts:7-11 - null is booleanConverted to false
+    test "returns false when encountering nil" do
       expr = %{"or" => [%{"value" => nil}]}
-      assert Evaluator.evaluate(expr, %{}) == nil
+      assert Evaluator.evaluate(expr, %{}) == false
     end
   end
 
@@ -138,8 +142,9 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(%{"not" => %{"value" => ""}}, %{}) == true
     end
 
-    test "returns nil for nil" do
-      assert Evaluator.evaluate(%{"not" => %{"value" => nil}}, %{}) == nil
+    # JS operators/not.ts:6 - !booleanConvert(null) == true
+    test "returns true for nil" do
+      assert Evaluator.evaluate(%{"not" => %{"value" => nil}}, %{}) == true
     end
   end
 
@@ -156,6 +161,16 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
 
     test "returns true for undefined variable" do
       assert Evaluator.evaluate(%{"null" => %{"var" => "missing"}}, %{}) == true
+    end
+  end
+
+  describe "string lhs with integer rhs" do
+    test "converts integer rhs like JS stringConvert instead of crashing" do
+      assert Evaluator.compare("1", 1) == 0
+      assert Evaluator.compare("abc", 1) == 1
+      assert Evaluator.string_convert(1) == "1"
+      assert Evaluator.evaluate(%{"eq" => [%{"var" => "count"}, %{"value" => 1}]}, %{"count" => "1"}) == true
+      assert Evaluator.evaluate(%{"eq" => [%{"var" => "count"}, %{"value" => 1}]}, %{"count" => "abc"}) == false
     end
   end
 
@@ -239,14 +254,16 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(expr, %{}) == false
     end
 
-    test "returns false for nil needle" do
+    # JS operators/binary.ts:9-16 - null operand short-circuits to null
+    test "returns nil for nil needle" do
       expr = %{"in" => [%{"value" => [1, 2]}, %{"value" => nil}]}
-      assert Evaluator.evaluate(expr, %{}) == false
+      assert Evaluator.evaluate(expr, %{}) == nil
     end
 
-    test "returns false for nil haystack" do
+    # JS operators/binary.ts:9-16 - null operand short-circuits to null
+    test "returns nil for nil haystack" do
       expr = %{"in" => [%{"value" => nil}, %{"value" => 1}]}
-      assert Evaluator.evaluate(expr, %{}) == false
+      assert Evaluator.evaluate(expr, %{}) == nil
     end
 
     test "contains is an alias for in (haystack-first)" do
@@ -267,19 +284,22 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.evaluate(expr, %{}) == false
     end
 
-    test "returns false for nil text" do
+    # JS operators/binary.ts:9-16 - null operand short-circuits to null
+    test "returns nil for nil text" do
       expr = %{"match" => [%{"value" => nil}, %{"value" => "pattern"}]}
-      assert Evaluator.evaluate(expr, %{}) == false
+      assert Evaluator.evaluate(expr, %{}) == nil
     end
 
-    test "returns false for nil pattern" do
+    # JS operators/binary.ts:9-16 - null operand short-circuits to null
+    test "returns nil for nil pattern" do
       expr = %{"match" => [%{"value" => "text"}, %{"value" => nil}]}
-      assert Evaluator.evaluate(expr, %{}) == false
+      assert Evaluator.evaluate(expr, %{}) == nil
     end
 
-    test "returns false for invalid regex" do
+    # JS operators/match.ts:13-14 - invalid regex gives null
+    test "returns nil for invalid regex" do
       expr = %{"match" => [%{"value" => "text"}, %{"value" => "[invalid"}]}
-      assert Evaluator.evaluate(expr, %{}) == false
+      assert Evaluator.evaluate(expr, %{}) == nil
     end
   end
 
@@ -317,11 +337,16 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.compare("abc", "bcd") == -1
     end
 
+    # JS jsonexpr/evaluator.ts compare(): rhs is converted to lhs's type
     test "incomparable type pairs return nil" do
       assert Evaluator.compare(1, "abc") == nil
-      assert Evaluator.compare("abc", 1) == nil
-      assert Evaluator.compare(true, "abc") == nil
-      assert Evaluator.compare(1, true) == nil
+      assert Evaluator.compare([1], [2]) == nil
+    end
+
+    test "rhs is converted to the lhs type" do
+      assert Evaluator.compare("abc", 1) == 1
+      assert Evaluator.compare(true, "abc") == 0
+      assert Evaluator.compare(1, true) == 0
     end
   end
 

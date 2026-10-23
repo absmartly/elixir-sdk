@@ -104,15 +104,18 @@ defmodule ABSmartly.FixPlanTest do
       assert Evaluator.compare(1, "2") == -1
     end
 
-    test "compare string to number coerces string" do
-      assert Evaluator.compare("1.0", 1) == 0
+    # JS jsonexpr/evaluator.ts compare(): string lhs converts the number rhs
+    # with stringConvert and compares lexically
+    test "compare string to number converts the number to a string" do
+      assert Evaluator.compare("1.0", 1) == 1
+      assert Evaluator.compare("1", 1) == 0
       assert Evaluator.compare("3", 2) == 1
       assert Evaluator.compare("1", 2) == -1
     end
 
     test "compare number to non-numeric string returns nil" do
       assert Evaluator.compare(1, "abc") == nil
-      assert Evaluator.compare("abc", 1) == nil
+      assert Evaluator.compare("abc", 1) == 1
     end
 
     test "eq works across types" do
@@ -226,18 +229,19 @@ defmodule ABSmartly.FixPlanTest do
 
   # Fix #11: Evaluator scalar values
   describe "fix #11 - evaluate scalar values" do
-    test "returns number for number expression" do
-      assert Evaluator.evaluate(42, %{}) == 42
-      assert Evaluator.evaluate(3.14, %{}) == 3.14
+    # JS jsonexpr/evaluator.ts:65-79 - bare scalars evaluate to null
+    test "returns nil for number expression" do
+      assert Evaluator.evaluate(42, %{}) == nil
+      assert Evaluator.evaluate(3.14, %{}) == nil
     end
 
-    test "returns string for string expression" do
-      assert Evaluator.evaluate("hello", %{}) == "hello"
+    test "returns nil for string expression" do
+      assert Evaluator.evaluate("hello", %{}) == nil
     end
 
-    test "returns boolean for boolean expression" do
-      assert Evaluator.evaluate(true, %{}) == true
-      assert Evaluator.evaluate(false, %{}) == false
+    test "returns nil for boolean expression" do
+      assert Evaluator.evaluate(true, %{}) == nil
+      assert Evaluator.evaluate(false, %{}) == nil
     end
 
     test "still returns nil for nil" do
@@ -295,6 +299,10 @@ defmodule ABSmartly.FixPlanTest do
 
       Context.set_failed(ctx, :fetch_error)
       assert Context.is_failed?(ctx) == true
+      # A failed context is ready with empty data so reads return defaults.
+      assert Context.is_ready?(ctx) == true
+      assert Context.treatment(ctx, "exp_test_ab") == 0
+      assert Context.variable_value(ctx, "banner.size", 17) == 17
     end
 
     test "wait_until_ready returns error when failed" do
@@ -432,7 +440,9 @@ defmodule ABSmartly.FixPlanTest do
 
   # Fix #32: Split changes in invalidation
   describe "fix #32 - split changes invalidation" do
-    test "refresh picks up split changes" do
+    # D7 / JS context.ts:579-586 - only id/unitType/iteration/fullOnVariant/
+    # trafficSplit invalidate a cached assignment; a split change is sticky.
+    test "refresh keeps the assignment sticky across split changes" do
       changed_split_response = %{@get_context_response |
         "experiments" => Enum.map(@get_context_response["experiments"], fn exp ->
           if exp["name"] == "exp_test_ab" do
@@ -443,13 +453,13 @@ defmodule ABSmartly.FixPlanTest do
         end)
       }
       ctx = start_context_with_refresh(@get_context_response, changed_split_response)
-      Context.treatment(ctx, "exp_test_ab")
+      v1 = Context.treatment(ctx, "exp_test_ab")
       assert Context.pending(ctx) == 1
 
       Context.refresh(ctx)
       v2 = Context.treatment(ctx, "exp_test_ab")
-      assert Context.pending(ctx) == 2
-      assert is_integer(v2)
+      assert Context.pending(ctx) == 1
+      assert v2 == v1
     end
   end
 
@@ -667,8 +677,8 @@ defmodule ABSmartly.FixPlanTest do
       assert Matcher.evaluate(%{"invalid" => true}, %{}) == false
     end
 
-    test "non-list filter value fails closed" do
-      assert Matcher.evaluate(%{"filter" => "not_a_list"}, %{}) == false
+    test "non-list, non-map filter value is indeterminate" do
+      assert Matcher.evaluate(%{"filter" => "not_a_list"}, %{}) == nil
     end
 
     test "non-map filter fails closed" do
@@ -829,7 +839,9 @@ defmodule ABSmartly.FixPlanTest do
       ctx = start_context(%{"experiments" => [exp]}, %{"user" => nil})
       assert Context.peek(ctx, "e") == 0
       assert :ok = Context.set_unit(ctx, "user", "real-user")
-      assert Context.peek(ctx, "e") == 1
+      # D7 / JS context.ts:363-376 - setting a unit only evicts assignments
+      # resolved by a rule or holdout without it, so this one stays sticky.
+      assert Context.peek(ctx, "e") == 0
     end
   end
 end

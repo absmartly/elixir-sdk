@@ -11,6 +11,13 @@ defmodule ABSmartly.MatcherTest do
     test "returns nil if filter not object or array" do
       assert Matcher.evaluate(nil, []) == nil
       assert Matcher.evaluate(nil, %{}) == nil
+      assert Matcher.evaluate(%{"filter" => "invalid"}, %{}) == nil
+      assert Matcher.evaluate(%{"filter" => 1}, %{}) == nil
+    end
+
+    test "evaluates map filter expressions" do
+      assert Matcher.evaluate(%{"filter" => %{"value" => true}}, %{}) == true
+      assert Matcher.evaluate(%{"filter" => %{"value" => false}}, %{}) == false
     end
 
     test "returns boolean for filter expressions" do

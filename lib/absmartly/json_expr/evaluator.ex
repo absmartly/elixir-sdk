@@ -2,23 +2,29 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   @moduledoc """
   JSON expression evaluator for audience targeting.
 
-  Supports 13 operators: and, or, not, null, var, value, eq, gt, gte, lt, lte, in, match
+  Mirrors the JavaScript SDK's `jsonexpr` (src/jsonexpr): the same operators,
+  the same type conversions and the same `null` results. Supported operators:
+  and, or, not, null, var, value, eq, gt, gte, lt, lte, in, match, plus
+  `contains` (an alias of `in`, haystack first).
 
-  Fixes:
-  - CRITICAL-04: ReDoS vulnerability in eval_match
-  - HIGH-10: ReDoS risk + silent regex compilation failure
-  - HIGH-14: Non-list `and`/`or` silently defaults
-  - MEDIUM-21: Unknown operators silently return nil
+  - A list expression is an implicit `and`; a map expression is dispatched on
+    its operator key; anything else evaluates to `nil`.
+  - Binary operators return `nil` when either operand is `nil`.
+  - `in`/`contains` take `[haystack, needle]`: a list haystack matches an
+    element that compares equal, a string haystack matches a substring (the
+    needle is converted to a string) and a map haystack matches a key. Any
+    other haystack gives `nil`.
+  - `match` gives `nil` for an invalid (or over-long) regular expression.
   """
-
-  alias ABSmartly.Utils
 
   require Logger
 
-  # Maximum regex pattern length (CRITICAL-04)
+  # Maximum regex pattern length (ReDoS protection)
   @max_regex_length 1000
-  # Regex timeout in milliseconds (CRITICAL-04)
+  # Regex timeout in milliseconds (ReDoS protection)
   @regex_timeout_ms 100
+
+  @binary_operators ~w(eq gt gte lt lte in contains match)
 
   @doc """
   Evaluate a JSON expression with given variables.
@@ -31,98 +37,61 @@ defmodule ABSmartly.JSONExpr.Evaluator do
       iex> evaluate(%{"var" => "age"}, %{"age" => 25})
       25
 
-      iex> evaluate(%{"eq" => [%{"var" => "age"}, 25]}, %{"age" => 25})
+      iex> evaluate(%{"eq" => [%{"var" => "age"}, %{"value" => 25}]}, %{"age" => 25})
       true
   """
-  def evaluate(nil, _vars), do: nil
+  def evaluate(expr, vars) when is_list(expr), do: eval_and(expr, vars)
 
-  def evaluate(expr, vars) when is_list(expr) do
-    eval_and(expr, vars)
-  end
+  def evaluate(expr, vars) when is_map(expr) and map_size(expr) > 0 do
+    [{op, args} | _] = Map.to_list(expr)
 
-  def evaluate(expr, vars) when is_map(expr) do
-    cond do
-      Map.has_key?(expr, "and") -> eval_and(expr["and"], vars)
-      Map.has_key?(expr, "or") -> eval_or(expr["or"], vars)
-      Map.has_key?(expr, "not") -> eval_not(expr["not"], vars)
-      Map.has_key?(expr, "null") -> eval_null(expr["null"], vars)
-      Map.has_key?(expr, "var") -> eval_var(expr["var"], vars)
-      Map.has_key?(expr, "value") -> expr["value"]
-      Map.has_key?(expr, "eq") -> eval_eq(expr["eq"], vars)
-      Map.has_key?(expr, "gt") -> eval_gt(expr["gt"], vars)
-      Map.has_key?(expr, "gte") -> eval_gte(expr["gte"], vars)
-      Map.has_key?(expr, "lt") -> eval_lt(expr["lt"], vars)
-      Map.has_key?(expr, "lte") -> eval_lte(expr["lte"], vars)
-      Map.has_key?(expr, "in") -> eval_contains(expr["in"], vars)
-      Map.has_key?(expr, "contains") -> eval_contains(expr["contains"], vars)
-      Map.has_key?(expr, "match") -> eval_match(expr["match"], vars)
-      # Fixes MEDIUM-21: Log unknown operators
-      true ->
-        Logger.warning("Unknown operator in expression: #{inspect(Map.keys(expr))}")
+    case op do
+      "and" -> eval_and(args, vars)
+      "or" -> eval_or(args, vars)
+      "not" -> not boolean_convert(evaluate(args, vars))
+      "null" -> evaluate(args, vars) == nil
+      "var" -> eval_var(args, vars)
+      "value" -> args
+      op when op in @binary_operators -> eval_binary(op, args, vars)
+      _ ->
+        Logger.warning("Unknown operator in expression: #{inspect(op)}")
         nil
     end
   end
 
-  def evaluate(value, _vars) when is_number(value) or is_binary(value) or is_boolean(value), do: value
-  def evaluate(_value, _vars), do: nil
+  def evaluate(_expr, _vars), do: nil
 
-  # Operator implementations
-
-  # Fixes HIGH-14: Validate that and/or receive lists, fail closed if not
   defp eval_and(exprs, vars) when is_list(exprs) do
-    Enum.reduce_while(exprs, true, fn expr, _acc ->
-      case Utils.to_boolean(evaluate(expr, vars)) do
-        false -> {:halt, false}
-        nil -> {:halt, nil}
-        _ -> {:cont, true}
-      end
-    end)
+    Enum.all?(exprs, &boolean_convert(evaluate(&1, vars)))
   end
 
-  defp eval_and(exprs, _vars) do
-    Logger.error("Invalid 'and' operand (expected list): #{inspect(exprs)}")
-    false
-  end
+  defp eval_and(_exprs, _vars), do: nil
+
+  defp eval_or([], _vars), do: true
 
   defp eval_or(exprs, vars) when is_list(exprs) do
-    Enum.reduce_while(exprs, false, fn expr, _acc ->
-      case Utils.to_boolean(evaluate(expr, vars)) do
-        true -> {:halt, true}
-        nil -> {:halt, nil}
-        _ -> {:cont, false}
-      end
-    end)
+    Enum.any?(exprs, &boolean_convert(evaluate(&1, vars)))
   end
 
-  defp eval_or(exprs, _vars) do
-    Logger.error("Invalid 'or' operand (expected list): #{inspect(exprs)}")
-    false
-  end
+  defp eval_or(_exprs, _vars), do: nil
 
-  defp eval_not(expr, vars) do
-    case Utils.to_boolean(evaluate(expr, vars)) do
-      nil -> nil
-      bool -> !bool
-    end
-  end
-
-  defp eval_null(expr, vars) do
-    evaluate(expr, vars) == nil
-  end
+  defp eval_var(%{"path" => path}, vars), do: eval_var(path, vars)
 
   defp eval_var(path, vars) when is_binary(path) do
     path
     |> String.split("/")
-    |> get_nested(vars)
+    |> get_nested(vars || %{})
   end
 
   defp eval_var(_path, _vars), do: nil
 
   defp get_nested([], value), do: value
-  defp get_nested(_path, nil), do: nil
 
   defp get_nested([key | rest], value) when is_map(value) do
-    get_nested(rest, Map.get(value, key))
+    case Map.fetch(value, key) do
+      {:ok, next} -> get_nested(rest, next)
+      :error -> nil
+    end
   end
 
   defp get_nested([key | rest], value) when is_list(value) do
@@ -137,172 +106,133 @@ defmodule ABSmartly.JSONExpr.Evaluator do
 
   defp get_nested(_path, _value), do: nil
 
-  defp eval_eq([lhs_expr, rhs_expr], vars) do
-    lhs = evaluate(lhs_expr, vars)
-    rhs = evaluate(rhs_expr, vars)
+  # Binary operators evaluate the left operand first and return nil without
+  # evaluating the right one when it is nil (JS operators/binary.ts).
+  defp eval_binary(op, args, vars) when is_list(args) do
+    lhs = evaluate(Enum.at(args, 0), vars)
 
-    # A null operand short-circuits to null (canonical: eq does not treat
-    # null == null as a match), matching the other SDKs and the collector.
-    if is_nil(lhs) or is_nil(rhs) do
+    if lhs == nil do
       nil
     else
-      case compare(lhs, rhs) do
-        0 -> true
-        _ -> false
+      rhs = evaluate(Enum.at(args, 1), vars)
+      if rhs == nil, do: nil, else: binary(op, lhs, rhs)
+    end
+  end
+
+  defp eval_binary(_op, _args, _vars), do: nil
+
+  defp binary("eq", lhs, rhs), do: compare_result(compare(lhs, rhs), &(&1 == 0))
+  defp binary("gt", lhs, rhs), do: compare_result(compare(lhs, rhs), &(&1 > 0))
+  defp binary("gte", lhs, rhs), do: compare_result(compare(lhs, rhs), &(&1 >= 0))
+  defp binary("lt", lhs, rhs), do: compare_result(compare(lhs, rhs), &(&1 < 0))
+  defp binary("lte", lhs, rhs), do: compare_result(compare(lhs, rhs), &(&1 <= 0))
+  defp binary("in", haystack, needle), do: eval_in(haystack, needle)
+  defp binary("contains", haystack, needle), do: eval_in(haystack, needle)
+  defp binary("match", text, pattern), do: eval_match(text, pattern)
+
+  defp compare_result(nil, _fun), do: nil
+  defp compare_result(cmp, fun), do: fun.(cmp)
+
+  defp eval_in(haystack, needle) when is_list(haystack) do
+    Enum.any?(haystack, &(compare(&1, needle) == 0))
+  end
+
+  defp eval_in(haystack, needle) when is_binary(haystack) do
+    case string_convert(needle) do
+      nil -> false
+      needle_string -> String.contains?(haystack, needle_string)
+    end
+  end
+
+  defp eval_in(haystack, needle) when is_map(haystack) do
+    case string_convert(needle) do
+      nil -> false
+      needle_string -> Map.has_key?(haystack, needle_string)
+    end
+  end
+
+  defp eval_in(_haystack, _needle), do: nil
+
+  defp eval_match(text, pattern) do
+    with text when is_binary(text) <- string_convert(text),
+         pattern when is_binary(pattern) <- string_convert(pattern) do
+      run_match(text, pattern)
+    else
+      _ -> nil
+    end
+  end
+
+  defp run_match(text, pattern) do
+    if String.length(pattern) > @max_regex_length do
+      Logger.warning(
+        "Regex pattern too long (#{String.length(pattern)}), rejecting: #{String.slice(pattern, 0, 100)}..."
+      )
+
+      nil
+    else
+      case Regex.compile(pattern) do
+        {:ok, regex} ->
+          task = Task.async(fn -> Regex.match?(regex, text) end)
+
+          case Task.yield(task, @regex_timeout_ms) || Task.shutdown(task) do
+            {:ok, result} ->
+              result
+
+            nil ->
+              Logger.error(
+                "Regex timeout (#{@regex_timeout_ms}ms): pattern=#{pattern}, text=#{String.slice(text, 0, 100)}"
+              )
+
+              nil
+          end
+
+        {:error, reason} ->
+          Logger.error("Invalid regex pattern: #{pattern}, reason: #{inspect(reason)}")
+          nil
       end
     end
   end
 
-  defp eval_eq(_args, _vars), do: false
-
-  defp eval_gt([lhs_expr, rhs_expr], vars) do
-    lhs = evaluate(lhs_expr, vars)
-    rhs = evaluate(rhs_expr, vars)
-
-    case compare(lhs, rhs) do
-      cmp when is_integer(cmp) and cmp > 0 -> true
-      _ -> false
-    end
-  end
-
-  defp eval_gt(_args, _vars), do: false
-
-  defp eval_gte([lhs_expr, rhs_expr], vars) do
-    lhs = evaluate(lhs_expr, vars)
-    rhs = evaluate(rhs_expr, vars)
-
-    case compare(lhs, rhs) do
-      cmp when is_integer(cmp) and cmp >= 0 -> true
-      _ -> false
-    end
-  end
-
-  defp eval_gte(_args, _vars), do: false
-
-  defp eval_lt([lhs_expr, rhs_expr], vars) do
-    lhs = evaluate(lhs_expr, vars)
-    rhs = evaluate(rhs_expr, vars)
-
-    case compare(lhs, rhs) do
-      cmp when is_integer(cmp) and cmp < 0 -> true
-      _ -> false
-    end
-  end
-
-  defp eval_lt(_args, _vars), do: false
-
-  defp eval_lte([lhs_expr, rhs_expr], vars) do
-    lhs = evaluate(lhs_expr, vars)
-    rhs = evaluate(rhs_expr, vars)
-
-    case compare(lhs, rhs) do
-      cmp when is_integer(cmp) and cmp <= 0 -> true
-      _ -> false
-    end
-  end
-
-  defp eval_lte(_args, _vars), do: false
-
-  # CONTAINS operator (also registered under the legacy alias "in").
-  # Operand order is haystack-first: [haystack, needle]. This matches the
-  # collector and the other ABsmartly SDKs.
-  defp eval_contains([haystack_expr, needle_expr], vars) do
-    haystack = evaluate(haystack_expr, vars)
-    needle = evaluate(needle_expr, vars)
-
-    cond do
-      is_nil(needle) or is_nil(haystack) ->
-        false
-
-      is_binary(haystack) and is_binary(needle) ->
-        String.contains?(haystack, needle)
-
-      is_list(haystack) ->
-        Enum.any?(haystack, fn item ->
-          case compare(item, needle) do
-            0 -> true
-            _ -> false
-          end
-        end)
-
-      true ->
-        false
-    end
-  end
-
-  defp eval_contains(_args, _vars), do: false
-
-  # Fixes CRITICAL-04, HIGH-10: ReDoS protection with pattern validation and timeout
-  defp eval_match([text_expr, pattern_expr], vars) do
-    text = evaluate(text_expr, vars)
-    pattern = evaluate(pattern_expr, vars)
-
-    cond do
-      is_nil(text) or is_nil(pattern) ->
-        false
-
-      is_binary(text) and is_binary(pattern) ->
-        # Fixes CRITICAL-04: Reject patterns that are too long
-        if String.length(pattern) > @max_regex_length do
-          Logger.warning(
-            "Regex pattern too long (#{String.length(pattern)}), rejecting: #{String.slice(pattern, 0, 100)}..."
-          )
-
-          false
-        else
-          case Regex.compile(pattern) do
-            {:ok, regex} ->
-              # Fixes CRITICAL-04: Run regex in a Task with timeout
-              task = Task.async(fn -> Regex.match?(regex, text) end)
-
-              case Task.yield(task, @regex_timeout_ms) || Task.shutdown(task) do
-                {:ok, result} ->
-                  result
-
-                nil ->
-                  Logger.error(
-                    "Regex timeout (#{@regex_timeout_ms}ms): pattern=#{pattern}, text=#{String.slice(text, 0, 100)}"
-                  )
-
-                  false
-              end
-
-            {:error, reason} ->
-              # Fixes HIGH-10: Log regex compilation failures
-              Logger.error("Invalid regex pattern: #{pattern}, reason: #{inspect(reason)}")
-              false
-          end
-        end
-
-      true ->
-        false
-    end
-  end
-
-  defp eval_match(_args, _vars), do: false
-
   @doc """
-  Compare two values.
+  Compare two values the way the JavaScript SDK's `Evaluator.compare` does.
 
-  Returns:
-  - 0 if equal
-  - 1 if lhs > rhs
-  - -1 if lhs < rhs
-  - nil if not comparable
+  The right operand is converted to the left operand's type. Returns 0 when
+  equal, 1 / -1 for an ordering, and nil when the values cannot be compared.
+  Lists and maps only compare as equal (0) or not comparable (nil).
   """
   def compare(nil, nil), do: 0
   def compare(nil, _), do: nil
   def compare(_, nil), do: nil
 
-  def compare(lhs, rhs) when is_boolean(lhs) and is_boolean(rhs) do
+  def compare(lhs, rhs) when is_number(lhs) do
+    case number_convert(rhs) do
+      nil -> nil
+      rvalue -> order(lhs, rvalue)
+    end
+  end
+
+  def compare(lhs, rhs) when is_binary(lhs) do
+    case string_convert(rhs) do
+      nil -> nil
+      rvalue -> order(lhs, rvalue)
+    end
+  end
+
+  def compare(lhs, rhs) when is_boolean(lhs) do
+    rvalue = boolean_convert(rhs)
+
     cond do
-      lhs == rhs -> 0
+      lhs == rvalue -> 0
       lhs -> 1
       true -> -1
     end
   end
 
-  def compare(lhs, rhs) when is_number(lhs) and is_number(rhs) do
+  def compare(lhs, rhs) do
+    if lhs == rhs, do: 0, else: nil
+  end
+
+  defp order(lhs, rhs) do
     cond do
       lhs == rhs -> 0
       lhs > rhs -> 1
@@ -310,42 +240,49 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     end
   end
 
-  def compare(lhs, rhs) when is_binary(lhs) and is_binary(rhs) do
-    cond do
-      lhs == rhs -> 0
-      lhs > rhs -> 1
-      true -> -1
-    end
+  @doc false
+  def boolean_convert(x) when is_boolean(x), do: x
+  def boolean_convert(x) when is_number(x), do: x != 0
+  def boolean_convert(x) when is_binary(x), do: x not in ["false", "0", ""]
+  def boolean_convert(x), do: x != nil
+
+  @doc false
+  def number_convert(x) when is_number(x), do: x
+  def number_convert(true), do: 1
+  def number_convert(false), do: 0
+  def number_convert(x) when is_binary(x), do: parse_float(x)
+  def number_convert(_), do: nil
+
+  @doc false
+  def string_convert(x) when is_binary(x), do: x
+  def string_convert(x) when is_boolean(x), do: Atom.to_string(x)
+
+  def string_convert(x) when is_number(x) do
+    # JS: x.toFixed(15).replace(/\.?0{0,15}$/, "")
+    (x * 1.0)
+    |> :erlang.float_to_binary(decimals: 15)
+    |> String.replace(~r/\.?0{0,15}$/, "", global: false)
   end
 
-  def compare(lhs, rhs) when (is_list(lhs) or is_map(lhs)) and (is_list(rhs) or is_map(rhs)) do
-    case {Jason.encode(lhs), Jason.encode(rhs)} do
-      {{:ok, lhs_json}, {:ok, rhs_json}} ->
-        cond do
-          lhs_json == rhs_json -> 0
-          lhs_json > rhs_json -> 1
-          true -> -1
-        end
+  def string_convert(_), do: nil
 
-      _ ->
-        Logger.warning("Failed to compare complex values via JSON encoding")
-        nil
+  # JS parseFloat: leading whitespace is skipped and the longest numeric
+  # prefix is used; anything that is not a finite number gives nil.
+  defp parse_float(s) do
+    trimmed = String.trim_leading(s)
+
+    normalized =
+      case trimmed do
+        "." <> _ -> "0" <> trimmed
+        "-." <> rest -> "-0." <> rest
+        "+." <> rest -> "0." <> rest
+        "+" <> rest -> rest
+        _ -> trimmed
+      end
+
+    case Float.parse(normalized) do
+      {num, _rest} -> num
+      :error -> nil
     end
   end
-
-  def compare(lhs, rhs) when is_number(lhs) and is_binary(rhs) do
-    case Utils.to_number(rhs) do
-      nil -> nil
-      rhs_num -> compare(lhs, rhs_num)
-    end
-  end
-
-  def compare(lhs, rhs) when is_binary(lhs) and is_number(rhs) do
-    case Utils.to_number(lhs) do
-      nil -> nil
-      lhs_num -> compare(lhs_num, rhs)
-    end
-  end
-
-  def compare(_lhs, _rhs), do: nil
 end
