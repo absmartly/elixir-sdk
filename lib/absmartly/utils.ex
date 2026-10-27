@@ -24,13 +24,38 @@ defmodule ABSmartly.Utils do
       "126"
   """
   def unit_to_string(uid) when is_binary(uid), do: uid
-  def unit_to_string(uid) when is_integer(uid), do: Integer.to_string(uid)
-  def unit_to_string(uid) when is_float(uid) and abs(uid) < 1.0e21 do
-    rounded = uid |> abs() |> Float.round() |> trunc() |> Integer.to_string()
-    if uid < 0, do: "-" <> rounded, else: rounded
-  end
-  def unit_to_string(uid) when is_float(uid), do: :erlang.float_to_binary(uid, [:short])
+  def unit_to_string(uid) when is_number(uid), do: number_to_fixed(uid, 0)
   def unit_to_string(uid), do: to_string(uid)
+
+  @doc false
+  def number_to_fixed(number, decimals) do
+    number = number * 1.0
+
+    if abs(number) >= 1.0e21 do
+      [mantissa, exponent] = String.split(:erlang.float_to_binary(number, [:short]), "e")
+      exponent = if String.starts_with?(exponent, "-"), do: exponent, else: "+" <> exponent
+      String.replace_suffix(mantissa, ".0", "") <> "e" <> exponent
+    else
+      # toFixed rounds the exact binary value, not an intermediate decimal approximation.
+      {numerator, denominator} = Float.ratio(abs(number))
+      scale = Integer.pow(10, decimals)
+      scaled = numerator * scale
+
+      rounded =
+        div(scaled, denominator) + if(rem(scaled, denominator) * 2 >= denominator, do: 1, else: 0)
+
+      digits = rounded |> Integer.to_string() |> String.pad_leading(decimals + 1, "0")
+
+      fixed =
+        if decimals == 0,
+          do: digits,
+          else:
+            String.slice(digits, 0..(-decimals - 1)//1) <>
+              "." <> String.slice(digits, -decimals, decimals)
+
+      if number < 0, do: "-" <> fixed, else: fixed
+    end
+  end
 
   @doc """
   Encode binary data as base64url without padding.
@@ -38,7 +63,8 @@ defmodule ABSmartly.Utils do
       iex> ABSmartly.Utils.base64_url_no_padding("te")
       "dGU"
   """
-  def base64_url_no_padding(data) when is_binary(data), do: Base.url_encode64(data, padding: false)
+  def base64_url_no_padding(data) when is_binary(data),
+    do: Base.url_encode64(data, padding: false)
 
   @doc """
   The UTF-8 bytes of a string, as a binary.
@@ -103,8 +129,6 @@ defmodule ABSmartly.Utils do
     end
   end
 
-  # Fixes MEDIUM-15: to_string_value is dead code - removed
-
   @doc """
   Convert any value to a number (integer or float).
   Returns nil if conversion fails.
@@ -134,7 +158,4 @@ defmodule ABSmartly.Utils do
   def to_boolean(+0.0), do: false
   def to_boolean(""), do: false
   def to_boolean(_), do: true
-
-  # Fixes MEDIUM-13: deep_copy is dead code - removed (Elixir data is immutable)
-  # Fixes MEDIUM-14: snake_to_camel is dead code - removed
 end

@@ -3,7 +3,6 @@ defmodule ABSmartly.Application do
   Application supervisor for ABSmartly SDK.
 
   Provides supervision tree for fault tolerance and recovery.
-  Fixes CRITICAL-02: Unsupervised GenServer.
   """
   use Application
 
@@ -12,7 +11,6 @@ defmodule ABSmartly.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Context supervisor will be started on demand
       {DynamicSupervisor, name: ABSmartly.ContextSupervisor, strategy: :one_for_one}
     ]
 

@@ -32,9 +32,8 @@ defmodule ABSmartly.SDK do
     * `:retries` - Number of retry attempts for failed requests (default: 5)
   """
   def new(opts) when is_list(opts) do
-    with :ok <- validate_required_params(opts),
-         {:ok, config} <- build_config(opts) do
-      {:ok, %__MODULE__{config: config}}
+    with :ok <- validate_required_params(opts) do
+      {:ok, %__MODULE__{config: build_config(opts)}}
     end
   end
 
@@ -72,7 +71,7 @@ defmodule ABSmartly.SDK do
   end
 
   defp build_config(opts) do
-    config = %Types.SDKConfig{
+    %Types.SDKConfig{
       endpoint: Keyword.fetch!(opts, :endpoint),
       api_key: Keyword.fetch!(opts, :api_key),
       application: Keyword.fetch!(opts, :application),
@@ -80,11 +79,6 @@ defmodule ABSmartly.SDK do
       timeout: Keyword.get(opts, :timeout, 3000),
       retries: Keyword.get(opts, :retries, 5)
     }
-
-    {:ok, config}
-  rescue
-    e in [ArgumentError, KeyError] ->
-      {:error, "Failed to build config: #{Exception.message(e)}"}
   end
 
   @doc """
@@ -124,7 +118,9 @@ defmodule ABSmartly.SDK do
   Use `Context.wait_until_ready/2` to block until data is available.
   """
   def create_context_async(sdk_or_result, units, options \\ %{})
-  def create_context_async({:ok, sdk}, units, options), do: create_context_async(sdk, units, options)
+
+  def create_context_async({:ok, sdk}, units, options),
+    do: create_context_async(sdk, units, options)
 
   def create_context_async(%__MODULE__{} = sdk, units, options) do
     config = sdk.config
@@ -134,32 +130,15 @@ defmodule ABSmartly.SDK do
       |> Map.put(:units, units)
       |> Types.ContextConfig.from_options()
 
-    fetcher = fn ->
-      HTTP.Client.fetch_context(
-        config.endpoint,
-        config.api_key,
-        config.application,
-        config.environment,
-        config.retries,
-        config.timeout
-      )
-    end
-
     child_spec = %{
       id: Context,
-      start: {Context, :start_link_async, [config, context_config, [data_fetcher: fetcher]]},
+      start: {Context, :start_link_async, [config, context_config]},
       type: :worker,
       restart: :temporary,
       shutdown: Context.shutdown_timeout(config)
     }
 
-    case DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, child_spec) do
-      {:ok, ctx} ->
-        {:ok, ctx}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, child_spec)
   end
 
   @doc """

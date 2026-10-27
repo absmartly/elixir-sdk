@@ -62,31 +62,37 @@ defmodule ABSmartly.Context do
   def start_link(sdk_config, data, context_config, opts \\ []) do
     data_fetcher = Keyword.get(opts, :data_fetcher)
 
-    with :ok <- validate_initial_units(context_config.units) do
-      GenServer.start_link(__MODULE__, {sdk_config, data, context_config, data_fetcher})
+    with {:ok, units} <- normalize_initial_units(context_config.units) do
+      GenServer.start_link(
+        __MODULE__,
+        {sdk_config, data, %{context_config | units: units}, data_fetcher}
+      )
     end
   end
 
   def start_link_async(sdk_config, context_config, opts \\ []) do
     data_fetcher = Keyword.get(opts, :data_fetcher)
 
-    with :ok <- validate_initial_units(context_config.units) do
-      GenServer.start_link(__MODULE__, {:async, sdk_config, context_config, data_fetcher})
+    with {:ok, units} <- normalize_initial_units(context_config.units) do
+      GenServer.start_link(
+        __MODULE__,
+        {:async, sdk_config, %{context_config | units: units}, data_fetcher}
+      )
     end
   end
 
-  # Initial units follow the same rules as set_unit/3, so a context is never
-  # created with a UID that cannot be hashed at publish time.
-  defp validate_initial_units(nil), do: :ok
+  defp normalize_initial_units(nil), do: {:ok, %{}}
 
-  defp validate_initial_units(units) when is_map(units) do
-    Enum.reduce_while(units, :ok, fn
+  defp normalize_initial_units(units) when is_map(units) do
+    Enum.reduce_while(units, {:ok, %{}}, fn
       {_type, nil}, acc ->
         {:cont, acc}
 
-      {type, uid}, acc ->
-        case validate_uid_or_error(uid, to_string(type)) do
-          {:ok, _} -> {:cont, acc}
+      {type, uid}, {:ok, normalized} ->
+        type = to_string(type)
+
+        case validate_uid_or_error(uid, type) do
+          {:ok, uid} -> {:cont, {:ok, Map.put(normalized, type, uid)}}
           error -> {:halt, error}
         end
     end)
@@ -307,8 +313,6 @@ defmodule ABSmartly.Context do
     GenServer.call(context, :experiments)
   end
 
-  # GenServer callbacks
-
   @impl true
   def init({:async, sdk_config, context_config}) do
     init({:async, sdk_config, context_config, nil})
@@ -317,16 +321,32 @@ defmodule ABSmartly.Context do
   def init({:async, sdk_config, context_config, data_fetcher}) do
     # Trap exits so supervisor-driven shutdown runs terminate/2 (pending-event publish).
     Process.flag(:trap_exit, true)
-    empty_data = %Types.ContextData{experiments: []}
-    state = %__MODULE__{
+    state = initial_state(sdk_config, context_config, data_fetcher)
+    {:ok, state, {:continue, :fetch_async}}
+  end
+
+  @impl true
+  def init({sdk_config, data, context_config}) do
+    init({sdk_config, data, context_config, nil})
+  end
+
+  def init({sdk_config, data, context_config, data_fetcher}) do
+    Process.flag(:trap_exit, true)
+    state = initial_state(sdk_config, context_config, data_fetcher) |> mark_ready(data)
+    Logger.info("Context initialized successfully")
+    {:ok, state}
+  end
+
+  defp initial_state(sdk_config, context_config, data_fetcher) do
+    %__MODULE__{
       sdk_config: sdk_config,
-      data: empty_data,
+      data: %Types.ContextData{experiments: []},
       ready: false,
       failed: false,
       failed_reason: nil,
       finalized: false,
       finalizing: false,
-      units: normalize_units(context_config.units),
+      units: context_config.units,
       attributes: config_attributes_to_list(context_config.attributes),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
@@ -343,8 +363,6 @@ defmodule ABSmartly.Context do
       exposure_count: 0,
       goal_count: 0
     }
-
-    {:ok, state, {:continue, :fetch_async}}
   end
 
   @impl true
@@ -353,42 +371,20 @@ defmodule ABSmartly.Context do
     # responsive (set_unit/set_attribute/set_failed/wait_until_ready) while the
     # request is in flight, mirroring the future/callback model of the other SDKs.
     server = self()
-    fetcher = state.data_fetcher
-
-    spawn(fn ->
-      result =
-        try do
-          if fetcher do
-            fetcher.()
-          else
-            ABSmartly.HTTP.Client.fetch_context(
-              state.sdk_config.endpoint,
-              state.sdk_config.api_key,
-              state.sdk_config.application,
-              state.sdk_config.environment,
-              state.sdk_config.retries,
-              state.sdk_config.timeout
-            )
-          end
-        rescue
-          exception -> {:error, Exception.message(exception)}
-        catch
-          kind, reason -> {:error, {kind, reason}}
-        end
-
-      send(server, {:fetch_async_complete, result})
-    end)
+    spawn(fn -> send(server, {:fetch_async_complete, fetch_data(state)}) end)
 
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:fetch_async_complete, _result}, %{ready: true} = state), do: {:noreply, state}
-  def handle_info({:fetch_async_complete, _result}, %{failed: true} = state), do: {:noreply, state}
+
+  def handle_info({:fetch_async_complete, _result}, %{failed: true} = state),
+    do: {:noreply, state}
 
   def handle_info({:fetch_async_complete, {:ok, data}}, state) do
-    case safe_context_data(data) do
-      {:ok, context_data} -> complete_fetch(context_data, state)
+    case safe_context_data_with_indexes(data) do
+      {:ok, context_data, indexes} -> {:noreply, mark_ready(state, context_data, indexes)}
       {:error, reason} -> handle_info({:fetch_async_complete, {:error, reason}}, state)
     end
   end
@@ -397,25 +393,47 @@ defmodule ABSmartly.Context do
     {:noreply, mark_failed(state, reason)}
   end
 
-  @doc false
-  # Converts raw context data and dry-runs the index build so schema-invalid
-  # nested fields are reported as errors instead of crashing a context later.
-  def safe_context_data(data) do
+  @impl true
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+
+  def handle_info({:EXIT, _pid, reason}, state) do
+    Logger.warning("Context received EXIT signal: #{inspect(reason)}")
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(msg, state) do
+    Logger.debug("Context received unexpected message: #{inspect(msg)}")
+    {:noreply, state}
+  end
+
+  # Converts raw context data and builds indexes so schema-invalid nested fields
+  # are reported before committing a new context state.
+  defp safe_context_data_with_indexes(data) do
     context_data = Types.ContextData.from_map(data)
-    _ = build_indexes(context_data.experiments)
-    {:ok, context_data}
+    {:ok, context_data, build_indexes(context_data.experiments)}
   rescue
     exception -> {:error, "Invalid context data: " <> Exception.message(exception)}
   end
 
-  defp complete_fetch(context_data, state) do
-    {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
-    state = %{state |
-      data: context_data,
-      ready: true,
-      variable_index: var_index,
-      experiment_index: exp_index,
-      audience_cache: aud_cache
+  @doc false
+  def safe_context_data(data) do
+    case safe_context_data_with_indexes(data) do
+      {:ok, context_data, _indexes} -> {:ok, context_data}
+      error -> error
+    end
+  end
+
+  defp mark_ready(state, context_data, indexes \\ nil) do
+    {var_index, exp_index, aud_cache} = indexes || build_indexes(context_data.experiments)
+
+    state = %{
+      state
+      | data: context_data,
+        ready: true,
+        variable_index: var_index,
+        experiment_index: exp_index,
+        audience_cache: aud_cache
     }
 
     # Emit before waking waiters so the event is observable once
@@ -426,65 +444,13 @@ defmodule ABSmartly.Context do
       GenServer.reply(waiter, :ok)
     end
 
-    {:noreply, %{state | pending_waiters: []}}
-  end
-
-  @impl true
-  def init({sdk_config, data, context_config}) do
-    init({sdk_config, data, context_config, nil})
-  end
-
-  def init({sdk_config, data, context_config, data_fetcher}) do
-    Process.flag(:trap_exit, true)
-    {var_index, exp_index, aud_cache} = build_indexes(data.experiments)
-    state = %__MODULE__{
-      sdk_config: sdk_config,
-      data: data,
-      ready: true,
-      failed: false,
-      failed_reason: nil,
-      finalized: false,
-      finalizing: false,
-      units: normalize_units(context_config.units),
-      attributes: config_attributes_to_list(context_config.attributes),
-      overrides: context_config.overrides,
-      custom_assignments: context_config.custom_assignments,
-      assignments: %{},
-      exposures: [],
-      goals: [],
-      variable_index: var_index,
-      experiment_index: exp_index,
-      event_handler: context_config.event_handler,
-      exposed_experiments: MapSet.new(),
-      audience_cache: aud_cache,
-      data_fetcher: data_fetcher,
-      exposure_count: 0,
-      goal_count: 0
-    }
-
-    Logger.info("Context initialized successfully")
-    emit_event(state, :ready, %{experiments: data.experiments})
-
-    {:ok, state}
+    %{state | pending_waiters: []}
   end
 
   @impl true
   def handle_call({:set_data, data}, _from, state) do
     context_data = Types.ContextData.from_map(data)
-    {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
-    state = %{state |
-      data: context_data,
-      ready: true,
-      variable_index: var_index,
-      experiment_index: exp_index,
-      audience_cache: aud_cache
-    }
-    for waiter <- state.pending_waiters do
-      GenServer.reply(waiter, :ok)
-    end
-    state = %{state | pending_waiters: []}
-    emit_event(state, :ready, %{experiments: context_data.experiments})
-    {:reply, :ok, state}
+    {:reply, :ok, mark_ready(state, context_data)}
   end
 
   @impl true
@@ -502,8 +468,10 @@ defmodule ABSmartly.Context do
     cond do
       state.failed ->
         {:reply, {:error, state.failed_reason}, state}
+
       state.ready ->
         {:reply, :ok, state}
+
       true ->
         {:noreply, %{state | pending_waiters: [from | state.pending_waiters]}}
     end
@@ -519,6 +487,7 @@ defmodule ABSmartly.Context do
       case validate_uid_or_error(uid, key) do
         {:error, msg} ->
           {:reply, {:error, msg}, state}
+
         {:ok, uid_str} ->
           if Map.has_key?(state.units, key) && Map.get(state.units, key) != uid_str do
             {:reply, {:error, "Unit '#{key}' UID already set."}, state}
@@ -535,25 +504,28 @@ defmodule ABSmartly.Context do
       {:reply, {:error, "ABsmartly Context is finalized."}, state}
     else
       try do
-        new_units = Enum.reduce(units, state.units, fn {unit_type, uid}, acc ->
-          key = to_string(unit_type)
+        new_units =
+          Enum.reduce(units, state.units, fn {unit_type, uid}, acc ->
+            key = to_string(unit_type)
 
-          uid_str = case validate_uid_or_error(uid, key) do
-            {:error, msg} -> throw({:validation_error, msg})
-            {:ok, str} -> str
-          end
+            uid_str =
+              case validate_uid_or_error(uid, key) do
+                {:error, msg} -> throw({:validation_error, msg})
+                {:ok, str} -> str
+              end
 
-          if Map.has_key?(acc, key) && Map.get(acc, key) != uid_str do
-            throw({:duplicate_unit, key})
-          end
+            if Map.has_key?(acc, key) && Map.get(acc, key) != uid_str do
+              throw({:duplicate_unit, key})
+            end
 
-          Map.put(acc, key, uid_str)
-        end)
+            Map.put(acc, key, uid_str)
+          end)
 
         {:reply, :ok, %{state | units: new_units}}
       catch
         {:duplicate_unit, key} ->
           {:reply, {:error, "Unit '#{key}' UID already set."}, state}
+
         {:validation_error, msg} ->
           {:reply, {:error, msg}, state}
       end
@@ -590,9 +562,12 @@ defmodule ABSmartly.Context do
 
   def handle_call({:set_attributes, attributes}, _from, state) do
     set_at = now_millis()
-    new_entries = Enum.map(attributes, fn {name, value} ->
-      %{name: to_string(name), value: value, set_at: set_at}
-    end)
+
+    new_entries =
+      Enum.map(attributes, fn {name, value} ->
+        %{name: to_string(name), value: value, set_at: set_at}
+      end)
+
     state = %{state | attributes: state.attributes ++ new_entries, attrs_seq: state.attrs_seq + 1}
     {:reply, :ok, state}
   end
@@ -600,13 +575,12 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:get_attribute, name}, _from, state) do
     name_str = to_string(name)
-    value = state.attributes
-      |> Enum.filter(fn attr -> attr.name == name_str end)
-      |> List.last()
-      |> case do
-        nil -> nil
-        attr -> attr.value
-      end
+
+    value =
+      Enum.reduce(state.attributes, nil, fn attr, last ->
+        if attr.name == name_str, do: attr.value, else: last
+      end)
+
     {:reply, value, state}
   end
 
@@ -618,20 +592,25 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call({:set_override, experiment_name, variant}, _from, state) do
     name = to_string(experiment_name)
+
     state = %{
       state
       | overrides: Map.put(state.overrides, name, variant),
         exposed_experiments: MapSet.delete(state.exposed_experiments, name)
     }
+
     {:reply, :ok, state}
   end
 
   @impl true
   def handle_call({:set_overrides, overrides}, _from, state) do
-    {new_overrides, new_exposed} = Enum.reduce(overrides, {state.overrides, state.exposed_experiments}, fn {experiment_name, variant}, {ov_acc, exp_acc} ->
-      name = to_string(experiment_name)
-      {Map.put(ov_acc, name, variant), MapSet.delete(exp_acc, name)}
-    end)
+    {new_overrides, new_exposed} =
+      Enum.reduce(overrides, {state.overrides, state.exposed_experiments}, fn {experiment_name,
+                                                                               variant},
+                                                                              {ov_acc, exp_acc} ->
+        name = to_string(experiment_name)
+        {Map.put(ov_acc, name, variant), MapSet.delete(exp_acc, name)}
+      end)
 
     state = %{state | overrides: new_overrides, exposed_experiments: new_exposed}
     {:reply, :ok, state}
@@ -639,33 +618,31 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call({:set_custom_assignment, experiment_name, variant}, _from, state) do
-    if state.finalized do
-      {:reply, {:error, "ABsmartly Context is finalized."}, state}
-    else
-      name = to_string(experiment_name)
-      state = %{
-        state
-        | custom_assignments: Map.put(state.custom_assignments, name, variant),
-          exposed_experiments: MapSet.delete(state.exposed_experiments, name)
-      }
+    name = to_string(experiment_name)
 
-      {:reply, :ok, state}
-    end
+    state = %{
+      state
+      | custom_assignments: Map.put(state.custom_assignments, name, variant),
+        exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+    }
+
+    {:reply, :ok, state}
   end
 
   @impl true
   def handle_call({:set_custom_assignments, assignments}, _from, state) do
-    if state.finalized do
-      {:reply, {:error, "ABsmartly Context is finalized."}, state}
-    else
-      {new_assignments, new_exposed} = Enum.reduce(assignments, {state.custom_assignments, state.exposed_experiments}, fn {experiment_name, variant}, {ca_acc, exp_acc} ->
-        name = to_string(experiment_name)
-        {Map.put(ca_acc, name, variant), MapSet.delete(exp_acc, name)}
-      end)
+    {new_assignments, new_exposed} =
+      Enum.reduce(
+        assignments,
+        {state.custom_assignments, state.exposed_experiments},
+        fn {experiment_name, variant}, {ca_acc, exp_acc} ->
+          name = to_string(experiment_name)
+          {Map.put(ca_acc, name, variant), MapSet.delete(exp_acc, name)}
+        end
+      )
 
-      state = %{state | custom_assignments: new_assignments, exposed_experiments: new_exposed}
-      {:reply, :ok, state}
-    end
+    {:reply, :ok,
+     %{state | custom_assignments: new_assignments, exposed_experiments: new_exposed}}
   end
 
   @impl true
@@ -699,9 +676,11 @@ defmodule ABSmartly.Context do
   @impl true
   def handle_call(:variable_keys, _from, state) do
     with_ready(state, true, fn ->
-      result = Map.new(state.variable_index, fn {key, experiments} ->
-        {key, Enum.map(experiments, & &1.name)}
-      end)
+      result =
+        Map.new(state.variable_index, fn {key, experiments} ->
+          {key, Enum.map(experiments, & &1.name)}
+        end)
+
       {result, state}
     end)
   end
@@ -741,14 +720,7 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call(:publish, _from, state) do
-    case check_ready(state, true) do
-      :ok ->
-        {result, new_state} = do_publish(state)
-        {:reply, result, new_state}
-
-      error ->
-        {:reply, error, state}
-    end
+    with_ready(state, true, fn -> do_publish(state) end)
   end
 
   @impl true
@@ -853,18 +825,16 @@ defmodule ABSmartly.Context do
   end
 
   defp apply_refresh(state, new_data) do
-    case convert_refresh_data(new_data) do
-      {:ok, context_data} ->
-        try do
-          {:reply, :ok, do_refresh(state, context_data)}
-        rescue
-          exception ->
-            {:reply, {:error, "Invalid context data: " <> Exception.message(exception)}, state}
-        end
+    context_data =
+      if match?(%Types.ContextData{}, new_data),
+        do: new_data,
+        else: Types.ContextData.from_map(new_data)
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+    indexes = build_indexes(context_data.experiments)
+    {:reply, :ok, do_refresh(state, context_data, indexes)}
+  rescue
+    exception ->
+      {:reply, {:error, "Invalid context data: " <> Exception.message(exception)}, state}
   end
 
   # Mirrors the JavaScript SDK's `_checkReady(expectNotFinalized)`: reads before
@@ -903,34 +873,6 @@ defmodule ABSmartly.Context do
     :ok
   end
 
-  @impl true
-  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
-
-  def handle_info({:EXIT, _pid, reason}, state) do
-    Logger.warning("Context received EXIT signal: #{inspect(reason)}")
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info(msg, state) do
-    Logger.debug("Context received unexpected message: #{inspect(msg)}")
-    {:noreply, state}
-  end
-
-  # Private helper functions
-
-  # Unit types are stored as strings; UIDs keep the type they were given
-  # (string or number), like the JavaScript SDK.
-  defp normalize_units(nil), do: %{}
-
-  defp normalize_units(units) when is_map(units) do
-    # An absent (nil) UID stays absent so the experiment's unit is treated as
-    # missing rather than becoming a shared empty-string identity.
-    units
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-    |> Map.new(fn {k, v} -> {to_string(k), if(is_binary(v), do: String.trim(v), else: v)} end)
-  end
-
   # Mirrors the JavaScript SDK's `unit()`: string UIDs are trimmed and must not
   # be blank, numbers are kept as numbers, anything else is rejected.
   defp validate_uid_or_error(uid, unit_type) when is_binary(uid) do
@@ -939,8 +881,10 @@ defmodule ABSmartly.Context do
     cond do
       uid == "" ->
         {:error, "Unit '#{unit_type}' UID must not be blank."}
+
       String.length(uid) > @max_uid_length ->
         {:error, "Unit ID exceeds maximum length of #{@max_uid_length}"}
+
       true ->
         {:ok, uid}
     end
@@ -952,14 +896,18 @@ defmodule ABSmartly.Context do
     do: {:error, "Unit '#{unit_type}' must be a string or a number."}
 
   defp config_attributes_to_list(nil), do: []
+
   defp config_attributes_to_list(attrs) when is_map(attrs) do
     set_at = now_millis()
+
     Enum.map(attrs, fn {name, value} ->
       %{name: to_string(name), value: value, set_at: set_at}
     end)
   end
+
   defp config_attributes_to_list(attrs) when is_list(attrs) do
     set_at = now_millis()
+
     Enum.flat_map(attrs, fn
       %{"name" => name, "value" => value} -> [%{name: name, value: value, set_at: set_at}]
       {name, value} -> [%{name: to_string(name), value: value, set_at: set_at}]
@@ -1004,11 +952,11 @@ defmodule ABSmartly.Context do
           id: 0,
           name: experiment_name,
           unit: nil,
-          variant: override,
+          variant: override || 0,
           exposed_at: now_millis(),
           assigned: false,
           eligible: true,
-          overridden: true,
+          overridden: override != nil,
           full_on: false,
           custom: false,
           audience_mismatch: false
@@ -1019,43 +967,23 @@ defmodule ABSmartly.Context do
         state
       end
 
-    {override, state}
+    {override || 0, state}
   end
 
-  defp do_treatment_for_unknown(state, experiment_name, queue_exposure) do
-    state =
-      if queue_exposure do
-        exposure = %Types.Exposure{
-          id: 0,
-          name: experiment_name,
-          unit: nil,
-          variant: 0,
-          exposed_at: now_millis(),
-          assigned: false,
-          eligible: true,
-          overridden: false,
-          full_on: false,
-          custom: false,
-          audience_mismatch: false
-        }
-
-        queue_exposure(state, experiment_name, exposure)
-      else
-        state
-      end
-
-    {0, state}
-  end
+  defp do_treatment_for_unknown(state, experiment_name, queue_exposure),
+    do: do_treatment_for_override(state, experiment_name, nil, queue_exposure)
 
   defp queue_exposure(state, experiment_name, exposure) do
     unless MapSet.member?(state.exposed_experiments, experiment_name) do
       state =
         if state.exposure_count >= @max_queue_size do
-          Logger.error(
-            "Exposure queue size limit reached (#{@max_queue_size}), dropping oldest"
-          )
+          Logger.error("Exposure queue size limit reached (#{@max_queue_size}), dropping oldest")
 
-          %{state | exposures: Enum.drop(state.exposures, -1), exposure_count: state.exposure_count - 1}
+          %{
+            state
+            | exposures: Enum.drop(state.exposures, -1),
+              exposure_count: state.exposure_count - 1
+          }
         else
           state
         end
@@ -1078,11 +1006,7 @@ defmodule ABSmartly.Context do
     experiments = Map.get(state.variable_index, key, [])
 
     {result, state} =
-      Enum.reduce(experiments, {nil, state}, fn
-        _exp, {found, acc_state} when found != nil ->
-          {found, acc_state}
-
-        exp, {found, acc_state} ->
+      Enum.reduce_while(experiments, {nil, state}, fn exp, {found, acc_state} ->
         {assignment, acc_state} = get_or_assign(acc_state, exp)
 
         acc_state =
@@ -1100,15 +1024,15 @@ defmodule ABSmartly.Context do
             config = parse_variant_config(variant_data["config"])
 
             if is_map(config) && Map.has_key?(config, key) do
-              {{exp, assignment, config[key]}, acc_state}
+              {:halt, {{exp, assignment, config[key]}, acc_state}}
             else
-              {found, acc_state}
+              {:cont, {found, acc_state}}
             end
           else
-            {found, acc_state}
+            {:cont, {found, acc_state}}
           end
         else
-          {found, acc_state}
+          {:cont, {found, acc_state}}
         end
       end)
 
@@ -1134,9 +1058,7 @@ defmodule ABSmartly.Context do
         nil
 
       {:error, error} ->
-        Logger.error(
-          "Failed to parse variant config JSON: #{inspect(error)}, config: #{config}"
-        )
+        Logger.error("Failed to parse variant config JSON: #{inspect(error)}, config: #{config}")
 
         nil
     end
@@ -1144,18 +1066,16 @@ defmodule ABSmartly.Context do
 
   defp parse_variant_config(_), do: nil
 
-  defp do_custom_field_value(state, experiment_name, field_name) do
+  defp find_custom_field(state, experiment_name, field_name) do
     experiment = Map.get(state.experiment_index, experiment_name)
 
-    if experiment && experiment.custom_field_values do
-      custom_field =
-        Enum.find(experiment.custom_field_values, fn field ->
-          field["name"] == field_name
-        end)
+    if experiment,
+      do: Enum.find(experiment.custom_field_values || [], &(&1["name"] == field_name))
+  end
 
-      if custom_field do
-        parse_custom_field(custom_field["value"], custom_field["type"])
-      end
+  defp do_custom_field_value(state, experiment_name, field_name) do
+    if field = find_custom_field(state, experiment_name, field_name) do
+      parse_custom_field(field["value"], field["type"])
     end
   end
 
@@ -1173,18 +1093,7 @@ defmodule ABSmartly.Context do
   end
 
   defp do_custom_field_value_type(state, experiment_name, field_name) do
-    experiment = Map.get(state.experiment_index, experiment_name)
-
-    if experiment && experiment.custom_field_values do
-      custom_field =
-        Enum.find(experiment.custom_field_values, fn field ->
-          field["name"] == field_name
-        end)
-
-      if custom_field do
-        custom_field["type"]
-      end
-    end
+    if field = find_custom_field(state, experiment_name, field_name), do: field["type"]
   end
 
   defp parse_custom_field(value, "string"), do: value
@@ -1200,9 +1109,7 @@ defmodule ABSmartly.Context do
         decoded
 
       {:error, error} ->
-        Logger.error(
-          "Failed to parse custom field JSON: #{inspect(error)}, value: #{value}"
-        )
+        Logger.error("Failed to parse custom field JSON: #{inspect(error)}, value: #{value}")
 
         nil
     end
@@ -1244,7 +1151,10 @@ defmodule ABSmartly.Context do
 
       case run_publisher(state, event_map) do
         :ok ->
-          Logger.info("Successfully published #{state.exposure_count} exposures and #{state.goal_count} goals")
+          Logger.info(
+            "Successfully published #{state.exposure_count} exposures and #{state.goal_count} goals"
+          )
+
           emit_event(state, :publish, event_map)
           {:ok, %{state | exposures: [], goals: [], exposure_count: 0, goal_count: 0}}
 
@@ -1270,10 +1180,10 @@ defmodule ABSmartly.Context do
   # Worst case for the default HTTP publisher: every attempt may spend the
   # connect plus receive timeout, plus the exponential backoff between attempts.
   defp publish_deadline(sdk_config) do
-    retries = min(Map.get(sdk_config, :retries) || 0, 10)
-    timeout = Map.get(sdk_config, :timeout) || 30_000
-    backoff = 50 * (:erlang.bsl(1, retries) - 1)
-    (retries + 1) * 2 * timeout + backoff + 1_000
+    HTTP.Client.request_deadline(
+      Map.get(sdk_config, :timeout) || 30_000,
+      Map.get(sdk_config, :retries) || 0
+    )
   end
 
   # Custom publishers that only implement publish/6 carry no timeout budget, so
@@ -1289,7 +1199,15 @@ defmodule ABSmartly.Context do
     Code.ensure_loaded(publisher)
 
     if function_exported?(publisher, :publish, 7) do
-      publisher.publish(c.endpoint, c.api_key, c.application, c.environment, event_map, c.retries, c.timeout)
+      publisher.publish(
+        c.endpoint,
+        c.api_key,
+        c.application,
+        c.environment,
+        event_map,
+        c.retries,
+        c.timeout
+      )
     else
       publisher.publish(c.endpoint, c.api_key, c.application, c.environment, event_map, c.retries)
     end
@@ -1297,28 +1215,27 @@ defmodule ABSmartly.Context do
 
   # Runs the refresh fetch in a task so the context can still react to the
   # supervisor's shutdown signal while HTTP retries/backoff are in progress.
+  defp fetch_data(state) do
+    if state.data_fetcher do
+      state.data_fetcher.()
+    else
+      HTTP.Client.fetch_context(
+        state.sdk_config.endpoint,
+        state.sdk_config.api_key,
+        state.sdk_config.application,
+        state.sdk_config.environment,
+        state.sdk_config.retries,
+        state.sdk_config.timeout
+      )
+    end
+  rescue
+    exception -> {:error, Exception.message(exception)}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
   defp run_fetch(state) do
-    task =
-      Task.async(fn ->
-        try do
-          if state.data_fetcher do
-            state.data_fetcher.()
-          else
-            ABSmartly.HTTP.Client.fetch_context(
-              state.sdk_config.endpoint,
-              state.sdk_config.api_key,
-              state.sdk_config.application,
-              state.sdk_config.environment,
-              state.sdk_config.retries,
-              state.sdk_config.timeout
-            )
-          end
-        rescue
-          exception -> {:error, Exception.message(exception)}
-        catch
-          kind, reason -> {:error, {kind, reason}}
-        end
-      end)
+    task = Task.async(fn -> fetch_data(state) end)
 
     case await_task(task, publish_deadline(state.sdk_config)) do
       {:ok, {:ok, _} = ok} -> ok
@@ -1404,7 +1321,11 @@ defmodule ABSmartly.Context do
   defp do_publish_sync(state) do
     if state.exposures != [] or state.goals != [] do
       event_map = build_publish_event_map(state)
-      sync_state = %{state | sdk_config: %{state.sdk_config | retries: min(state.sdk_config.retries, 1)}}
+
+      sync_state = %{
+        state
+        | sdk_config: %{state.sdk_config | retries: min(state.sdk_config.retries, 1)}
+      }
 
       case run_publisher(sync_state, event_map) do
         :ok ->
@@ -1425,9 +1346,10 @@ defmodule ABSmartly.Context do
         }
       end)
 
-    attrs_list = Enum.map(state.attributes, fn attr ->
-      %{"name" => attr.name, "value" => attr.value, "setAt" => attr.set_at}
-    end)
+    attrs_list =
+      Enum.map(state.attributes, fn attr ->
+        %{"name" => attr.name, "value" => attr.value, "setAt" => attr.set_at}
+      end)
 
     publish_event = %Types.PublishEvent{
       hashed: true,
@@ -1441,32 +1363,20 @@ defmodule ABSmartly.Context do
     Types.PublishEvent.to_map(publish_event)
   end
 
-  defp do_refresh(state, %Types.ContextData{} = new_data) do
-    do_refresh_with_context_data(state, new_data)
-  end
-
-  defp convert_refresh_data(%Types.ContextData{} = data), do: {:ok, data}
-  defp convert_refresh_data(data), do: safe_context_data(data)
-
-  defp do_refresh_with_context_data(state, context_data) do
+  defp do_refresh(state, context_data, {var_index, exp_index, aud_cache}) do
     changed_names = changed_experiment_names(state.data.experiments, context_data.experiments)
 
     assignments =
-      invalidate_changed_assignments(
-        state.assignments,
-        state.data.experiments,
-        context_data.experiments
-      )
+      invalidate_changed_assignments(state.assignments, changed_names)
 
-    {var_index, exp_index, aud_cache} = build_indexes(context_data.experiments)
-
-    exposed_experiments = Enum.reduce(changed_names, state.exposed_experiments, fn name, acc ->
-      if Map.has_key?(state.overrides, name) do
-        acc
-      else
-        MapSet.delete(acc, name)
-      end
-    end)
+    exposed_experiments =
+      Enum.reduce(changed_names, state.exposed_experiments, fn name, acc ->
+        if Map.has_key?(state.overrides, name) do
+          acc
+        else
+          MapSet.delete(acc, name)
+        end
+      end)
 
     state = %{
       state
@@ -1508,33 +1418,22 @@ defmodule ABSmartly.Context do
 
       {cached, state} = maybe_reassign_for_audience(cached, state, experiment, name)
 
-      if cached != nil do
-        custom = Map.get(state.custom_assignments, name)
-
-        if custom_applies?(custom, cached) do
-          custom_assignment = %{cached | variant: custom, custom: true}
-          {custom_assignment, state}
-        else
+      {assignment, state} =
+        if cached != nil do
           {cached, state}
-        end
-      else
-        assignment = assign_variant(state, experiment)
-        state = %{state | assignments: Map.put(state.assignments, name, assignment)}
-
-        custom = Map.get(state.custom_assignments, name)
-
-        if custom_applies?(custom, assignment) do
-          custom_assignment = %Types.Assignment{
-            assignment
-            | variant: custom,
-              custom: true
-          }
-
-          {custom_assignment, state}
         else
-          {assignment, state}
+          assignment = assign_variant(state, experiment)
+          {assignment, %{state | assignments: Map.put(state.assignments, name, assignment)}}
         end
-      end
+
+      custom = Map.get(state.custom_assignments, name)
+
+      assignment =
+        if custom_applies?(custom, assignment),
+          do: %{assignment | variant: custom, custom: true},
+          else: assignment
+
+      {assignment, state}
     end
   end
 
@@ -1545,6 +1444,7 @@ defmodule ABSmartly.Context do
     do: custom != nil and assignment.assigned and assignment.eligible and not assignment.full_on
 
   defp maybe_reassign_for_audience(nil, state, _experiment, _name), do: {nil, state}
+
   defp maybe_reassign_for_audience(cached, state, experiment, name) do
     has_audience = experiment.audience != nil and experiment.audience != ""
 
@@ -1559,10 +1459,13 @@ defmodule ABSmartly.Context do
 
       if new_mismatch != cached.audience_mismatch do
         new_assignment = assign_variant(state, experiment)
-        state = %{state |
-          assignments: Map.put(state.assignments, name, new_assignment),
-          exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+
+        state = %{
+          state
+          | assignments: Map.put(state.assignments, name, new_assignment),
+            exposed_experiments: MapSet.delete(state.exposed_experiments, name)
         }
+
         {new_assignment, state}
       else
         updated = %{cached | audience_match_seq: state.attrs_seq}
@@ -1641,12 +1544,17 @@ defmodule ABSmartly.Context do
   # neither a match nor a mismatch.
   defp audience_result(state, experiment) do
     case experiment.audience do
-      nil -> nil
-      "" -> nil
+      nil ->
+        nil
+
+      "" ->
+        nil
+
       _audience ->
-        attrs_list = Enum.map(state.attributes, fn attr ->
-          %{"name" => attr.name, "value" => attr.value}
-        end)
+        attrs_list =
+          Enum.map(state.attributes, fn attr ->
+            %{"name" => attr.name, "value" => attr.value}
+          end)
 
         Matcher.evaluate(Map.get(state.audience_cache, experiment.name), attrs_list)
     end
@@ -1683,9 +1591,7 @@ defmodule ABSmartly.Context do
         decoded
 
       {:error, error} ->
-        Logger.error(
-          "Failed to parse audience JSON: #{inspect(error)}, audience: #{audience}"
-        )
+        Logger.error("Failed to parse audience JSON: #{inspect(error)}, audience: #{audience}")
 
         %{"invalid" => true}
     end
@@ -1715,26 +1621,33 @@ defmodule ABSmartly.Context do
   defp build_indexes(experiments) do
     exp_index = Enum.into(experiments, %{}, fn exp -> {exp.name, exp} end)
 
-    aud_cache = Enum.reduce(experiments, %{}, fn experiment, cache ->
-      case experiment.audience do
-        nil -> cache
-        "" -> cache
-        audience ->
-          parsed = parse_audience(audience)
-          if parsed, do: Map.put(cache, experiment.name, parsed), else: cache
-      end
-    end)
+    aud_cache =
+      Enum.reduce(experiments, %{}, fn experiment, cache ->
+        case experiment.audience do
+          nil ->
+            cache
 
-    var_index = Enum.reduce(experiments, %{}, fn experiment, index ->
-      keys_in_experiment = Enum.reduce(experiment.variants || [], MapSet.new(), fn variant, keys ->
-        config = parse_variant_config(variant["config"]) || %{}
-        Enum.reduce(Map.keys(config), keys, &MapSet.put(&2, &1))
+          "" ->
+            cache
+
+          audience ->
+            parsed = parse_audience(audience)
+            if parsed, do: Map.put(cache, experiment.name, parsed), else: cache
+        end
       end)
 
-      Enum.reduce(keys_in_experiment, index, fn key, idx ->
-        Map.update(idx, key, [experiment], fn exps -> [experiment | exps] end)
+    var_index =
+      Enum.reduce(experiments, %{}, fn experiment, index ->
+        keys_in_experiment =
+          Enum.reduce(experiment.variants || [], MapSet.new(), fn variant, keys ->
+            config = parse_variant_config(variant["config"]) || %{}
+            Enum.reduce(Map.keys(config), keys, &MapSet.put(&2, &1))
+          end)
+
+        Enum.reduce(keys_in_experiment, index, fn key, idx ->
+          Map.update(idx, key, [experiment], fn exps -> [experiment | exps] end)
+        end)
       end)
-    end)
 
     reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
 
@@ -1767,33 +1680,11 @@ defmodule ABSmartly.Context do
     end)
   end
 
-  defp invalidate_changed_assignments(assignments, old_experiments, new_experiments) do
-    old_exp_map = Enum.into(old_experiments, %{}, fn exp -> {exp.name, exp} end)
-    new_exp_map = Enum.into(new_experiments, %{}, fn exp -> {exp.name, exp} end)
+  defp invalidate_changed_assignments(assignments, changed_names) do
+    changed_names = MapSet.new(changed_names)
 
-    Enum.reduce(assignments, %{}, fn {name, assignment}, acc ->
-      old_exp = Map.get(old_exp_map, name)
-      new_exp = Map.get(new_exp_map, name)
-
-      keep =
-        cond do
-          assignment.overridden -> true
-          is_nil(old_exp) && is_nil(new_exp) -> true
-          is_nil(old_exp) -> false
-          is_nil(new_exp) -> false
-          old_exp.id != new_exp.id -> false
-          old_exp.iteration != new_exp.iteration -> false
-          old_exp.full_on_variant != new_exp.full_on_variant -> false
-          old_exp.traffic_split != new_exp.traffic_split -> false
-          old_exp.unit_type != new_exp.unit_type -> false
-          true -> true
-        end
-
-      if keep do
-        Map.put(acc, name, assignment)
-      else
-        acc
-      end
+    Map.reject(assignments, fn {name, assignment} ->
+      not assignment.overridden and MapSet.member?(changed_names, name)
     end)
   end
 
@@ -1804,16 +1695,18 @@ defmodule ABSmartly.Context do
 
     # Like the JS SDK, a failed context is ready with empty data so reads
     # return control/default values.
-    state = %{state |
-      failed: true,
-      ready: true,
-      failed_reason: reason,
-      pending_waiters: [],
-      data: %Types.ContextData{experiments: []},
-      variable_index: %{},
-      experiment_index: %{},
-      audience_cache: %{}
+    state = %{
+      state
+      | failed: true,
+        ready: true,
+        failed_reason: reason,
+        pending_waiters: [],
+        data: %Types.ContextData{experiments: []},
+        variable_index: %{},
+        experiment_index: %{},
+        audience_cache: %{}
     }
+
     emit_event(state, :error, reason)
 
     for waiter <- waiters do
@@ -1838,7 +1731,9 @@ defmodule ABSmartly.Context do
           """)
       catch
         kind, reason ->
-          Logger.error("Event handler for #{event_type} exited with #{inspect(kind)}: #{inspect(reason)}")
+          Logger.error(
+            "Event handler for #{event_type} exited with #{inspect(kind)}: #{inspect(reason)}"
+          )
       end
     end
 

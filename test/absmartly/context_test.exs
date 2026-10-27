@@ -15,11 +15,11 @@ defmodule ABSmartly.ContextTest do
         "name" => "exp_test_ab",
         "iteration" => 1,
         "unitType" => "session_id",
-        "seedHi" => 3603515,
-        "seedLo" => 233373850,
+        "seedHi" => 3_603_515,
+        "seedLo" => 233_373_850,
         "split" => [0.5, 0.5],
-        "trafficSeedHi" => 449867249,
-        "trafficSeedLo" => 455443629,
+        "trafficSeedHi" => 449_867_249,
+        "trafficSeedLo" => 455_443_629,
         "trafficSplit" => [0.0, 1.0],
         "fullOnVariant" => 0,
         "applications" => [%{"name" => "website"}],
@@ -35,11 +35,11 @@ defmodule ABSmartly.ContextTest do
         "name" => "exp_test_abc",
         "iteration" => 1,
         "unitType" => "session_id",
-        "seedHi" => 55006150,
-        "seedLo" => 47189152,
+        "seedHi" => 55_006_150,
+        "seedLo" => 47_189_152,
         "split" => [0.34, 0.33, 0.33],
-        "trafficSeedHi" => 705671872,
-        "trafficSeedLo" => 212903484,
+        "trafficSeedHi" => 705_671_872,
+        "trafficSeedLo" => 212_903_484,
         "trafficSplit" => [0.0, 1.0],
         "fullOnVariant" => 0,
         "applications" => [%{"name" => "website"}],
@@ -65,11 +65,11 @@ defmodule ABSmartly.ContextTest do
         "name" => "exp_test_not_eligible",
         "iteration" => 1,
         "unitType" => "user_id",
-        "seedHi" => 503266407,
-        "seedLo" => 144942754,
+        "seedHi" => 503_266_407,
+        "seedLo" => 144_942_754,
         "split" => [0.34, 0.33, 0.33],
-        "trafficSeedHi" => 87768905,
-        "trafficSeedLo" => 511357582,
+        "trafficSeedHi" => 87_768_905,
+        "trafficSeedLo" => 511_357_582,
         "trafficSplit" => [0.99, 0.01],
         "fullOnVariant" => 0,
         "applications" => [%{"name" => "website"}],
@@ -86,11 +86,11 @@ defmodule ABSmartly.ContextTest do
         "name" => "exp_test_fullon",
         "iteration" => 1,
         "unitType" => "session_id",
-        "seedHi" => 856061641,
-        "seedLo" => 990838475,
+        "seedHi" => 856_061_641,
+        "seedLo" => 990_838_475,
         "split" => [0.25, 0.25, 0.25, 0.25],
-        "trafficSeedHi" => 360868579,
-        "trafficSeedLo" => 330937933,
+        "trafficSeedHi" => 360_868_579,
+        "trafficSeedLo" => 330_937_933,
         "trafficSplit" => [0.0, 1.0],
         "fullOnVariant" => 2,
         "applications" => [%{"name" => "website"}],
@@ -108,11 +108,11 @@ defmodule ABSmartly.ContextTest do
         "name" => "exp_test_custom_fields",
         "iteration" => 1,
         "unitType" => "session_id",
-        "seedHi" => 9372617,
-        "seedLo" => 121364805,
+        "seedHi" => 9_372_617,
+        "seedLo" => 121_364_805,
         "split" => [0.5, 0.5],
-        "trafficSeedHi" => 318746944,
-        "trafficSeedLo" => 359812364,
+        "trafficSeedHi" => 318_746_944,
+        "trafficSeedLo" => 359_812_364,
         "trafficSplit" => [0.0, 1.0],
         "fullOnVariant" => 0,
         "applications" => [%{"name" => "website"}],
@@ -123,7 +123,11 @@ defmodule ABSmartly.ContextTest do
         "audience" => nil,
         "customFieldValues" => [
           %{"name" => "country", "value" => "US,PT,ES", "type" => "string"},
-          %{"name" => "languages", "value" => "en-US,en-GB,pt-PT,pt-BR,es-ES,es-MX", "type" => "string"},
+          %{
+            "name" => "languages",
+            "value" => "en-US,en-GB,pt-PT,pt-BR,es-ES,es-MX",
+            "type" => "string"
+          },
           %{"name" => "text_field", "value" => "hello text", "type" => "text"},
           %{"name" => "string_field", "value" => "hello string", "type" => "string"},
           %{"name" => "number_field", "value" => "123", "type" => "number"},
@@ -153,38 +157,44 @@ defmodule ABSmartly.ContextTest do
   }
 
   @refresh_context_response %{
-    "experiments" => [
-      %{
-        "id" => 6,
-        "name" => "exp_test_new",
-        "iteration" => 2,
-        "unitType" => "session_id",
-        "seedHi" => 934590467,
-        "seedLo" => 714771373,
-        "split" => [0.5, 0.5],
-        "trafficSeedHi" => 940553836,
-        "trafficSeedLo" => 270705624,
-        "trafficSplit" => [0.0, 1.0],
-        "fullOnVariant" => 1,
-        "applications" => [%{"name" => "website"}],
-        "variants" => [
-          %{"name" => "A", "config" => nil},
-          %{"name" => "B", "config" => "{\"show-modal\":true}"}
-        ]
-      }
-    ] ++ (@get_context_response["experiments"])
+    "experiments" =>
+      [
+        %{
+          "id" => 6,
+          "name" => "exp_test_new",
+          "iteration" => 2,
+          "unitType" => "session_id",
+          "seedHi" => 934_590_467,
+          "seedLo" => 714_771_373,
+          "split" => [0.5, 0.5],
+          "trafficSeedHi" => 940_553_836,
+          "trafficSeedLo" => 270_705_624,
+          "trafficSplit" => [0.0, 1.0],
+          "fullOnVariant" => 1,
+          "applications" => [%{"name" => "website"}],
+          "variants" => [
+            %{"name" => "A", "config" => nil},
+            %{"name" => "B", "config" => "{\"show-modal\":true}"}
+          ]
+        }
+      ] ++ @get_context_response["experiments"]
   }
 
   defp audience_context_response do
     update_experiment(@get_context_response, "exp_test_ab", fn exp ->
-      Map.put(exp, "audience", Jason.encode!(%{
-        "filter" => [%{"gte" => [%{"var" => "age"}, %{"value" => 20}]}]
-      }))
+      Map.put(
+        exp,
+        "audience",
+        Jason.encode!(%{
+          "filter" => [%{"gte" => [%{"var" => "age"}, %{"value" => 20}]}]
+        })
+      )
     end)
   end
 
   defp audience_strict_context_response do
     response = audience_context_response()
+
     update_experiment(response, "exp_test_ab", fn exp ->
       exp
       |> Map.put("audienceStrict", true)
@@ -202,29 +212,38 @@ defmodule ABSmartly.ContextTest do
 
   defp disjointed_context_response do
     response = @get_context_response
-    response = update_experiment(response, "exp_test_ab", fn exp ->
-      exp
-      |> Map.put("audienceStrict", true)
-      |> Map.put("audience", Jason.encode!(%{
-        "filter" => [%{"gte" => [%{"var" => "age"}, %{"value" => 20}]}]
-      }))
-      |> Map.update!("variants", fn variants ->
-        Enum.with_index(variants)
-        |> Enum.map(fn {v, i} ->
-          if i == @expected_variants["exp_test_ab"] do
-            %{v | "config" => Jason.encode!(%{"icon" => "arrow"})}
-          else
-            v
-          end
+
+    response =
+      update_experiment(response, "exp_test_ab", fn exp ->
+        exp
+        |> Map.put("audienceStrict", true)
+        |> Map.put(
+          "audience",
+          Jason.encode!(%{
+            "filter" => [%{"gte" => [%{"var" => "age"}, %{"value" => 20}]}]
+          })
+        )
+        |> Map.update!("variants", fn variants ->
+          Enum.with_index(variants)
+          |> Enum.map(fn {v, i} ->
+            if i == @expected_variants["exp_test_ab"] do
+              %{v | "config" => Jason.encode!(%{"icon" => "arrow"})}
+            else
+              v
+            end
+          end)
         end)
       end)
-    end)
+
     update_experiment(response, "exp_test_abc", fn exp ->
       exp
       |> Map.put("audienceStrict", true)
-      |> Map.put("audience", Jason.encode!(%{
-        "filter" => [%{"lt" => [%{"var" => "age"}, %{"value" => 20}]}]
-      }))
+      |> Map.put(
+        "audience",
+        Jason.encode!(%{
+          "filter" => [%{"lt" => [%{"var" => "age"}, %{"value" => 20}]}]
+        })
+      )
       |> Map.update!("variants", fn variants ->
         Enum.with_index(variants)
         |> Enum.map(fn {v, i} ->
@@ -239,14 +258,17 @@ defmodule ABSmartly.ContextTest do
   end
 
   defp update_experiment(response, name, fun) do
-    experiments = Enum.map(response["experiments"], fn exp ->
-      if exp["name"] == name, do: fun.(exp), else: exp
-    end)
+    experiments =
+      Enum.map(response["experiments"], fn exp ->
+        if exp["name"] == name, do: fun.(exp), else: exp
+      end)
+
     %{response | "experiments" => experiments}
   end
 
   defp start_context(response, units \\ nil) do
     context_units = units || @context_params
+
     sdk_config = %Types.SDKConfig{
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
@@ -254,18 +276,22 @@ defmodule ABSmartly.ContextTest do
       environment: "development",
       publisher: ABSmartly.Test.OkPublisher
     }
+
     context_data = Types.ContextData.from_map(response)
+
     context_config = %Types.ContextConfig{
       units: context_units,
       overrides: %{},
       custom_assignments: %{}
     }
+
     {:ok, pid} = Context.start_link(sdk_config, context_data, context_config)
     pid
   end
 
   defp start_context_with_refresh(response, refresh_response, units \\ nil) do
     context_units = units || @context_params
+
     sdk_config = %Types.SDKConfig{
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
@@ -273,15 +299,21 @@ defmodule ABSmartly.ContextTest do
       environment: "development",
       publisher: ABSmartly.Test.OkPublisher
     }
+
     context_data = Types.ContextData.from_map(response)
+
     context_config = %Types.ContextConfig{
       units: context_units,
       overrides: %{},
       custom_assignments: %{}
     }
+
     refresh_data = Types.ContextData.from_map(refresh_response)
     data_fetcher = fn -> {:ok, refresh_data} end
-    {:ok, pid} = Context.start_link(sdk_config, context_data, context_config, data_fetcher: data_fetcher)
+
+    {:ok, pid} =
+      Context.start_link(sdk_config, context_data, context_config, data_fetcher: data_fetcher)
+
     pid
   end
 
@@ -307,19 +339,23 @@ defmodule ABSmartly.ContextTest do
 
     test "should return correct treatment for each experiment" do
       ctx = start_context(@get_context_response)
+
       for exp <- @get_context_response["experiments"] do
         expected = Map.get(@expected_variants, exp["name"])
+
         assert Context.treatment(ctx, exp["name"]) == expected,
-          "Expected treatment #{expected} for #{exp["name"]}"
+               "Expected treatment #{expected} for #{exp["name"]}"
       end
     end
 
     test "should return correct peek for each experiment" do
       ctx = start_context(@get_context_response)
+
       for exp <- @get_context_response["experiments"] do
         expected = Map.get(@expected_variants, exp["name"])
+
         assert Context.peek(ctx, exp["name"]) == expected,
-          "Expected peek #{expected} for #{exp["name"]}"
+               "Expected peek #{expected} for #{exp["name"]}"
       end
     end
   end
@@ -336,16 +372,19 @@ defmodule ABSmartly.ContextTest do
       assert Context.get_unit(ctx, "email") == "bleh@absmartly.com"
 
       units = Context.get_units(ctx)
+
       assert units == %{
-        "session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec",
-        "user_id" => "123456789",
-        "email" => "bleh@absmartly.com"
-      }
+               "session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec",
+               "user_id" => "123456789",
+               "email" => "bleh@absmartly.com"
+             }
     end
 
     test "should error on duplicate unit type set with different value" do
       ctx = start_context(@get_context_response)
-      assert {:error, "Unit 'session_id' UID already set."} = Context.set_unit(ctx, "session_id", "new_id")
+
+      assert {:error, "Unit 'session_id' UID already set."} =
+               Context.set_unit(ctx, "session_id", "new_id")
     end
 
     test "should not error if set to same value" do
@@ -361,10 +400,12 @@ defmodule ABSmartly.ContextTest do
 
     test "should set multiple units" do
       ctx = start_context(@get_context_response, %{})
+
       Context.set_units(ctx, %{
         "session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec",
         "user_id" => "123456789"
       })
+
       assert Context.get_unit(ctx, "session_id") == "e791e240fcd3df7d238cfc285f475e8152fcc0ec"
       assert Context.get_unit(ctx, "user_id") == "123456789"
     end
@@ -415,12 +456,14 @@ defmodule ABSmartly.ContextTest do
         expected = Map.get(@expected_variants, exp["name"])
         Context.set_override(ctx, exp["name"], expected + 11)
       end
+
       Context.set_override(ctx, "not_found", 3)
 
       for exp <- @get_context_response["experiments"] do
         expected = Map.get(@expected_variants, exp["name"])
         assert Context.peek(ctx, exp["name"]) == expected + 11
       end
+
       assert Context.peek(ctx, "not_found") == 3
 
       assert Context.pending(ctx) == 0
@@ -503,6 +546,7 @@ defmodule ABSmartly.ContextTest do
     test "should queue exposure with audienceMismatch true on audience mismatch in non-strict mode" do
       test_pid = self()
       context_data = Types.ContextData.from_map(audience_context_response())
+
       sdk_config = %Types.SDKConfig{
         endpoint: "https://test.absmartly.io/v1",
         api_key: "test-api-key",
@@ -510,12 +554,14 @@ defmodule ABSmartly.ContextTest do
         environment: "development",
         publisher: ABSmartly.Test.OkPublisher
       }
+
       context_config = %Types.ContextConfig{
         units: @context_params,
         overrides: %{},
         custom_assignments: %{},
         event_handler: fn type, data -> send(test_pid, {:ev, type, data}) end
       }
+
       {:ok, ctx} = Context.start_link(sdk_config, context_data, context_config)
 
       assert Context.treatment(ctx, "exp_test_ab") == 1
@@ -560,6 +606,7 @@ defmodule ABSmartly.ContextTest do
 
     test "should return correct variant for each experiment" do
       ctx = start_context(@get_context_response)
+
       for {name, expected} <- @expected_variants do
         assert Context.treatment(ctx, name) == expected
       end
@@ -580,9 +627,10 @@ defmodule ABSmartly.ContextTest do
 
     test "should return correct variable values" do
       ctx = start_context(@get_context_response)
+
       for {key, expected} <- @expected_variables do
         assert Context.variable_value(ctx, key, 17) == expected,
-          "Expected #{inspect(expected)} for variable #{key}"
+               "Expected #{inspect(expected)} for variable #{key}"
       end
     end
 
@@ -596,6 +644,7 @@ defmodule ABSmartly.ContextTest do
       assert Context.pending(ctx) == 0
 
       all_variable_keys = Map.merge(@expected_variables, %{"card.width" => "default"})
+
       for {key, _expected} <- all_variable_keys do
         Context.variable_value(ctx, key, 17)
       end
@@ -608,6 +657,7 @@ defmodule ABSmartly.ContextTest do
       assert Context.pending(ctx) == 0
 
       all_variable_keys = Map.merge(@expected_variables, %{"card.width" => "default"})
+
       for {key, _expected} <- all_variable_keys do
         Context.variable_value(ctx, key, 17)
       end
@@ -630,7 +680,9 @@ defmodule ABSmartly.ContextTest do
     test "should return a finalized error after finalized call" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert Context.variable_value(ctx, "banner.size", 17) == {:error, "ABsmartly Context is finalized."}
+
+      assert Context.variable_value(ctx, "banner.size", 17) ==
+               {:error, "ABsmartly Context is finalized."}
     end
 
     test "conflicting key disjoint audiences" do
@@ -659,9 +711,10 @@ defmodule ABSmartly.ContextTest do
 
     test "should return correct variable values" do
       ctx = start_context(@get_context_response)
+
       for {key, expected} <- @expected_variables do
         assert Context.peek_variable_value(ctx, key, 17) == expected,
-          "Expected #{inspect(expected)} for variable #{key}"
+               "Expected #{inspect(expected)} for variable #{key}"
       end
     end
 
@@ -681,6 +734,7 @@ defmodule ABSmartly.ContextTest do
       assert Context.pending(ctx) == 0
 
       all_variable_keys = Map.merge(@expected_variables, %{"card.width" => "default"})
+
       for {key, _expected} <- all_variable_keys do
         Context.peek_variable_value(ctx, key, 17)
       end
@@ -841,10 +895,12 @@ defmodule ABSmartly.ContextTest do
 
     test "should override multiple experiments" do
       ctx = start_context(@get_context_response)
+
       Context.set_overrides(ctx, %{
         "exp_test_ab" => 5,
         "exp_test_abc" => 3
       })
+
       assert Context.treatment(ctx, "exp_test_ab") == 5
       assert Context.treatment(ctx, "exp_test_abc") == 3
     end
@@ -869,18 +925,23 @@ defmodule ABSmartly.ContextTest do
       assert Context.treatment(ctx, "exp_test_not_eligible") == 0
     end
 
-    test "should error after finalized call" do
+    test "custom assignment setters remain allowed after finalize" do
       ctx = start_context(@get_context_response)
       Context.finalize(ctx)
-      assert {:error, "ABsmartly Context is finalized."} = Context.set_custom_assignment(ctx, "exp_test_ab", 3)
+      assert :ok = Context.set_custom_assignment(ctx, "exp_test_ab", 3)
+      assert :ok = Context.set_custom_assignments(ctx, %{"exp_test_abc" => 1})
+      assert :ok = Context.set_override(ctx, "exp_test_ab", 2)
+      assert {:error, "ABsmartly Context is finalized."} = Context.peek(ctx, "exp_test_ab")
     end
 
     test "should set multiple custom assignments" do
       ctx = start_context(@get_context_response)
+
       Context.set_custom_assignments(ctx, %{
         "exp_test_ab" => 3,
         "exp_test_abc" => 1
       })
+
       assert Context.treatment(ctx, "exp_test_ab") == 3
       assert Context.treatment(ctx, "exp_test_abc") == 1
     end
@@ -917,7 +978,11 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should not re-queue after refresh when experiment unchanged" do
-      ctx = start_context_with_refresh(audience_strict_context_response(), audience_strict_context_response())
+      ctx =
+        start_context_with_refresh(
+          audience_strict_context_response(),
+          audience_strict_context_response()
+        )
 
       assert Context.treatment(ctx, "exp_test_ab") == 0
       assert Context.pending(ctx) == 1
@@ -929,7 +994,11 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should not re-queue after refresh with override when experiment unchanged" do
-      ctx = start_context_with_refresh(audience_strict_context_response(), audience_strict_context_response())
+      ctx =
+        start_context_with_refresh(
+          audience_strict_context_response(),
+          audience_strict_context_response()
+        )
 
       Context.set_override(ctx, "exp_test_ab", 3)
       assert Context.treatment(ctx, "exp_test_ab") == 3
@@ -967,11 +1036,13 @@ defmodule ABSmartly.ContextTest do
 
     test "should pick up changes in experiment stopped" do
       stopped_response = %{
-        @get_context_response |
-        "experiments" => Enum.filter(@get_context_response["experiments"], fn e ->
-          e["name"] != "exp_test_abc"
-        end)
+        @get_context_response
+        | "experiments" =>
+            Enum.filter(@get_context_response["experiments"], fn e ->
+              e["name"] != "exp_test_abc"
+            end)
       }
+
       ctx = start_context_with_refresh(@get_context_response, stopped_response)
 
       assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
@@ -996,9 +1067,11 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should pick up changes in experiment fullon" do
-      full_on_response = update_experiment(@get_context_response, "exp_test_abc", fn exp ->
-        Map.put(exp, "fullOnVariant", 1)
-      end)
+      full_on_response =
+        update_experiment(@get_context_response, "exp_test_abc", fn exp ->
+          Map.put(exp, "fullOnVariant", 1)
+        end)
+
       ctx = start_context_with_refresh(@get_context_response, full_on_response)
 
       assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
@@ -1011,12 +1084,16 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should pick up changes in experiment traffic split" do
-      scaled_up_response = update_experiment(@get_context_response, "exp_test_not_eligible", fn exp ->
-        Map.put(exp, "trafficSplit", [0.0, 1.0])
-      end)
+      scaled_up_response =
+        update_experiment(@get_context_response, "exp_test_not_eligible", fn exp ->
+          Map.put(exp, "trafficSplit", [0.0, 1.0])
+        end)
+
       ctx = start_context_with_refresh(@get_context_response, scaled_up_response)
 
-      assert Context.treatment(ctx, "exp_test_not_eligible") == @expected_variants["exp_test_not_eligible"]
+      assert Context.treatment(ctx, "exp_test_not_eligible") ==
+               @expected_variants["exp_test_not_eligible"]
+
       assert Context.pending(ctx) == 1
 
       Context.refresh(ctx)
@@ -1026,12 +1103,14 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should pick up changes in experiment iteration" do
-      iterated_response = update_experiment(@get_context_response, "exp_test_abc", fn exp ->
-        exp
-        |> Map.put("iteration", 2)
-        |> Map.put("trafficSeedHi", 398724581)
-        |> Map.put("seedHi", 34737352)
-      end)
+      iterated_response =
+        update_experiment(@get_context_response, "exp_test_abc", fn exp ->
+          exp
+          |> Map.put("iteration", 2)
+          |> Map.put("trafficSeedHi", 398_724_581)
+          |> Map.put("seedHi", 34_737_352)
+        end)
+
       ctx = start_context_with_refresh(@get_context_response, iterated_response)
 
       assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
@@ -1044,12 +1123,14 @@ defmodule ABSmartly.ContextTest do
     end
 
     test "should pick up changes in experiment id" do
-      id_changed_response = update_experiment(@get_context_response, "exp_test_abc", fn exp ->
-        exp
-        |> Map.put("id", 11)
-        |> Map.put("trafficSeedHi", 398724581)
-        |> Map.put("seedHi", 34737352)
-      end)
+      id_changed_response =
+        update_experiment(@get_context_response, "exp_test_abc", fn exp ->
+          exp
+          |> Map.put("id", 11)
+          |> Map.put("trafficSeedHi", 398_724_581)
+          |> Map.put("seedHi", 34_737_352)
+        end)
+
       ctx = start_context_with_refresh(@get_context_response, id_changed_response)
 
       assert Context.treatment(ctx, "exp_test_abc") == @expected_variants["exp_test_abc"]
@@ -1090,7 +1171,11 @@ defmodule ABSmartly.ContextTest do
 
     test "should return parsed json object field" do
       ctx = start_context(@get_context_response)
-      assert Context.custom_field_value(ctx, "exp_test_abc", "json_object") == %{"123" => 1, "456" => 0}
+
+      assert Context.custom_field_value(ctx, "exp_test_abc", "json_object") == %{
+               "123" => 1,
+               "456" => 0
+             }
     end
 
     test "should return parsed json array field" do
@@ -1126,17 +1211,23 @@ defmodule ABSmartly.ContextTest do
     test "should return string field from custom fields experiment" do
       ctx = start_context(@get_context_response)
       assert Context.custom_field_value(ctx, "exp_test_custom_fields", "country") == "US,PT,ES"
-      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "languages") == "en-US,en-GB,pt-PT,pt-BR,es-ES,es-MX"
+
+      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "languages") ==
+               "en-US,en-GB,pt-PT,pt-BR,es-ES,es-MX"
     end
 
     test "should return text field" do
       ctx = start_context(@get_context_response)
-      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "text_field") == "hello text"
+
+      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "text_field") ==
+               "hello text"
     end
 
     test "should return string_field" do
       ctx = start_context(@get_context_response)
-      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "string_field") == "hello string"
+
+      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "string_field") ==
+               "hello string"
     end
 
     test "should return number field" do
@@ -1151,12 +1242,16 @@ defmodule ABSmartly.ContextTest do
 
     test "should return boolean false field" do
       ctx = start_context(@get_context_response)
-      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "false_boolean_field") == false
+
+      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "false_boolean_field") ==
+               false
     end
 
     test "should return value as-is for invalid type" do
       ctx = start_context(@get_context_response)
-      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "invalid_type_field") == "invalid"
+
+      assert Context.custom_field_value(ctx, "exp_test_custom_fields", "invalid_type_field") ==
+               "invalid"
     end
 
     test "should return nil for non-existent field" do
@@ -1229,7 +1324,9 @@ defmodule ABSmartly.ContextTest do
 
     test "unit UID must not be blank error message" do
       ctx = start_context(@get_context_response)
-      assert {:error, "Unit 'new_unit' UID must not be blank."} = Context.set_unit(ctx, "new_unit", "")
+
+      assert {:error, "Unit 'new_unit' UID must not be blank."} =
+               Context.set_unit(ctx, "new_unit", "")
     end
   end
 end

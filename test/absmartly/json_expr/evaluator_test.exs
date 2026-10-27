@@ -4,6 +4,19 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
   alias ABSmartly.JSONExpr.Evaluator
 
   describe "JS numeric conversion boundaries" do
+    test "precision and whitespace match ECMAScript conversions" do
+      assert Evaluator.string_convert(0.6235798317206265) == "0.623579831720626"
+      assert Evaluator.compare("0.623579831720626", 0.6235798317206265) == 0
+
+      for prefix <- ["\uFEFF", "\u00A0", "\u2028", "\u2029", "\t\n\r "] do
+        assert Evaluator.number_convert(prefix <> "12") == 12.0
+      end
+
+      for prefix <- [<<5>>, "\u0085", "\u180E", "\u200B"] do
+        assert Evaluator.number_convert(prefix <> "12") == nil
+      end
+    end
+
     test "number_convert follows parseFloat for exponent forms" do
       assert Evaluator.number_convert("1.e2") == 100.0
       assert Evaluator.number_convert(" 12abc") == 12.0
@@ -186,15 +199,24 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert Evaluator.compare("1", 1) == 0
       assert Evaluator.compare("abc", 1) == 1
       assert Evaluator.string_convert(1) == "1"
-      assert Evaluator.evaluate(%{"eq" => [%{"var" => "count"}, %{"value" => 1}]}, %{"count" => "1"}) == true
-      assert Evaluator.evaluate(%{"eq" => [%{"var" => "count"}, %{"value" => 1}]}, %{"count" => "abc"}) == false
+
+      assert Evaluator.evaluate(%{"eq" => [%{"var" => "count"}, %{"value" => 1}]}, %{
+               "count" => "1"
+             }) == true
+
+      assert Evaluator.evaluate(%{"eq" => [%{"var" => "count"}, %{"value" => 1}]}, %{
+               "count" => "abc"
+             }) == false
     end
   end
 
   describe "eq operator" do
     test "compares equal values" do
       assert Evaluator.evaluate(%{"eq" => [%{"value" => 1}, %{"value" => 1}]}, %{}) == true
-      assert Evaluator.evaluate(%{"eq" => [%{"value" => "abc"}, %{"value" => "abc"}]}, %{}) == true
+
+      assert Evaluator.evaluate(%{"eq" => [%{"value" => "abc"}, %{"value" => "abc"}]}, %{}) ==
+               true
+
       assert Evaluator.evaluate(%{"eq" => [%{"value" => true}, %{"value" => true}]}, %{}) == true
       # A null operand short-circuits to nil (canonical: null == null is not a match).
       assert Evaluator.evaluate(%{"eq" => [%{"value" => nil}, %{"value" => nil}]}, %{}) == nil
@@ -202,8 +224,12 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
 
     test "compares unequal values" do
       assert Evaluator.evaluate(%{"eq" => [%{"value" => 1}, %{"value" => 2}]}, %{}) == false
-      assert Evaluator.evaluate(%{"eq" => [%{"value" => "abc"}, %{"value" => "def"}]}, %{}) == false
-      assert Evaluator.evaluate(%{"eq" => [%{"value" => true}, %{"value" => false}]}, %{}) == false
+
+      assert Evaluator.evaluate(%{"eq" => [%{"value" => "abc"}, %{"value" => "def"}]}, %{}) ==
+               false
+
+      assert Evaluator.evaluate(%{"eq" => [%{"value" => true}, %{"value" => false}]}, %{}) ==
+               false
     end
 
     test "returns nil for incomparable / null types" do
@@ -220,8 +246,11 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
     end
 
     test "compares strings" do
-      assert Evaluator.evaluate(%{"gt" => [%{"value" => "bcd"}, %{"value" => "abc"}]}, %{}) == true
-      assert Evaluator.evaluate(%{"gt" => [%{"value" => "abc"}, %{"value" => "bcd"}]}, %{}) == false
+      assert Evaluator.evaluate(%{"gt" => [%{"value" => "bcd"}, %{"value" => "abc"}]}, %{}) ==
+               true
+
+      assert Evaluator.evaluate(%{"gt" => [%{"value" => "abc"}, %{"value" => "bcd"}]}, %{}) ==
+               false
     end
   end
 
@@ -284,9 +313,14 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
     end
 
     test "contains is an alias for in (haystack-first)" do
-      assert Evaluator.evaluate(%{"contains" => [%{"value" => [1, 2, 3]}, %{"value" => 2}]}, %{}) == true
-      assert Evaluator.evaluate(%{"contains" => [%{"value" => "abcd"}, %{"value" => "bc"}]}, %{}) == true
-      assert Evaluator.evaluate(%{"contains" => [%{"value" => [1, 2, 3]}, %{"value" => 4}]}, %{}) == false
+      assert Evaluator.evaluate(%{"contains" => [%{"value" => [1, 2, 3]}, %{"value" => 2}]}, %{}) ==
+               true
+
+      assert Evaluator.evaluate(%{"contains" => [%{"value" => "abcd"}, %{"value" => "bc"}]}, %{}) ==
+               true
+
+      assert Evaluator.evaluate(%{"contains" => [%{"value" => [1, 2, 3]}, %{"value" => 4}]}, %{}) ==
+               false
     end
   end
 
@@ -387,10 +421,12 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
 
       returning = [%{"eq" => [%{"var" => "returning"}, %{"value" => true}]}]
 
-      returning_and_age_twenty_and_us_or_over_fifty = [
-        returning,
-        age_twenty_and_us_or_over_fifty
-      ] |> List.flatten()
+      returning_and_age_twenty_and_us_or_over_fifty =
+        [
+          returning,
+          age_twenty_and_us_or_over_fifty
+        ]
+        |> List.flatten()
 
       not_returning_and_spanish = [
         %{"not" => returning},
@@ -411,21 +447,39 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       }
     end
 
-    test "AgeTwentyAndUS", %{john: john, terry: terry, kate: kate, maria: maria, age_twenty_and_us: expr} do
+    test "AgeTwentyAndUS", %{
+      john: john,
+      terry: terry,
+      kate: kate,
+      maria: maria,
+      age_twenty_and_us: expr
+    } do
       assert evaluate_boolean(expr, john) == true
       assert evaluate_boolean(expr, terry) == false
       assert evaluate_boolean(expr, kate) == false
       assert evaluate_boolean(expr, maria) == false
     end
 
-    test "AgeOverFifty", %{john: john, terry: terry, kate: kate, maria: maria, age_over_fifty: expr} do
+    test "AgeOverFifty", %{
+      john: john,
+      terry: terry,
+      kate: kate,
+      maria: maria,
+      age_over_fifty: expr
+    } do
       assert evaluate_boolean(expr, john) == false
       assert evaluate_boolean(expr, terry) == false
       assert evaluate_boolean(expr, kate) == true
       assert evaluate_boolean(expr, maria) == true
     end
 
-    test "AgeTwentyAndUS_Or_AgeOverFifty", %{john: john, terry: terry, kate: kate, maria: maria, age_twenty_and_us_or_over_fifty: expr} do
+    test "AgeTwentyAndUS_Or_AgeOverFifty", %{
+      john: john,
+      terry: terry,
+      kate: kate,
+      maria: maria,
+      age_twenty_and_us_or_over_fifty: expr
+    } do
       assert evaluate_boolean(expr, john) == true
       assert evaluate_boolean(expr, terry) == false
       assert evaluate_boolean(expr, kate) == true
@@ -439,14 +493,26 @@ defmodule ABSmartly.JSONExpr.EvaluatorTest do
       assert evaluate_boolean(expr, maria) == true
     end
 
-    test "Returning_And_AgeTwentyAndUS_Or_AgeOverFifty", %{john: john, terry: terry, kate: kate, maria: maria, returning_and_combo: expr} do
+    test "Returning_And_AgeTwentyAndUS_Or_AgeOverFifty", %{
+      john: john,
+      terry: terry,
+      kate: kate,
+      maria: maria,
+      returning_and_combo: expr
+    } do
       assert evaluate_boolean(expr, john) == false
       assert evaluate_boolean(expr, terry) == false
       assert evaluate_boolean(expr, kate) == false
       assert evaluate_boolean(expr, maria) == true
     end
 
-    test "NotReturning_And_Spanish", %{john: john, terry: terry, kate: kate, maria: maria, not_returning_and_spanish: expr} do
+    test "NotReturning_And_Spanish", %{
+      john: john,
+      terry: terry,
+      kate: kate,
+      maria: maria,
+      not_returning_and_spanish: expr
+    } do
       assert evaluate_boolean(expr, john) == false
       assert evaluate_boolean(expr, terry) == false
       assert evaluate_boolean(expr, kate) == true

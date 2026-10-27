@@ -2,11 +2,6 @@ defmodule ABSmartly.HTTP.Client do
   @moduledoc """
   HTTP client for ABSmartly API with retry logic.
 
-  Fixes:
-  - CRITICAL-07: Rescue Jason.encode! errors
-  - CRITICAL-08: Handle 3xx redirects
-  - CRITICAL-16: Deduplicate HTTP retry logic
-  - HIGH-25: Deduplicate header construction
   """
 
   require Logger
@@ -21,7 +16,14 @@ defmodule ABSmartly.HTTP.Client do
   - Don't retry on 4xx status codes
   - Exponential backoff: 50ms × 2^attempt
   """
-  def fetch_context(endpoint, api_key, application, environment, retries \\ 3, timeout \\ @default_timeout) do
+  def fetch_context(
+        endpoint,
+        api_key,
+        application,
+        environment,
+        retries \\ 3,
+        timeout \\ @default_timeout
+      ) do
     url = "#{endpoint}/context"
     headers = build_headers(api_key, application, environment)
 
@@ -50,9 +52,16 @@ defmodule ABSmartly.HTTP.Client do
 
   @doc """
   Publish events to API endpoint.
-  Fixes CRITICAL-07: Rescue Jason.encode! errors.
   """
-  def publish_events(endpoint, api_key, application, environment, events, retries \\ 3, timeout \\ @default_timeout) do
+  def publish_events(
+        endpoint,
+        api_key,
+        application,
+        environment,
+        events,
+        retries \\ 3,
+        timeout \\ @default_timeout
+      ) do
     url = "#{endpoint}/context"
     headers = build_headers(api_key, application, environment)
 
@@ -82,7 +91,6 @@ defmodule ABSmartly.HTTP.Client do
     [timeout: timeout, recv_timeout: timeout, hackney: [pool: false]]
   end
 
-  # Fixes HIGH-25: Extract common header construction
   defp build_headers(api_key, application, environment) do
     [
       {"X-API-Key", api_key},
@@ -94,9 +102,6 @@ defmodule ABSmartly.HTTP.Client do
     ]
   end
 
-  # Fixes CRITICAL-16: Unified retry logic for GET and POST
-  # Fixes CRITICAL-08: Handle 3xx redirects
-  # Fixes CRITICAL-05: Sanitize HTTPoison errors to prevent API key exposure
   defp with_retry(request_fn, max_retries, attempt \\ 0)
 
   defp with_retry(request_fn, max_retries, attempt) when max_retries > 10 do
@@ -109,7 +114,6 @@ defmodule ABSmartly.HTTP.Client do
       when status >= 200 and status < 300 ->
         {:ok, body}
 
-      # Fixes CRITICAL-08: Handle 3xx redirects
       {:ok, %HTTPoison.Response{status_code: status}} when status >= 300 and status < 400 ->
         Logger.warning("Redirect received: #{status}")
         {:error, "Redirect received: #{status}"}
@@ -122,16 +126,42 @@ defmodule ABSmartly.HTTP.Client do
         retry_or_fail(request_fn, max_retries, attempt, "Server error: #{status}")
 
       {:error, %HTTPoison.Error{reason: reason}} ->
-        # Fixes CRITICAL-05: Sanitize error to prevent API key exposure
         sanitized_reason = sanitize_error(reason)
-        retry_or_fail(request_fn, max_retries, attempt, "Network error: #{inspect(sanitized_reason)}")
+
+        retry_or_fail(
+          request_fn,
+          max_retries,
+          attempt,
+          "Network error: #{inspect(sanitized_reason)}"
+        )
     end
+  end
+
+  @doc false
+  def retry_backoff(attempt) do
+    Application.get_env(:absmartly, :retry_backoff_base, 50) * Integer.pow(2, attempt)
+  end
+
+  @doc false
+  def request_deadline(timeout, retries) do
+    retries = min(retries, 10)
+
+    backoff =
+      if retries > 0,
+        do: Enum.sum(for attempt <- 0..(retries - 1), do: round(retry_backoff(attempt))),
+        else: 0
+
+    (retries + 1) * 2 * timeout + backoff + 1_000
   end
 
   defp retry_or_fail(request_fn, max_retries, attempt, error_msg) do
     if attempt < max_retries do
-      backoff = Application.get_env(:absmartly, :retry_backoff_base, 50) * :math.pow(2, attempt)
-      Logger.info("Retrying request after #{round(backoff)}ms (attempt #{attempt + 1}/#{max_retries})")
+      backoff = retry_backoff(attempt)
+
+      Logger.info(
+        "Retrying request after #{round(backoff)}ms (attempt #{attempt + 1}/#{max_retries})"
+      )
+
       Process.sleep(round(backoff))
       with_retry(request_fn, max_retries, attempt + 1)
     else
@@ -140,7 +170,6 @@ defmodule ABSmartly.HTTP.Client do
     end
   end
 
-  # Fixes CRITICAL-05: Sanitize HTTPoison errors to remove headers with API keys
   defp sanitize_error(%{headers: _headers} = map) do
     Map.drop(map, [:headers])
   end

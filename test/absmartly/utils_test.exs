@@ -10,6 +10,23 @@ defmodule ABSmartly.UtilsTest do
       assert Utils.unit_to_string(-0.5) == "-1"
     end
 
+    test "matches JavaScript exponent boundary and exact binary rounding" do
+      for {number, expected} <- [
+            {1.0e21, "1e+21"},
+            {-1.0e21, "-1e+21"},
+            {1.25e22, "1.25e+22"},
+            {1.0e20, "100000000000000000000"},
+            {-0.0, "0"}
+          ] do
+        assert Utils.unit_to_string(number) == expected
+        assert Utils.hash_unit(number) == Utils.hash_unit(expected)
+      end
+
+      assert Utils.hash_unit(1.0e21) == "OKkjo8sn5USSUjdjCUBynw"
+      assert Utils.number_to_fixed(0.6235798317206265, 15) == "0.623579831720626"
+      assert Utils.number_to_fixed(-0.6235798317206265, 15) == "-0.623579831720626"
+    end
+
     test "diagnostic helpers" do
       assert Utils.base64_url_no_padding("te") == "dGU"
       assert Utils.utf8_bytes("açb") == <<97, 195, 167, 98>>
@@ -23,6 +40,7 @@ defmodule ABSmartly.UtilsTest do
       refute Utils.promise?(%{"then" => "noop"})
       assert Utils.promise?(task)
     end
+
     test "hashes string unit" do
       result = Utils.hash_unit("bleh@absmartly.com")
       assert is_binary(result)
@@ -30,7 +48,7 @@ defmodule ABSmartly.UtilsTest do
     end
 
     test "hashes integer unit" do
-      result = Utils.hash_unit(123456789)
+      result = Utils.hash_unit(123_456_789)
       assert is_binary(result)
     end
   end

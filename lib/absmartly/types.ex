@@ -19,7 +19,6 @@ defmodule ABSmartly.Types do
     ]
   end
 
-  # Implement Inspect protocol to prevent API key exposure (CRITICAL-05)
   defimpl Inspect, for: SDKConfig do
     def inspect(config, _opts) do
       "#SDKConfig<endpoint: #{config.endpoint}, app: #{config.application}, env: #{config.environment}>"
@@ -49,14 +48,10 @@ defmodule ABSmartly.Types do
       :custom_field_values
     ]
 
-    defp validate_assignment_fields!(map, split), do: ABSmartly.Types.ExperimentValidation.validate!(map, split)
-
     @doc """
     Create ExperimentData from API JSON.
-    Fixes CRITICAL-11: Validates required fields.
     """
     def from_map(map) when is_map(map) do
-      # Validate required fields (CRITICAL-11)
       required_fields = ["id", "name", "unitType", "split"]
       missing = Enum.filter(required_fields, &is_nil(map[&1]))
 
@@ -64,13 +59,14 @@ defmodule ABSmartly.Types do
         raise ArgumentError, "Missing required experiment fields: #{inspect(missing)}"
       end
 
-      # Validate split array length (CRITICAL-12)
       split = map["split"] || []
+
       if is_list(split) and length(split) > 100 do
-        raise ArgumentError, "Split array too large (#{length(split)}), maximum 100 variants allowed"
+        raise ArgumentError,
+              "Split array too large (#{length(split)}), maximum 100 variants allowed"
       end
 
-      validate_assignment_fields!(map, split)
+      ABSmartly.Types.ExperimentValidation.validate!(map, split)
 
       %__MODULE__{
         id: map["id"],
@@ -105,7 +101,14 @@ defmodule ABSmartly.Types do
       traffic = map["trafficSplit"]
       check!(is_nil(traffic) or number_list?(traffic), "trafficSplit must be a list of numbers")
 
-      for key <- ["iteration", "seedHi", "seedLo", "trafficSeedHi", "trafficSeedLo", "fullOnVariant"] do
+      for key <- [
+            "iteration",
+            "seedHi",
+            "seedLo",
+            "trafficSeedHi",
+            "trafficSeedLo",
+            "fullOnVariant"
+          ] do
         value = map[key]
         check!(is_nil(value) or is_integer(value), "#{key} must be an integer")
       end
@@ -127,7 +130,8 @@ defmodule ABSmartly.Types do
 
     defp custom_field?(%{} = f) do
       is_binary(f["name"]) and (is_nil(f["type"]) or is_binary(f["type"])) and
-        (is_nil(f["value"]) or is_binary(f["value"]) or is_number(f["value"]) or is_boolean(f["value"]))
+        (is_nil(f["value"]) or is_binary(f["value"]) or is_number(f["value"]) or
+           is_boolean(f["value"]))
     end
 
     defp custom_field?(_), do: false
@@ -146,7 +150,6 @@ defmodule ABSmartly.Types do
 
     @doc """
     Create ContextData from API JSON.
-    Fixes HIGH-11: Validates input is a map.
     """
     def from_map(map) when is_map(map) do
       experiments =
@@ -269,19 +272,16 @@ defmodule ABSmartly.Types do
     @moduledoc """
     Configuration for context creation.
     """
-    defstruct [
-      units: %{},
-      attributes: [],
-      overrides: %{},
-      custom_assignments: %{},
-      publish_delay: -1,
-      refresh_period: 0,
-      event_handler: nil
-    ]
+    defstruct units: %{},
+              attributes: [],
+              overrides: %{},
+              custom_assignments: %{},
+              publish_delay: -1,
+              refresh_period: 0,
+              event_handler: nil
 
     @doc """
     Create from options map.
-    Fixes HIGH-08: Falsy values treated as missing.
     """
     def from_options(opts) when is_map(opts) do
       %__MODULE__{

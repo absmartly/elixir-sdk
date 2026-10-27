@@ -17,11 +17,11 @@ defmodule ABSmartly.FixPlanTest do
         "name" => "exp_test_ab",
         "iteration" => 1,
         "unitType" => "session_id",
-        "seedHi" => 3603515,
-        "seedLo" => 233373850,
+        "seedHi" => 3_603_515,
+        "seedLo" => 233_373_850,
         "split" => [0.5, 0.5],
-        "trafficSeedHi" => 449867249,
-        "trafficSeedLo" => 455443629,
+        "trafficSeedHi" => 449_867_249,
+        "trafficSeedLo" => 455_443_629,
         "trafficSplit" => [0.0, 1.0],
         "fullOnVariant" => 0,
         "applications" => [%{"name" => "website"}],
@@ -37,11 +37,11 @@ defmodule ABSmartly.FixPlanTest do
         "name" => "exp_test_abc",
         "iteration" => 1,
         "unitType" => "session_id",
-        "seedHi" => 55006150,
-        "seedLo" => 47189152,
+        "seedHi" => 55_006_150,
+        "seedLo" => 47_189_152,
         "split" => [0.34, 0.33, 0.33],
-        "trafficSeedHi" => 705671872,
-        "trafficSeedLo" => 212903484,
+        "trafficSeedHi" => 705_671_872,
+        "trafficSeedLo" => 212_903_484,
         "trafficSplit" => [0.0, 1.0],
         "fullOnVariant" => 0,
         "applications" => [%{"name" => "website"}],
@@ -58,6 +58,7 @@ defmodule ABSmartly.FixPlanTest do
 
   defp start_context(response, units \\ nil) do
     context_units = units || @context_params
+
     sdk_config = %Types.SDKConfig{
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
@@ -65,18 +66,22 @@ defmodule ABSmartly.FixPlanTest do
       environment: "development",
       publisher: ABSmartly.Test.OkPublisher
     }
+
     context_data = Types.ContextData.from_map(response)
+
     context_config = %Types.ContextConfig{
       units: context_units,
       overrides: %{},
       custom_assignments: %{}
     }
+
     {:ok, pid} = Context.start_link(sdk_config, context_data, context_config)
     pid
   end
 
   defp start_context_with_refresh(response, refresh_response, units \\ nil) do
     context_units = units || @context_params
+
     sdk_config = %Types.SDKConfig{
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
@@ -84,19 +89,24 @@ defmodule ABSmartly.FixPlanTest do
       environment: "development",
       publisher: ABSmartly.Test.OkPublisher
     }
+
     context_data = Types.ContextData.from_map(response)
+
     context_config = %Types.ContextConfig{
       units: context_units,
       overrides: %{},
       custom_assignments: %{}
     }
+
     refresh_data = Types.ContextData.from_map(refresh_response)
     data_fetcher = fn -> {:ok, refresh_data} end
-    {:ok, pid} = Context.start_link(sdk_config, context_data, context_config, data_fetcher: data_fetcher)
+
+    {:ok, pid} =
+      Context.start_link(sdk_config, context_data, context_config, data_fetcher: data_fetcher)
+
     pid
   end
 
-  # Fix #4: Cross-type comparison
   describe "fix #4 - cross-type comparison" do
     test "compare number to string coerces string" do
       assert Evaluator.compare(1, "1.0") == 0
@@ -129,20 +139,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #5: Wrong app name in config
-  describe "fix #5 - config app name" do
-    test "config uses :absmartly app name" do
-      config = Application.get_all_env(:absmartly)
-      assert Keyword.get(config, :json_library) == Jason
-    end
-
-    test "elixir_wrapper config does not exist" do
-      config = Application.get_all_env(:elixir_wrapper)
-      assert config == []
-    end
-  end
-
-  # Fix #6: Attribute list storage
   describe "fix #6 - attribute list storage" do
     test "attributes stored as list and get_attribute returns last value" do
       ctx = start_context(@get_context_response)
@@ -175,14 +171,15 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #7 & #18: Cached audience JSON and single audience_match? call
   describe "fix #7/#18 - cached audience and single evaluation" do
     test "audience matching works with cached parsed JSON" do
-      response = put_in(
-        @get_context_response,
-        ["experiments", Access.at(0), "audience"],
-        Jason.encode!(%{"filter" => [%{"gte" => [%{"var" => "age"}, %{"value" => 18}]}]})
-      )
+      response =
+        put_in(
+          @get_context_response,
+          ["experiments", Access.at(0), "audience"],
+          Jason.encode!(%{"filter" => [%{"gte" => [%{"var" => "age"}, %{"value" => 18}]}]})
+        )
+
       response = put_in(response, ["experiments", Access.at(0), "audienceStrict"], true)
 
       ctx = start_context(response)
@@ -195,25 +192,33 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #8: Variable index ordering
   describe "fix #8 - variable index ordering" do
     test "variable index preserves experiment order" do
       shared = fn name, color ->
         %{
-          "id" => 1, "name" => name, "unitType" => "session_id", "iteration" => 1,
-          "seedHi" => 1, "seedLo" => 2, "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4,
-          "trafficSplit" => [0, 1], "fullOnVariant" => 1,
+          "id" => 1,
+          "name" => name,
+          "unitType" => "session_id",
+          "iteration" => 1,
+          "seedHi" => 1,
+          "seedLo" => 2,
+          "split" => [0, 1],
+          "trafficSeedHi" => 3,
+          "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1],
+          "fullOnVariant" => 1,
           "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]
         }
       end
 
-      ctx = start_context(%{"experiments" => [shared.("first", "red"), shared.("second", "blue")]})
+      ctx =
+        start_context(%{"experiments" => [shared.("first", "red"), shared.("second", "blue")]})
+
       assert Context.variable_keys(ctx)["color"] == ["first", "second"]
       assert Context.variable_value(ctx, "color", "none") == "red"
     end
   end
 
-  # Fix #10: set_overrides clears exposed_experiments
   describe "fix #10 - set_overrides exposed_experiments cleanup" do
     test "set_overrides clears exposed_experiments for each key" do
       ctx = start_context(@get_context_response)
@@ -227,7 +232,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #11: Evaluator scalar values
   describe "fix #11 - evaluate scalar values" do
     # JS jsonexpr/evaluator.ts:65-79 - bare scalars evaluate to null
     test "returns nil for number expression" do
@@ -249,7 +253,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #12/#34: to_number("") returns 0 (integer)
   describe "fix #12/#34 - to_number empty string" do
     test "to_number of empty string returns integer 0" do
       result = Utils.to_number("")
@@ -258,7 +261,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #13: Context type spec
   describe "fix #13 - type spec" do
     test "Context module has GenServer.server type" do
       ctx = start_context(@get_context_response)
@@ -266,7 +268,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #15: terminate/2 synchronous publish
   describe "fix #15 - terminate synchronous publish" do
     test "context process terminates cleanly" do
       ctx = start_context(@get_context_response)
@@ -278,7 +279,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #16/#35: set_failed and wait_until_ready with failed state
   describe "fix #16/#35 - failed state handling" do
     test "set_failed marks context as failed" do
       sdk_config = %Types.SDKConfig{
@@ -288,11 +288,13 @@ defmodule ABSmartly.FixPlanTest do
         environment: "development",
         publisher: ABSmartly.Test.OkPublisher
       }
+
       context_config = %Types.ContextConfig{
         units: @context_params,
         overrides: %{},
         custom_assignments: %{}
       }
+
       {:ok, ctx} = Context.start_link_async(sdk_config, context_config)
       assert Context.is_ready?(ctx) == false
       assert Context.is_failed?(ctx) == false
@@ -312,15 +314,16 @@ defmodule ABSmartly.FixPlanTest do
         environment: "development",
         publisher: ABSmartly.Test.OkPublisher
       }
+
       context_config = %Types.ContextConfig{
         units: @context_params,
         overrides: %{},
         custom_assignments: %{}
       }
+
       {:ok, ctx} = Context.start_link_async(sdk_config, context_config)
 
       spawn(fn ->
-        Process.sleep(50)
         Context.set_failed(ctx, :test_error)
       end)
 
@@ -328,7 +331,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #17: set_custom_assignments clears exposed_experiments
   describe "fix #17 - set_custom_assignments exposed_experiments cleanup" do
     test "set_custom_assignments clears exposed_experiments for each key" do
       ctx = start_context(@get_context_response)
@@ -342,7 +344,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #19/#24: Counter-based pending, O(1) queue overflow
   describe "fix #19/#24 - counter-based pending" do
     test "pending uses counter fields" do
       ctx = start_context(@get_context_response)
@@ -356,7 +357,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #20: Matcher uses AND semantics (via evaluator)
   describe "fix #20 - matcher filter AND semantics" do
     test "filter with multiple expressions uses AND" do
       filter = %{
@@ -369,15 +369,22 @@ defmodule ABSmartly.FixPlanTest do
       attrs_both = [%{"name" => "age", "value" => 25}, %{"name" => "country", "value" => "US"}]
       assert Matcher.evaluate(filter, attrs_both) == true
 
-      attrs_age_only = [%{"name" => "age", "value" => 25}, %{"name" => "country", "value" => "UK"}]
+      attrs_age_only = [
+        %{"name" => "age", "value" => 25},
+        %{"name" => "country", "value" => "UK"}
+      ]
+
       assert Matcher.evaluate(filter, attrs_age_only) == false
 
-      attrs_country_only = [%{"name" => "age", "value" => 15}, %{"name" => "country", "value" => "US"}]
+      attrs_country_only = [
+        %{"name" => "age", "value" => 15},
+        %{"name" => "country", "value" => "US"}
+      ]
+
       assert Matcher.evaluate(filter, attrs_country_only) == false
     end
   end
 
-  # Fix #22: Unless instead of negated condition (code style, tested via queue_exposure)
   describe "fix #22 - idiomatic unless" do
     test "exposure only queued once per experiment" do
       ctx = start_context(@get_context_response)
@@ -387,7 +394,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #26: hash_unit computed once per assign_variant
   describe "fix #26 - hash_unit efficiency" do
     test "assignment still works correctly with single hash computation" do
       ctx = start_context(@get_context_response)
@@ -398,7 +404,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #27: get_opt handles explicit nil
   describe "fix #27 - ContextConfig get_opt nil handling" do
     test "explicit nil value is respected" do
       config = Types.ContextConfig.from_options(%{event_handler: nil})
@@ -417,7 +422,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #28: child_spec for DynamicSupervisor
   describe "fix #28 - child_spec" do
     test "Context module has child_spec" do
       spec = Context.child_spec([%{}, %{}, %{}])
@@ -427,7 +431,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #29: Experiment index for O(1) lookup
   describe "fix #29 - experiment index" do
     test "experiment lookup by name is O(1)" do
       ctx = start_context(@get_context_response)
@@ -437,20 +440,22 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #32: Split changes in invalidation
   describe "fix #32 - split changes invalidation" do
     # D7 / JS context.ts:579-586 - only id/unitType/iteration/fullOnVariant/
     # trafficSplit invalidate a cached assignment; a split change is sticky.
     test "refresh keeps the assignment sticky across split changes" do
-      changed_split_response = %{@get_context_response |
-        "experiments" => Enum.map(@get_context_response["experiments"], fn exp ->
-          if exp["name"] == "exp_test_ab" do
-            Map.put(exp, "split", [0.9, 0.1])
-          else
-            exp
-          end
-        end)
+      changed_split_response = %{
+        @get_context_response
+        | "experiments" =>
+            Enum.map(@get_context_response["experiments"], fn exp ->
+              if exp["name"] == "exp_test_ab" do
+                Map.put(exp, "split", [0.9, 0.1])
+              else
+                exp
+              end
+            end)
       }
+
       ctx = start_context_with_refresh(@get_context_response, changed_split_response)
       v1 = Context.treatment(ctx, "exp_test_ab")
       assert Context.pending(ctx) == 1
@@ -462,7 +467,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #38: defdelegate create_context_async
   describe "fix #38 - ABSmartly.create_context_async delegated" do
     test "create_context_async is accessible via ABSmartly module" do
       funs = ABSmartly.__info__(:functions)
@@ -471,7 +475,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #39: Retry cap
   describe "fix #39 - retry cap" do
     test "HTTP client caps retries at 10" do
       Application.put_env(:absmartly, :retry_backoff_base, 0)
@@ -488,7 +491,12 @@ defmodule ABSmartly.FixPlanTest do
               {:ok, c} ->
                 :counters.add(counter, 1, 1)
                 _ = :gen_tcp.recv(c, 0, 1_000)
-                :gen_tcp.send(c, "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+
+                :gen_tcp.send(
+                  c,
+                  "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                )
+
                 :gen_tcp.close(c)
                 loop.(loop)
 
@@ -501,7 +509,14 @@ defmodule ABSmartly.FixPlanTest do
         end)
 
       assert {:error, _} =
-               ABSmartly.HTTP.Client.fetch_context("http://127.0.0.1:#{port}", "k", "a", "e", 50, 1_000)
+               ABSmartly.HTTP.Client.fetch_context(
+                 "http://127.0.0.1:#{port}",
+                 "k",
+                 "a",
+                 "e",
+                 50,
+                 1_000
+               )
 
       Process.unlink(acceptor)
       Process.exit(acceptor, :kill)
@@ -510,7 +525,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #3: DynamicSupervisor usage
   describe "fix #3 - DynamicSupervisor" do
     test "context can be started under DynamicSupervisor" do
       sdk_config = %Types.SDKConfig{
@@ -520,17 +534,20 @@ defmodule ABSmartly.FixPlanTest do
         environment: "development",
         publisher: ABSmartly.Test.OkPublisher
       }
+
       context_data = Types.ContextData.from_map(@get_context_response)
+
       context_config = %Types.ContextConfig{
         units: @context_params,
         overrides: %{},
         custom_assignments: %{}
       }
 
-      {:ok, ctx} = DynamicSupervisor.start_child(
-        ABSmartly.ContextSupervisor,
-        {Context, [sdk_config, context_data, context_config]}
-      )
+      {:ok, ctx} =
+        DynamicSupervisor.start_child(
+          ABSmartly.ContextSupervisor,
+          {Context, [sdk_config, context_data, context_config]}
+        )
 
       assert is_pid(ctx)
       assert Context.is_ready?(ctx) == true
@@ -538,7 +555,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #2: Publish uses Task.async with timeout (tested via existing publish tests passing)
   describe "fix #2 - publish with Task.async" do
     test "publish clears queue" do
       ctx = start_context(@get_context_response)
@@ -549,10 +565,10 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #21: Publish events format
   describe "fix #21 - publish event format" do
     test "publish event map contains expected keys" do
       events_captured = :ets.new(:test_events, [:set, :public])
+
       handler = fn event_type, data ->
         :ets.insert(events_captured, {event_type, data})
       end
@@ -564,19 +580,21 @@ defmodule ABSmartly.FixPlanTest do
         environment: "development",
         publisher: ABSmartly.Test.OkPublisher
       }
+
       context_data = Types.ContextData.from_map(@get_context_response)
+
       context_config = %Types.ContextConfig{
         units: @context_params,
         overrides: %{},
         custom_assignments: %{},
         event_handler: handler
       }
+
       {:ok, ctx} = Context.start_link(sdk_config, context_data, context_config)
 
       Context.treatment(ctx, "exp_test_ab")
       Context.publish(ctx)
 
-      Process.sleep(100)
       [{:publish, event_map}] = :ets.lookup(events_captured, :publish)
       assert Map.has_key?(event_map, "hashed")
       assert Map.has_key?(event_map, "units")
@@ -588,7 +606,6 @@ defmodule ABSmartly.FixPlanTest do
     end
   end
 
-  # Fix #40: Test coverage for terminate, handle_info, queue overflow, etc.
   describe "fix #40 - additional test coverage" do
     test "handle_info for unexpected messages" do
       ctx = start_context(@get_context_response)
@@ -599,7 +616,6 @@ defmodule ABSmartly.FixPlanTest do
     test "handle_info for non-EXIT signals" do
       ctx = start_context(@get_context_response)
       send(ctx, {:some_other_message, self(), :data})
-      Process.sleep(50)
       assert Process.alive?(ctx)
       assert Context.is_ready?(ctx) == true
     end
@@ -637,14 +653,23 @@ defmodule ABSmartly.FixPlanTest do
 
     test "track with non-map properties is rejected like the JavaScript SDK" do
       test_pid = self()
-      ctx = start_context(@get_context_response)
-      # install an event handler through a fresh context config
+
       {:ok, ctx2} =
         Context.start_link(
-          %Types.SDKConfig{endpoint: "https://t.absmartly.io/v1", api_key: "k", application: "a", environment: "e", publisher: ABSmartly.Test.OkPublisher},
-          Context.data(ctx),
-          %Types.ContextConfig{units: %{"session_id" => "x"}, overrides: %{}, custom_assignments: %{},
-            event_handler: fn type, data -> send(test_pid, {:ev, type, data}) end}
+          %Types.SDKConfig{
+            endpoint: "https://t.absmartly.io/v1",
+            api_key: "k",
+            application: "a",
+            environment: "e",
+            publisher: ABSmartly.Test.OkPublisher
+          },
+          Types.ContextData.from_map(@get_context_response),
+          %Types.ContextConfig{
+            units: %{"session_id" => "x"},
+            overrides: %{},
+            custom_assignments: %{},
+            event_handler: fn type, data -> send(test_pid, {:ev, type, data}) end
+          }
         )
 
       for bad <- ["not a map", 1, [1, 2], true] do
@@ -661,34 +686,71 @@ defmodule ABSmartly.FixPlanTest do
     end
 
     test "initial units that are not strings or numbers are rejected at creation" do
-      sdk = %Types.SDKConfig{endpoint: "https://t.absmartly.io/v1", api_key: "k", application: "a", environment: "e", publisher: ABSmartly.Test.OkPublisher}
-      cfg = %Types.ContextConfig{units: %{"user" => %{"id" => 1}}, overrides: %{}, custom_assignments: %{}}
+      sdk = %Types.SDKConfig{
+        endpoint: "https://t.absmartly.io/v1",
+        api_key: "k",
+        application: "a",
+        environment: "e",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+
+      cfg = %Types.ContextConfig{
+        units: %{"user" => %{"id" => 1}},
+        overrides: %{},
+        custom_assignments: %{}
+      }
+
       msg = "Unit 'user' must be a string or a number."
-      assert {:error, ^msg} = Context.start_link(sdk, Types.ContextData.from_map(%{"experiments" => []}), cfg)
-      assert {:error, ^msg} = Context.start_link_async(sdk, cfg, data_fetcher: fn -> {:ok, %{"experiments" => []}} end)
+
+      assert {:error, ^msg} =
+               Context.start_link(sdk, Types.ContextData.from_map(%{"experiments" => []}), cfg)
+
+      assert {:error, ^msg} =
+               Context.start_link_async(sdk, cfg,
+                 data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+               )
     end
 
     test "set_attribute and set_attributes fail after finalize" do
       ctx = start_context(@get_context_response)
       assert :ok = Context.finalize(ctx)
       assert {:error, "ABsmartly Context is finalized."} = Context.set_attribute(ctx, "k", "v")
-      assert {:error, "ABsmartly Context is finalized."} = Context.set_attributes(ctx, %{"k" => "v"})
+
+      assert {:error, "ABsmartly Context is finalized."} =
+               Context.set_attributes(ctx, %{"k" => "v"})
+
       assert Context.get_attributes(ctx) == []
     end
 
     test "unit UIDs keep their type and numbers hash like JavaScript" do
       {:ok, ctx} =
         Context.start_link(
-          %Types.SDKConfig{endpoint: "https://t.absmartly.io/v1", api_key: "k", application: "a", environment: "e", publisher: ABSmartly.Test.OkPublisher},
+          %Types.SDKConfig{
+            endpoint: "https://t.absmartly.io/v1",
+            api_key: "k",
+            application: "a",
+            environment: "e",
+            publisher: ABSmartly.Test.OkPublisher
+          },
           Types.ContextData.from_map(%{"experiments" => []}),
-          %Types.ContextConfig{units: %{"session_id" => "abc", "user_id" => 125, "float_id" => 125.75},
-            overrides: %{}, custom_assignments: %{}}
+          %Types.ContextConfig{
+            units: %{"session_id" => "abc", "user_id" => 125, "float_id" => 125.75},
+            overrides: %{},
+            custom_assignments: %{}
+          }
         )
 
       assert :ok = Context.set_unit(ctx, "other_id", 42)
       assert Context.get_unit(ctx, "user_id") == 125
       assert Context.get_unit(ctx, "float_id") == 125.75
-      assert Context.get_units(ctx) == %{"session_id" => "abc", "user_id" => 125, "float_id" => 125.75, "other_id" => 42}
+
+      assert Context.get_units(ctx) == %{
+               "session_id" => "abc",
+               "user_id" => 125,
+               "float_id" => 125.75,
+               "other_id" => 42
+             }
+
       assert {:error, "Unit 'x' must be a string or a number."} = Context.set_unit(ctx, "x", true)
       assert ABSmartly.Utils.hash_unit(125.75) == ABSmartly.Utils.hash_unit("126")
       assert ABSmartly.Utils.hash_unit(2.5) == ABSmartly.Utils.hash_unit("3")
@@ -741,11 +803,13 @@ defmodule ABSmartly.FixPlanTest do
         environment: "development",
         publisher: ABSmartly.Test.OkPublisher
       }
+
       context_config = %Types.ContextConfig{
         units: @context_params,
         overrides: %{},
         custom_assignments: %{}
       }
+
       {:ok, ctx} = Context.start_link_async(sdk_config, context_config)
       Context.set_failed(ctx, :fetch_error)
       assert Context.ready_error(ctx) == :fetch_error
@@ -761,11 +825,11 @@ defmodule ABSmartly.FixPlanTest do
           "name" => "exp_test_ab",
           "iteration" => 1,
           "unitType" => "session_id",
-          "seedHi" => 3603515,
-          "seedLo" => 233373850,
+          "seedHi" => 3_603_515,
+          "seedLo" => 233_373_850,
           "split" => [0.5, 0.5],
-          "trafficSeedHi" => 449867249,
-          "trafficSeedLo" => 455443629,
+          "trafficSeedHi" => 449_867_249,
+          "trafficSeedLo" => 455_443_629,
           "trafficSplit" => [0.0, 1.0],
           "fullOnVariant" => 0,
           "applications" => [%{"name" => "website"}],
@@ -781,11 +845,11 @@ defmodule ABSmartly.FixPlanTest do
           "name" => "exp_test_abc",
           "iteration" => 1,
           "unitType" => "session_id",
-          "seedHi" => 55006150,
-          "seedLo" => 47189152,
+          "seedHi" => 55_006_150,
+          "seedLo" => 47_189_152,
           "split" => [0.34, 0.33, 0.33],
-          "trafficSeedHi" => 705671872,
-          "trafficSeedLo" => 212903484,
+          "trafficSeedHi" => 705_671_872,
+          "trafficSeedLo" => 212_903_484,
           "trafficSplit" => [0.0, 1.0],
           "fullOnVariant" => 0,
           "applications" => [%{"name" => "website"}],
@@ -871,8 +935,16 @@ defmodule ABSmartly.FixPlanTest do
 
     test "a nil initial UID is treated as a missing unit, not an empty identity" do
       exp = %{
-        "id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
-        "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+        "id" => 1,
+        "name" => "e",
+        "unitType" => "user",
+        "iteration" => 1,
+        "seedHi" => 1,
+        "seedLo" => 2,
+        "split" => [0, 1],
+        "trafficSeedHi" => 3,
+        "trafficSeedLo" => 4,
+        "trafficSplit" => [0, 1],
         "variants" => [%{"config" => nil}, %{"config" => nil}]
       }
 

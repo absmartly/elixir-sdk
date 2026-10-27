@@ -181,9 +181,19 @@ defmodule ABSmartly.FailureSemanticsTest do
       test_pid = self()
 
       {:ok, ctx} =
-        Context.start_link_async(sdk_config("unused"),
-          %{context_config() | event_handler: fn type, _ -> Process.sleep(50); send(test_pid, {:late, type}) end},
-          data_fetcher: fn -> Process.sleep(20); {:ok, @context_data} end
+        Context.start_link_async(
+          sdk_config("unused"),
+          %{
+            context_config()
+            | event_handler: fn type, _ ->
+                Process.sleep(50)
+                send(test_pid, {:late, type})
+              end
+          },
+          data_fetcher: fn ->
+            Process.sleep(20)
+            {:ok, @context_data}
+          end
         )
 
       assert :ok = Context.wait_until_ready(ctx, 1_000)
@@ -194,14 +204,25 @@ defmodule ABSmartly.FailureSemanticsTest do
       test_pid = self()
 
       {:ok, ctx} =
-        Context.start_link_async(sdk_config("unused"),
-          %{context_config() | event_handler: fn type, _ -> Process.sleep(50); send(test_pid, {:late, type}) end},
-          data_fetcher: fn -> Process.sleep(20); {:error, "boom"} end
+        Context.start_link_async(
+          sdk_config("unused"),
+          %{
+            context_config()
+            | event_handler: fn type, _ ->
+                Process.sleep(50)
+                send(test_pid, {:late, type})
+              end
+          },
+          data_fetcher: fn ->
+            Process.sleep(20)
+            {:error, "boom"}
+          end
         )
 
       assert {:error, "boom"} = Context.wait_until_ready(ctx, 1_000)
       assert_received {:late, :error}
     end
+
     test "a failing data_fetcher emits one :error event with the reason" do
       {:ok, ctx} =
         Context.start_link_async(sdk_config("unused"), context_config(),
@@ -253,6 +274,7 @@ defmodule ABSmartly.FailureSemanticsTest do
     test "SDK timeout bounds each HTTP request" do
       {:ok, l} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
       {:ok, port} = :inet.port(l)
+
       spawn_link(fn ->
         {:ok, c} = :gen_tcp.accept(l)
         Process.sleep(2_000)
@@ -260,13 +282,30 @@ defmodule ABSmartly.FailureSemanticsTest do
       end)
 
       t0 = System.monotonic_time(:millisecond)
-      assert {:error, _} = ABSmartly.HTTP.Client.fetch_context("http://127.0.0.1:#{port}", "k", "a", "e", 0, 100)
+
+      assert {:error, _} =
+               ABSmartly.HTTP.Client.fetch_context(
+                 "http://127.0.0.1:#{port}",
+                 "k",
+                 "a",
+                 "e",
+                 0,
+                 100
+               )
+
       assert System.monotonic_time(:millisecond) - t0 < 1_000
     end
 
     test "dispose/1 finalizes and releases the supervised context process" do
       {:ok, sdk} =
-        ABSmartly.SDK.new(endpoint: "http://127.0.0.1:1", api_key: "k", application: "app", environment: "test", retries: 0, timeout: 200)
+        ABSmartly.SDK.new(
+          endpoint: "http://127.0.0.1:1",
+          api_key: "k",
+          application: "app",
+          environment: "test",
+          retries: 0,
+          timeout: 200
+        )
 
       {:ok, ctx} = ABSmartly.SDK.create_context_async(sdk, %{"user_id" => "u1"})
       ref = Process.monitor(ctx)
@@ -283,7 +322,14 @@ defmodule ABSmartly.FailureSemanticsTest do
       end
 
       {:ok, sdk} =
-        ABSmartly.SDK.new(endpoint: "http://127.0.0.1:1", api_key: "k", application: "app", environment: "test", retries: 0, timeout: 200)
+        ABSmartly.SDK.new(
+          endpoint: "http://127.0.0.1:1",
+          api_key: "k",
+          application: "app",
+          environment: "test",
+          retries: 0,
+          timeout: 200
+        )
 
       sdk = %{sdk | config: Map.put(sdk.config, :publisher, FailingPublisher)}
       {:ok, ctx} = ABSmartly.SDK.create_context_async(sdk, %{"user_id" => "u1"})
@@ -303,7 +349,14 @@ defmodule ABSmartly.FailureSemanticsTest do
       end
 
       {:ok, sdk} =
-        ABSmartly.SDK.new(endpoint: "http://127.0.0.1:1", api_key: "k", application: "app", environment: "test", retries: 0, timeout: 50)
+        ABSmartly.SDK.new(
+          endpoint: "http://127.0.0.1:1",
+          api_key: "k",
+          application: "app",
+          environment: "test",
+          retries: 0,
+          timeout: 50
+        )
 
       sdk = %{sdk | config: Map.put(sdk.config, :publisher, BlockingPublisher)}
       {:ok, ctx} = ABSmartly.SDK.create_context_async(sdk, %{"user_id" => "u1"})
@@ -324,7 +377,19 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert :ok = Context.wait_until_ready(ctx, 1_000)
       assert {:error, _} = Context.refresh(ctx, %{"experiments" => %{"x" => 1}})
       assert Process.alive?(ctx)
-      bad = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "user", "split" => [0.5, 0.5], "variants" => 42}]}
+
+      bad = %{
+        "experiments" => [
+          %{
+            "id" => 1,
+            "name" => "e",
+            "unitType" => "user",
+            "split" => [0.5, 0.5],
+            "variants" => 42
+          }
+        ]
+      }
+
       assert {:error, _} = Context.refresh(ctx, bad)
       assert Process.alive?(ctx)
       assert :ok = Context.refresh(ctx, %{"experiments" => []})
@@ -346,13 +411,25 @@ defmodule ABSmartly.FailureSemanticsTest do
     # evicted by adding its unit.
     test "adding a missing unit keeps a cached assignment" do
       exp = fn aud ->
-        %{"id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
-          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+        %{
+          "id" => 1,
+          "name" => "e",
+          "unitType" => "user",
+          "iteration" => 1,
+          "seedHi" => 1,
+          "seedLo" => 2,
+          "split" => [0, 1],
+          "trafficSeedHi" => 3,
+          "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1],
           "variants" => [%{"config" => nil}, %{"config" => nil}],
-          "audienceStrict" => true, "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})}
+          "audienceStrict" => true,
+          "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})
+        }
       end
 
       cfg = %{context_config() | units: %{}}
+
       {:ok, ctx} =
         Context.start_link_async(sdk_config("unused"), cfg,
           data_fetcher: fn -> {:ok, %{"experiments" => [exp.(true)]}} end
@@ -366,10 +443,21 @@ defmodule ABSmartly.FailureSemanticsTest do
 
     test "an audience-only refresh keeps a cached assignment the new audience would reject" do
       exp = fn aud ->
-        %{"id" => 1, "name" => "e", "unitType" => "session_id", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
-          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+        %{
+          "id" => 1,
+          "name" => "e",
+          "unitType" => "session_id",
+          "iteration" => 1,
+          "seedHi" => 1,
+          "seedLo" => 2,
+          "split" => [0, 1],
+          "trafficSeedHi" => 3,
+          "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1],
           "variants" => [%{"config" => nil}, %{"config" => nil}],
-          "audienceStrict" => true, "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})}
+          "audienceStrict" => true,
+          "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})
+        }
       end
 
       {:ok, ctx} =
@@ -390,7 +478,19 @@ defmodule ABSmartly.FailureSemanticsTest do
         )
 
       assert :ok = Context.wait_until_ready(ctx, 1_000)
-      bad = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "user", "split" => [0, 1], "customFieldValues" => 42}]}
+
+      bad = %{
+        "experiments" => [
+          %{
+            "id" => 1,
+            "name" => "e",
+            "unitType" => "user",
+            "split" => [0, 1],
+            "customFieldValues" => 42
+          }
+        ]
+      }
+
       assert {:error, _} = Context.refresh(ctx, bad)
       assert Process.alive?(ctx)
       assert Context.custom_field_keys(ctx) == []
@@ -408,10 +508,21 @@ defmodule ABSmartly.FailureSemanticsTest do
       end
 
       exp = fn aud ->
-        %{"id" => 1, "name" => "e", "unitType" => "user", "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
-          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
+        %{
+          "id" => 1,
+          "name" => "e",
+          "unitType" => "user",
+          "iteration" => 1,
+          "seedHi" => 1,
+          "seedLo" => 2,
+          "split" => [0, 1],
+          "trafficSeedHi" => 3,
+          "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1],
           "variants" => [%{"config" => nil}, %{"config" => nil}],
-          "audienceStrict" => true, "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})}
+          "audienceStrict" => true,
+          "audience" => Jason.encode!(%{"filter" => [%{"value" => aud}]})
+        }
       end
 
       Process.register(self(), :capture_pub)
@@ -419,7 +530,9 @@ defmodule ABSmartly.FailureSemanticsTest do
       sdk = %{sdk_config("unused") | publisher: CapturePublisher}
 
       {:ok, ctx} =
-        Context.start_link_async(sdk, cfg, data_fetcher: fn -> {:ok, %{"experiments" => [exp.(true)]}} end)
+        Context.start_link_async(sdk, cfg,
+          data_fetcher: fn -> {:ok, %{"experiments" => [exp.(true)]}} end
+        )
 
       assert :ok = Context.wait_until_ready(ctx, 1_000)
       assert Context.treatment(ctx, "e") == 0
@@ -441,8 +554,19 @@ defmodule ABSmartly.FailureSemanticsTest do
         )
 
       assert :ok = Context.wait_until_ready(ctx, 1_000)
-      data = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "user", "split" => [0, 1],
-        "customFieldValues" => [%{"name" => "meta", "type" => "json", "value" => 42}]}]}
+
+      data = %{
+        "experiments" => [
+          %{
+            "id" => 1,
+            "name" => "e",
+            "unitType" => "user",
+            "split" => [0, 1],
+            "customFieldValues" => [%{"name" => "meta", "type" => "json", "value" => 42}]
+          }
+        ]
+      }
+
       assert :ok = Context.refresh(ctx, data)
       assert Context.custom_field_value(ctx, "e", "meta") == nil
       assert Process.alive?(ctx)
@@ -456,9 +580,25 @@ defmodule ABSmartly.FailureSemanticsTest do
         )
 
       assert {:error, "down"} = Context.wait_until_ready(ctx, 1_000)
-      data = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "session_id", "iteration" => 1,
-        "seedHi" => 1, "seedLo" => 2, "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4,
-        "trafficSplit" => [0, 1], "variants" => [%{"config" => nil}, %{"config" => nil}]}]}
+
+      data = %{
+        "experiments" => [
+          %{
+            "id" => 1,
+            "name" => "e",
+            "unitType" => "session_id",
+            "iteration" => 1,
+            "seedHi" => 1,
+            "seedLo" => 2,
+            "split" => [0, 1],
+            "trafficSeedHi" => 3,
+            "trafficSeedLo" => 4,
+            "trafficSplit" => [0, 1],
+            "variants" => [%{"config" => nil}, %{"config" => nil}]
+          }
+        ]
+      }
+
       assert :ok = Context.refresh(ctx, data)
       assert Context.is_failed?(ctx)
       assert Context.treatment(ctx, "e") == 0
@@ -475,13 +615,29 @@ defmodule ABSmartly.FailureSemanticsTest do
       Process.register(self(), :shutdown_pub)
       sdk = %{sdk_config("unused") | publisher: ShutdownPublisher}
 
-      data = %{"experiments" => [%{"id" => 1, "name" => "e", "unitType" => "session_id", "iteration" => 1,
-        "seedHi" => 1, "seedLo" => 2, "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4,
-        "trafficSplit" => [0, 1], "variants" => [%{"config" => nil}, %{"config" => nil}]}]}
+      data = %{
+        "experiments" => [
+          %{
+            "id" => 1,
+            "name" => "e",
+            "unitType" => "session_id",
+            "iteration" => 1,
+            "seedHi" => 1,
+            "seedLo" => 2,
+            "split" => [0, 1],
+            "trafficSeedHi" => 3,
+            "trafficSeedLo" => 4,
+            "trafficSplit" => [0, 1],
+            "variants" => [%{"config" => nil}, %{"config" => nil}]
+          }
+        ]
+      }
 
       spec = %{
         id: Context,
-        start: {Context, :start_link_async, [sdk, context_config(), [data_fetcher: fn -> {:ok, data} end]]},
+        start:
+          {Context, :start_link_async,
+           [sdk, context_config(), [data_fetcher: fn -> {:ok, data} end]]},
         restart: :temporary,
         shutdown: 5_000
       }
@@ -511,14 +667,19 @@ defmodule ABSmartly.FailureSemanticsTest do
 
       waiter = Task.async(fn -> Context.wait_until_ready(ctx, 2_000) end)
       Process.sleep(50)
-      assert {:error, "ABsmartly Context is not yet ready."} = Context.refresh(ctx, %{"experiments" => []})
+
+      assert {:error, "ABsmartly Context is not yet ready."} =
+               Context.refresh(ctx, %{"experiments" => []})
+
       assert :ok = Task.await(waiter, 3_000)
     end
 
     test "child_spec shutdown budget covers the publisher-aware termination deadline" do
       cfg = %{sdk_config("unused") | timeout: 50, retries: 0}
       assert Context.child_spec([cfg, %Types.ContextData{}, context_config()]).shutdown >= 7_000
-      assert Context.shutdown_timeout(%{cfg | publisher: ABSmartly.DefaultContextPublisher}) >= 2_000
+
+      assert Context.shutdown_timeout(%{cfg | publisher: ABSmartly.DefaultContextPublisher}) >=
+               2_000
     end
 
     @tag timeout: 20_000
@@ -558,7 +719,9 @@ defmodule ABSmartly.FailureSemanticsTest do
       sdk = %{sdk_config("unused") | publisher: OverflowPublisher}
 
       {:ok, ctx} =
-        Context.start_link_async(sdk, context_config(), data_fetcher: fn -> {:ok, %{"experiments" => []}} end)
+        Context.start_link_async(sdk, context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+        )
 
       assert :ok = Context.wait_until_ready(ctx, 1_000)
 
@@ -623,9 +786,19 @@ defmodule ABSmartly.FailureSemanticsTest do
 
     defp exp_map(name, unit, extra \\ %{}) do
       Map.merge(
-        %{"id" => 1, "name" => name, "unitType" => unit, "iteration" => 1, "seedHi" => 1, "seedLo" => 2,
-          "split" => [0, 1], "trafficSeedHi" => 3, "trafficSeedLo" => 4, "trafficSplit" => [0, 1],
-          "variants" => [%{"config" => nil}, %{"config" => nil}]},
+        %{
+          "id" => 1,
+          "name" => name,
+          "unitType" => unit,
+          "iteration" => 1,
+          "seedHi" => 1,
+          "seedLo" => 2,
+          "split" => [0, 1],
+          "trafficSeedHi" => 3,
+          "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1],
+          "variants" => [%{"config" => nil}, %{"config" => nil}]
+        },
         extra
       )
     end
@@ -656,7 +829,10 @@ defmodule ABSmartly.FailureSemanticsTest do
 
     test "variable_value stops exposing candidates after the winner" do
       full = fn name, color ->
-        exp_map(name, "session_id", %{"fullOnVariant" => 1, "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]})
+        exp_map(name, "session_id", %{
+          "fullOnVariant" => 1,
+          "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]
+        })
       end
 
       defmodule VarPublisher do
@@ -667,7 +843,13 @@ defmodule ABSmartly.FailureSemanticsTest do
       end
 
       Process.register(self(), :var_pub)
-      ctx = ready_ctx([full.("e", "red"), full.("f", "blue")], nil, %{sdk_config("unused") | publisher: VarPublisher})
+
+      ctx =
+        ready_ctx([full.("e", "red"), full.("f", "blue")], nil, %{
+          sdk_config("unused")
+          | publisher: VarPublisher
+        })
+
       assert Context.variable_value(ctx, "color", "d") == "red"
       :ok = Context.publish(ctx)
       assert_receive {:published, ev}, 1_000
@@ -683,7 +865,13 @@ defmodule ABSmartly.FailureSemanticsTest do
       end
 
       Process.register(self(), :ut_pub)
-      ctx = ready_ctx([exp_map("e", "session_id")], nil, %{sdk_config("unused") | publisher: UnitTypePublisher})
+
+      ctx =
+        ready_ctx([exp_map("e", "session_id")], nil, %{
+          sdk_config("unused")
+          | publisher: UnitTypePublisher
+        })
+
       assert Context.treatment(ctx, "e") == 1
       :ok = Context.publish(ctx)
       assert_receive {:published, _}, 1_000
@@ -692,7 +880,9 @@ defmodule ABSmartly.FailureSemanticsTest do
       assert Context.treatment(ctx, "e") == 0
       :ok = Context.publish(ctx)
       assert_receive {:published, ev}, 1_000
-      assert [%{"name" => "e", "assigned" => false}] = Enum.map(ev["exposures"], &Map.take(&1, ["name", "assigned"]))
+
+      assert [%{"name" => "e", "assigned" => false}] =
+               Enum.map(ev["exposures"], &Map.take(&1, ["name", "assigned"]))
     end
 
     @tag timeout: 30_000
@@ -705,7 +895,15 @@ defmodule ABSmartly.FailureSemanticsTest do
       end
 
       Process.register(self(), :rf_pub)
-      sdk = %{sdk_config("unused") | publisher: RefreshPublisher, endpoint: "http://127.0.0.1:1", timeout: 50, retries: 10}
+
+      sdk = %{
+        sdk_config("unused")
+        | publisher: RefreshPublisher,
+          endpoint: "http://127.0.0.1:1",
+          timeout: 50,
+          retries: 10
+      }
+
       spec = Context.child_spec([sdk, %Types.ContextData{}, context_config()])
       {:ok, ctx} = DynamicSupervisor.start_child(ABSmartly.ContextSupervisor, spec)
       :ok = Context.track(ctx, "g", %{})
@@ -733,7 +931,12 @@ defmodule ABSmartly.FailureSemanticsTest do
               {:ok, c} ->
                 {:ok, req} = :gen_tcp.recv(c, 0, 5_000)
                 send(parent, {:request, hd(String.split(req, " "))})
-                :gen_tcp.send(c, "HTTP/1.1 301 Moved Permanently\r\nlocation: /canonical/context\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+
+                :gen_tcp.send(
+                  c,
+                  "HTTP/1.1 301 Moved Permanently\r\nlocation: /canonical/context\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                )
+
                 :gen_tcp.close(c)
                 loop.(loop)
 
@@ -745,8 +948,19 @@ defmodule ABSmartly.FailureSemanticsTest do
           loop.(loop)
         end)
 
-      sdk = %{sdk_config("unused") | endpoint: "http://127.0.0.1:#{port}", retries: 0, timeout: 2_000, publisher: ABSmartly.DefaultContextPublisher}
-      {:ok, ctx} = Context.start_link_async(sdk, context_config(), data_fetcher: fn -> {:ok, %{"experiments" => []}} end)
+      sdk = %{
+        sdk_config("unused")
+        | endpoint: "http://127.0.0.1:#{port}",
+          retries: 0,
+          timeout: 2_000,
+          publisher: ABSmartly.DefaultContextPublisher
+      }
+
+      {:ok, ctx} =
+        Context.start_link_async(sdk, context_config(),
+          data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+        )
+
       assert :ok = Context.wait_until_ready(ctx, 1_000)
       :ok = Context.track(ctx, "g", %{})
       assert {:error, _} = Context.publish(ctx)
@@ -770,7 +984,12 @@ defmodule ABSmartly.FailureSemanticsTest do
                 spawn(fn ->
                   _ = :gen_tcp.recv(c, 0, 5_000)
                   body = ~s({"experiments":[]})
-                  :gen_tcp.send(c, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n#{body}")
+
+                  :gen_tcp.send(
+                    c,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n#{body}"
+                  )
+
                   :gen_tcp.close(c)
                 end)
 
@@ -785,22 +1004,31 @@ defmodule ABSmartly.FailureSemanticsTest do
         end)
 
       # Occupy every default-pool per-host slot with a request that never completes.
-      hog_url = "http://127.0.0.1:#{port}/hog"
 
-      {:ok, hog_listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      {:ok, hog_listen} =
+        :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+
       {:ok, hog_port} = :inet.port(hog_listen)
-      _ = hog_url
 
       hogs =
         for _ <- 1..60 do
-          spawn(fn -> HTTPoison.get("http://127.0.0.1:#{hog_port}/x", [], recv_timeout: 20_000) end)
+          spawn(fn ->
+            HTTPoison.get("http://127.0.0.1:#{hog_port}/x", [], recv_timeout: 20_000)
+          end)
         end
 
       Process.sleep(500)
 
       # SDK fetch to the responsive server on the same host must still work.
       assert {:ok, %{"experiments" => []}} =
-               ABSmartly.HTTP.Client.fetch_context("http://127.0.0.1:#{port}", "k", "a", "e", 0, 1_000)
+               ABSmartly.HTTP.Client.fetch_context(
+                 "http://127.0.0.1:#{port}",
+                 "k",
+                 "a",
+                 "e",
+                 0,
+                 1_000
+               )
 
       Enum.each(hogs, &Process.exit(&1, :kill))
       Process.unlink(acceptor)

@@ -21,7 +21,6 @@ defmodule ABSmartly.HTTPIntegrationTest do
 
   alias ABSmartly.{Context, SDK}
 
-  # A single valid experiment so `treatment/2` yields an exposure to publish.
   @get_body Jason.encode!(%{
               "experiments" => [
                 %{
@@ -65,17 +64,14 @@ defmodule ABSmartly.HTTPIntegrationTest do
         retries: 0
       )
 
-    # createContext -> blocks on the real GET /context.
     {:ok, ctx} =
       SDK.create_context(sdk, %{
         "session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec"
       })
 
-    # Queue an exposure + a goal so publish() has something to send.
     assert Context.treatment(ctx, "exp_test_ab") in 0..1
     Context.track(ctx, "payment", %{"amount" => 1000})
 
-    # publish() -> real PUT /context.
     Context.publish(ctx)
 
     requests = collect_requests(2, [])
@@ -84,13 +80,11 @@ defmodule ABSmartly.HTTPIntegrationTest do
     get = Enum.find(requests, &(&1.method == "GET"))
     put = Enum.find(requests, &(&1.method == "PUT"))
 
-    # ---- GET /context (fetch -> ready) ----
     assert get
     assert get.path == "/context"
     assert get.query =~ "application=website"
     assert get.query =~ "environment=test"
 
-    # ---- PUT /context (publish) ----
     assert put
     assert put.path == "/context"
     refute put.path =~ "?"
@@ -103,7 +97,6 @@ defmodule ABSmartly.HTTPIntegrationTest do
     assert header(put, "x-agent") not in [nil, ""]
     assert header(put, "content-type") =~ "application/json"
 
-    # Body must carry the required publish fields.
     body = Jason.decode!(put.body)
     assert body["hashed"] == true
     assert is_list(body["units"])
@@ -123,7 +116,13 @@ defmodule ABSmartly.HTTPIntegrationTest do
     test_pid = self()
 
     {:ok, listen} =
-      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      :gen_tcp.listen(0, [
+        :binary,
+        packet: :raw,
+        active: false,
+        reuseaddr: true,
+        ip: {127, 0, 0, 1}
+      ])
 
     {:ok, port} = :inet.port(listen)
 

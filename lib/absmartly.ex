@@ -36,7 +36,6 @@ defmodule ABSmartly do
         |> ABSmartly.with_retries(3)
   """
 
-  # Re-export main modules for convenience
   defdelegate new(opts), to: ABSmartly.SDK
   defdelegate with_timeout(sdk, timeout), to: ABSmartly.SDK
   defdelegate with_retries(sdk, retries), to: ABSmartly.SDK
@@ -44,7 +43,6 @@ defmodule ABSmartly do
   defdelegate create_context_async(sdk, units, options \\ %{}), to: ABSmartly.SDK
   defdelegate create_context_with(sdk, units, data, options \\ %{}), to: ABSmartly.SDK
 
-  # Version
   @version Mix.Project.config()[:version]
 
   def version, do: @version

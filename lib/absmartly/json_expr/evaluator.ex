@@ -44,13 +44,27 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     [{op, args} | _] = Map.to_list(expr)
 
     case op do
-      "and" -> eval_and(args, vars)
-      "or" -> eval_or(args, vars)
-      "not" -> not boolean_convert(evaluate(args, vars))
-      "null" -> evaluate(args, vars) == nil
-      "var" -> eval_var(args, vars)
-      "value" -> args
-      op when op in @binary_operators -> eval_binary(op, args, vars)
+      "and" ->
+        eval_and(args, vars)
+
+      "or" ->
+        eval_or(args, vars)
+
+      "not" ->
+        not boolean_convert(evaluate(args, vars))
+
+      "null" ->
+        evaluate(args, vars) == nil
+
+      "var" ->
+        eval_var(args, vars)
+
+      "value" ->
+        args
+
+      op when op in @binary_operators ->
+        eval_binary(op, args, vars)
+
       _ ->
         Logger.warning("Unknown operator in expression: #{inspect(op)}")
         nil
@@ -253,24 +267,8 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   def string_convert(x) when is_boolean(x), do: Atom.to_string(x)
 
   def string_convert(x) when is_number(x) do
-    x = x * 1.0
-
-    cond do
-      x == 0 ->
-        "0"
-
-      abs(x) >= 1.0e21 ->
-        # JS toFixed falls back to exponent notation, e.g. "1e+21".
-        [mantissa, exp] = String.split(:erlang.float_to_binary(x, [:short]), "e")
-        exp = if String.starts_with?(exp, "-"), do: exp, else: "+" <> exp
-        String.replace_suffix(mantissa, ".0", "") <> "e" <> exp
-
-      true ->
-        # JS: x.toFixed(15).replace(/\.?0{0,15}$/, "")
-        x
-        |> :erlang.float_to_binary(decimals: 15)
-        |> String.replace(~r/\.?0{0,15}$/, "", global: false)
-    end
+    ABSmartly.Utils.number_to_fixed(x, 15)
+    |> String.replace(~r/\.?0{0,15}$/, "", global: false)
   end
 
   def string_convert(_), do: nil
@@ -279,7 +277,12 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   # prefix is used; anything that is not a finite number gives nil.
   defp parse_float(s) do
     regex = ~r/^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?/
-    [_, sign, int, frac, exp] = Regex.run(regex, String.trim_leading(s)) ++ ["", "", "", ""] |> Enum.take(5)
+
+    whitespace =
+      ~r/^[\x{0009}-\x{000D}\x{0020}\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]*/u
+
+    [_, sign, int, frac, exp] =
+      (Regex.run(regex, Regex.replace(whitespace, s, "")) ++ ["", "", "", ""]) |> Enum.take(5)
 
     if int == "" and frac == "" do
       nil

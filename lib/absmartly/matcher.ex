@@ -1,8 +1,6 @@
 defmodule ABSmartly.Matcher do
   @moduledoc """
   Audience matcher for experiment targeting.
-
-  Fixes HIGH-07: Returns `true` for unrecognized filters.
   """
 
   alias ABSmartly.JSONExpr.Evaluator
@@ -39,7 +37,6 @@ defmodule ABSmartly.Matcher do
   def evaluate(filter, attributes) when is_map(filter) do
     case Map.get(filter, "filter") do
       nil ->
-        # Fixes HIGH-07: Check if %{"invalid" => true} sentinel from parse_audience
         if Map.get(filter, "invalid") == true do
           Logger.error("Invalid audience filter detected")
           false
@@ -60,7 +57,6 @@ defmodule ABSmartly.Matcher do
     end
   end
 
-  # Fixes HIGH-07: Fail closed for invalid filter types
   def evaluate(filter, _attributes) do
     Logger.error("Invalid filter type: #{inspect(filter)}")
     false
