@@ -660,6 +660,14 @@ defmodule ABSmartly.FixPlanTest do
       assert Context.pending(ctx2) == 2
     end
 
+    test "initial units that are not strings or numbers are rejected at creation" do
+      sdk = %Types.SDKConfig{endpoint: "https://t.absmartly.io/v1", api_key: "k", application: "a", environment: "e", publisher: ABSmartly.Test.OkPublisher}
+      cfg = %Types.ContextConfig{units: %{"user" => %{"id" => 1}}, overrides: %{}, custom_assignments: %{}}
+      msg = "Unit 'user' must be a string or a number."
+      assert {:error, ^msg} = Context.start_link(sdk, Types.ContextData.from_map(%{"experiments" => []}), cfg)
+      assert {:error, ^msg} = Context.start_link_async(sdk, cfg, data_fetcher: fn -> {:ok, %{"experiments" => []}} end)
+    end
+
     test "set_attribute and set_attributes fail after finalize" do
       ctx = start_context(@get_context_response)
       assert :ok = Context.finalize(ctx)

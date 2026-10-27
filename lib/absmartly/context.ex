@@ -61,12 +61,35 @@ defmodule ABSmartly.Context do
 
   def start_link(sdk_config, data, context_config, opts \\ []) do
     data_fetcher = Keyword.get(opts, :data_fetcher)
-    GenServer.start_link(__MODULE__, {sdk_config, data, context_config, data_fetcher})
+
+    with :ok <- validate_initial_units(context_config.units) do
+      GenServer.start_link(__MODULE__, {sdk_config, data, context_config, data_fetcher})
+    end
   end
 
   def start_link_async(sdk_config, context_config, opts \\ []) do
     data_fetcher = Keyword.get(opts, :data_fetcher)
-    GenServer.start_link(__MODULE__, {:async, sdk_config, context_config, data_fetcher})
+
+    with :ok <- validate_initial_units(context_config.units) do
+      GenServer.start_link(__MODULE__, {:async, sdk_config, context_config, data_fetcher})
+    end
+  end
+
+  # Initial units follow the same rules as set_unit/3, so a context is never
+  # created with a UID that cannot be hashed at publish time.
+  defp validate_initial_units(nil), do: :ok
+
+  defp validate_initial_units(units) when is_map(units) do
+    Enum.reduce_while(units, :ok, fn
+      {_type, nil}, acc ->
+        {:cont, acc}
+
+      {type, uid}, acc ->
+        case validate_uid_or_error(uid, to_string(type)) do
+          {:ok, _} -> {:cont, acc}
+          error -> {:halt, error}
+        end
+    end)
   end
 
   def set_data(context, data) do
