@@ -177,6 +177,31 @@ defmodule ABSmartly.FailureSemanticsTest do
   end
 
   describe "failed context load" do
+    test "the ready event is emitted before wait_until_ready/2 returns" do
+      test_pid = self()
+
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"),
+          %{context_config() | event_handler: fn type, _ -> Process.sleep(50); send(test_pid, {:late, type}) end},
+          data_fetcher: fn -> Process.sleep(20); {:ok, @context_data} end
+        )
+
+      assert :ok = Context.wait_until_ready(ctx, 1_000)
+      assert_received {:late, :ready}
+    end
+
+    test "the error event is emitted before wait_until_ready/2 returns" do
+      test_pid = self()
+
+      {:ok, ctx} =
+        Context.start_link_async(sdk_config("unused"),
+          %{context_config() | event_handler: fn type, _ -> Process.sleep(50); send(test_pid, {:late, type}) end},
+          data_fetcher: fn -> Process.sleep(20); {:error, "boom"} end
+        )
+
+      assert {:error, "boom"} = Context.wait_until_ready(ctx, 1_000)
+      assert_received {:late, :error}
+    end
     test "a failing data_fetcher emits one :error event with the reason" do
       {:ok, ctx} =
         Context.start_link_async(sdk_config("unused"), context_config(),

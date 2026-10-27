@@ -11,18 +11,57 @@ defmodule ABSmartly.Utils do
       iex> ABSmartly.Utils.hash_unit("bleh@absmartly.com")
       "rcH4hfF5JRm9-sOLmWKubA"
   """
-  def hash_unit(uid) when is_binary(uid) do
-    :crypto.hash(:md5, uid)
-    |> Base.url_encode64(padding: false)
-  end
-
-  def hash_unit(uid) when is_integer(uid) do
-    hash_unit(Integer.to_string(uid))
-  end
-
   def hash_unit(uid) do
-    hash_unit(to_string(uid))
+    :crypto.hash(:md5, utf8_bytes(unit_to_string(uid)))
+    |> base64_url_no_padding()
   end
+
+  @doc """
+  The string form of a unit UID used for hashing. Like the JavaScript SDK
+  (`value.toFixed(0)`), a numeric UID is rounded to an integer first.
+
+      iex> ABSmartly.Utils.unit_to_string(125.75)
+      "126"
+  """
+  def unit_to_string(uid) when is_binary(uid), do: uid
+  def unit_to_string(uid) when is_integer(uid), do: Integer.to_string(uid)
+  def unit_to_string(uid) when is_float(uid) and abs(uid) < 1.0e21 do
+    rounded = uid |> abs() |> Float.round() |> trunc() |> Integer.to_string()
+    if uid < 0, do: "-" <> rounded, else: rounded
+  end
+  def unit_to_string(uid) when is_float(uid), do: :erlang.float_to_binary(uid, [:short])
+  def unit_to_string(uid), do: to_string(uid)
+
+  @doc """
+  Encode binary data as base64url without padding.
+
+      iex> ABSmartly.Utils.base64_url_no_padding("te")
+      "dGU"
+  """
+  def base64_url_no_padding(data) when is_binary(data), do: Base.url_encode64(data, padding: false)
+
+  @doc """
+  The UTF-8 bytes of a string, as a binary.
+  """
+  def utf8_bytes(value) when is_binary(value), do: value
+
+  @doc """
+  True when the value is a plain object (a map that is not a struct).
+  """
+  def object?(%{__struct__: _}), do: false
+  def object?(value), do: is_map(value)
+
+  @doc """
+  True when the value is a number.
+  """
+  def numeric?(value), do: is_number(value)
+
+  @doc """
+  True when the value is an asynchronous result (a `Task`), the Elixir
+  counterpart of a JavaScript promise.
+  """
+  def promise?(%Task{}), do: true
+  def promise?(_), do: false
 
   @doc """
   Choose a variant based on cumulative split probabilities.

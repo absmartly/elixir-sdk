@@ -635,7 +635,7 @@ defmodule ABSmartly.FixPlanTest do
       assert {:error, "Unit 'session_id' UID already set."} = result
     end
 
-    test "track with non-map properties sanitizes to nil" do
+    test "track with non-map properties is rejected like the JavaScript SDK" do
       test_pid = self()
       ctx = start_context(@get_context_response)
       # install an event handler through a fresh context config
@@ -647,10 +647,43 @@ defmodule ABSmartly.FixPlanTest do
             event_handler: fn type, data -> send(test_pid, {:ev, type, data}) end}
         )
 
-      Context.track(ctx2, "goal1", "not a map")
-      assert Context.pending(ctx2) == 1
-      assert_received {:ev, :goal, goal}
-      assert goal.properties == nil
+      for bad <- ["not a map", 1, [1, 2], true] do
+        assert {:error, "Goal 'goal1' properties must be of type object."} =
+                 Context.track(ctx2, "goal1", bad)
+      end
+
+      assert Context.pending(ctx2) == 0
+      refute_received {:ev, :goal, _}
+
+      assert :ok = Context.track(ctx2, "goal1", nil)
+      assert :ok = Context.track(ctx2, "goal1", %{"a" => 1})
+      assert Context.pending(ctx2) == 2
+    end
+
+    test "set_attribute and set_attributes fail after finalize" do
+      ctx = start_context(@get_context_response)
+      assert :ok = Context.finalize(ctx)
+      assert {:error, "ABsmartly Context is finalized."} = Context.set_attribute(ctx, "k", "v")
+      assert {:error, "ABsmartly Context is finalized."} = Context.set_attributes(ctx, %{"k" => "v"})
+      assert Context.get_attributes(ctx) == []
+    end
+
+    test "unit UIDs keep their type and numbers hash like JavaScript" do
+      {:ok, ctx} =
+        Context.start_link(
+          %Types.SDKConfig{endpoint: "https://t.absmartly.io/v1", api_key: "k", application: "a", environment: "e", publisher: ABSmartly.Test.OkPublisher},
+          Types.ContextData.from_map(%{"experiments" => []}),
+          %Types.ContextConfig{units: %{"session_id" => "abc", "user_id" => 125, "float_id" => 125.75},
+            overrides: %{}, custom_assignments: %{}}
+        )
+
+      assert :ok = Context.set_unit(ctx, "other_id", 42)
+      assert Context.get_unit(ctx, "user_id") == 125
+      assert Context.get_unit(ctx, "float_id") == 125.75
+      assert Context.get_units(ctx) == %{"session_id" => "abc", "user_id" => 125, "float_id" => 125.75, "other_id" => 42}
+      assert {:error, "Unit 'x' must be a string or a number."} = Context.set_unit(ctx, "x", true)
+      assert ABSmartly.Utils.hash_unit(125.75) == ABSmartly.Utils.hash_unit("126")
+      assert ABSmartly.Utils.hash_unit(2.5) == ABSmartly.Utils.hash_unit("3")
     end
 
     test "get_attributes returns list format" do

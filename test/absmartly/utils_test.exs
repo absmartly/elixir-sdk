@@ -4,6 +4,25 @@ defmodule ABSmartly.UtilsTest do
   alias ABSmartly.Utils
 
   describe "hash_unit/1" do
+    test "matches the JavaScript SDK for numbers" do
+      assert Utils.hash_unit(126) == Utils.hash_unit("126")
+      assert Utils.hash_unit(125.75) == Utils.hash_unit("126")
+      assert Utils.unit_to_string(-0.5) == "-1"
+    end
+
+    test "diagnostic helpers" do
+      assert Utils.base64_url_no_padding("te") == "dGU"
+      assert Utils.utf8_bytes("açb") == <<97, 195, 167, 98>>
+      assert Utils.object?(%{})
+      refute Utils.object?([])
+      task = Task.async(fn -> :ok end)
+      Task.await(task)
+      refute Utils.object?(task)
+      assert Utils.numeric?(1.5)
+      refute Utils.numeric?("1")
+      refute Utils.promise?(%{"then" => "noop"})
+      assert Utils.promise?(task)
+    end
     test "hashes string unit" do
       result = Utils.hash_unit("bleh@absmartly.com")
       assert is_binary(result)

@@ -395,13 +395,15 @@ defmodule ABSmartly.Context do
       audience_cache: aud_cache
     }
 
+    # Emit before waking waiters so the event is observable once
+    # wait_until_ready/2 returns.
+    emit_event(state, :ready, %{experiments: context_data.experiments})
+
     for waiter <- state.pending_waiters do
       GenServer.reply(waiter, :ok)
     end
-    state = %{state | pending_waiters: []}
 
-    emit_event(state, :ready, %{experiments: context_data.experiments})
-    {:noreply, state}
+    {:noreply, %{state | pending_waiters: []}}
   end
 
   @impl true
@@ -547,6 +549,10 @@ defmodule ABSmartly.Context do
   end
 
   @impl true
+  def handle_call({:set_attribute, _name, _value}, _from, %{finalized: true} = state) do
+    {:reply, {:error, "ABsmartly Context is finalized."}, state}
+  end
+
   def handle_call({:set_attribute, name, value}, _from, state) do
     name_str = to_string(name)
     entry = %{name: name_str, value: value, set_at: now_millis()}
@@ -555,6 +561,10 @@ defmodule ABSmartly.Context do
   end
 
   @impl true
+  def handle_call({:set_attributes, _attributes}, _from, %{finalized: true} = state) do
+    {:reply, {:error, "ABsmartly Context is finalized."}, state}
+  end
+
   def handle_call({:set_attributes, attributes}, _from, state) do
     set_at = now_millis()
     new_entries = Enum.map(attributes, fn {name, value} ->
@@ -694,11 +704,15 @@ defmodule ABSmartly.Context do
 
   @impl true
   def handle_call({:track, goal_name, properties}, _from, state) do
-    if state.finalized do
-      {:reply, {:error, "ABsmartly Context is finalized."}, state}
-    else
-      state = do_track(state, goal_name, properties)
-      {:reply, :ok, state}
+    cond do
+      state.finalized ->
+        {:reply, {:error, "ABsmartly Context is finalized."}, state}
+
+      not (is_nil(properties) or Utils.object?(properties)) ->
+        {:reply, {:error, "Goal '#{goal_name}' properties must be of type object."}, state}
+
+      true ->
+        {:reply, :ok, do_track(state, goal_name, properties)}
     end
   end
 
@@ -882,18 +896,8 @@ defmodule ABSmartly.Context do
 
   # Private helper functions
 
-  defp validate_uid(uid, unit_type \\ "unknown") do
-    uid_str = to_string(uid)
-
-    if String.length(uid_str) > @max_uid_length do
-      raise ArgumentError, "Unit ID exceeds maximum length of #{@max_uid_length}"
-    end
-
-    uid_str
-  end
-
-  # Store units as string => string so later setter comparisons are consistent
-  # (hash_unit/1 yields the same hash for an integer and its string form).
+  # Unit types are stored as strings; UIDs keep the type they were given
+  # (string or number), like the JavaScript SDK.
   defp normalize_units(nil), do: %{}
 
   defp normalize_units(units) when is_map(units) do
@@ -901,21 +905,28 @@ defmodule ABSmartly.Context do
     # missing rather than becoming a shared empty-string identity.
     units
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-    |> Map.new(fn {k, v} -> {to_string(k), to_string(v)} end)
+    |> Map.new(fn {k, v} -> {to_string(k), if(is_binary(v), do: String.trim(v), else: v)} end)
   end
 
-  defp validate_uid_or_error(uid, unit_type) do
-    uid_str = to_string(uid)
+  # Mirrors the JavaScript SDK's `unit()`: string UIDs are trimmed and must not
+  # be blank, numbers are kept as numbers, anything else is rejected.
+  defp validate_uid_or_error(uid, unit_type) when is_binary(uid) do
+    uid = String.trim(uid)
 
     cond do
-      String.trim(uid_str) == "" ->
+      uid == "" ->
         {:error, "Unit '#{unit_type}' UID must not be blank."}
-      String.length(uid_str) > @max_uid_length ->
+      String.length(uid) > @max_uid_length ->
         {:error, "Unit ID exceeds maximum length of #{@max_uid_length}"}
       true ->
-        {:ok, uid_str}
+        {:ok, uid}
     end
   end
+
+  defp validate_uid_or_error(uid, _unit_type) when is_number(uid), do: {:ok, uid}
+
+  defp validate_uid_or_error(_uid, unit_type),
+    do: {:error, "Unit '#{unit_type}' must be a string or a number."}
 
   defp config_attributes_to_list(nil), do: []
   defp config_attributes_to_list(attrs) when is_map(attrs) do
@@ -1177,17 +1188,10 @@ defmodule ABSmartly.Context do
   defp parse_custom_field(value, _type), do: value
 
   defp do_track(state, goal_name, properties) do
-    sanitized_properties =
-      case properties do
-        map when is_map(map) -> map
-        nil -> nil
-        _other -> nil
-      end
-
     goal = %Types.Goal{
       name: goal_name,
       achieved_at: now_millis(),
-      properties: sanitized_properties
+      properties: properties
     }
 
     state =
@@ -1773,9 +1777,7 @@ defmodule ABSmartly.Context do
   # Marks the context as failed to load, wakes up wait_until_ready/2 callers
   # with the reason, and reports it through the `:error` event.
   defp mark_failed(state, reason) do
-    for waiter <- state.pending_waiters do
-      GenServer.reply(waiter, {:error, reason})
-    end
+    waiters = state.pending_waiters
 
     # Like the JS SDK, a failed context is ready with empty data so reads
     # return control/default values.
@@ -1790,6 +1792,11 @@ defmodule ABSmartly.Context do
       audience_cache: %{}
     }
     emit_event(state, :error, reason)
+
+    for waiter <- waiters do
+      GenServer.reply(waiter, {:error, reason})
+    end
+
     state
   end
 
