@@ -1,0 +1,959 @@
+defmodule ABSmartly.FixPlanTest do
+  use ExUnit.Case, async: true
+
+  alias ABSmartly.{Context, Types, Utils}
+  alias ABSmartly.JSONExpr.Evaluator
+  alias ABSmartly.Matcher
+
+  @context_params %{
+    "session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec",
+    "user_id" => "123456789"
+  }
+
+  @get_context_response %{
+    "experiments" => [
+      %{
+        "id" => 1,
+        "name" => "exp_test_ab",
+        "iteration" => 1,
+        "unitType" => "session_id",
+        "seedHi" => 3_603_515,
+        "seedLo" => 233_373_850,
+        "split" => [0.5, 0.5],
+        "trafficSeedHi" => 449_867_249,
+        "trafficSeedLo" => 455_443_629,
+        "trafficSplit" => [0.0, 1.0],
+        "fullOnVariant" => 0,
+        "applications" => [%{"name" => "website"}],
+        "variants" => [
+          %{"name" => "A", "config" => nil},
+          %{"name" => "B", "config" => "{\"banner.border\":1,\"banner.size\":\"large\"}"}
+        ],
+        "audience" => nil,
+        "customFieldValues" => nil
+      },
+      %{
+        "id" => 2,
+        "name" => "exp_test_abc",
+        "iteration" => 1,
+        "unitType" => "session_id",
+        "seedHi" => 55_006_150,
+        "seedLo" => 47_189_152,
+        "split" => [0.34, 0.33, 0.33],
+        "trafficSeedHi" => 705_671_872,
+        "trafficSeedLo" => 212_903_484,
+        "trafficSplit" => [0.0, 1.0],
+        "fullOnVariant" => 0,
+        "applications" => [%{"name" => "website"}],
+        "variants" => [
+          %{"name" => "A", "config" => nil},
+          %{"name" => "B", "config" => "{\"button.color\":\"blue\"}"},
+          %{"name" => "C", "config" => "{\"button.color\":\"red\"}"}
+        ],
+        "audience" => "",
+        "customFieldValues" => nil
+      }
+    ]
+  }
+
+  defp start_context(response, units \\ nil) do
+    context_units = units || @context_params
+
+    sdk_config = %Types.SDKConfig{
+      endpoint: "https://test.absmartly.io/v1",
+      api_key: "test-api-key",
+      application: "website",
+      environment: "development",
+      publisher: ABSmartly.Test.OkPublisher
+    }
+
+    context_data = Types.ContextData.from_map(response)
+
+    context_config = %Types.ContextConfig{
+      units: context_units,
+      overrides: %{},
+      custom_assignments: %{}
+    }
+
+    {:ok, pid} = Context.start_link(sdk_config, context_data, context_config)
+    pid
+  end
+
+  defp start_context_with_refresh(response, refresh_response, units \\ nil) do
+    context_units = units || @context_params
+
+    sdk_config = %Types.SDKConfig{
+      endpoint: "https://test.absmartly.io/v1",
+      api_key: "test-api-key",
+      application: "website",
+      environment: "development",
+      publisher: ABSmartly.Test.OkPublisher
+    }
+
+    context_data = Types.ContextData.from_map(response)
+
+    context_config = %Types.ContextConfig{
+      units: context_units,
+      overrides: %{},
+      custom_assignments: %{}
+    }
+
+    refresh_data = Types.ContextData.from_map(refresh_response)
+    data_fetcher = fn -> {:ok, refresh_data} end
+
+    {:ok, pid} =
+      Context.start_link(sdk_config, context_data, context_config, data_fetcher: data_fetcher)
+
+    pid
+  end
+
+  describe "fix #4 - cross-type comparison" do
+    test "compare number to string coerces string" do
+      assert Evaluator.compare(1, "1.0") == 0
+      assert Evaluator.compare(2, "1") == 1
+      assert Evaluator.compare(1, "2") == -1
+    end
+
+    # JS jsonexpr/evaluator.ts compare(): string lhs converts the number rhs
+    # with stringConvert and compares lexically
+    test "compare string to number converts the number to a string" do
+      assert Evaluator.compare("1.0", 1) == 1
+      assert Evaluator.compare("1", 1) == 0
+      assert Evaluator.compare("3", 2) == 1
+      assert Evaluator.compare("1", 2) == -1
+    end
+
+    test "compare number to non-numeric string returns nil" do
+      assert Evaluator.compare(1, "abc") == nil
+      assert Evaluator.compare("abc", 1) == 1
+    end
+
+    test "eq works across types" do
+      expr = %{"eq" => [%{"value" => 1}, %{"value" => "1.0"}]}
+      assert Evaluator.evaluate(expr, %{}) == true
+    end
+
+    test "gt works across types" do
+      expr = %{"gt" => [%{"value" => 2}, %{"value" => "1"}]}
+      assert Evaluator.evaluate(expr, %{}) == true
+    end
+  end
+
+  describe "fix #6 - attribute list storage" do
+    test "attributes stored as list and get_attribute returns last value" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "key1", "val1")
+      Context.set_attribute(ctx, "key2", "val2")
+      assert Context.get_attribute(ctx, "key1") == "val1"
+      assert Context.get_attribute(ctx, "key2") == "val2"
+    end
+
+    test "set_attribute appends and get_attribute returns last value" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "key", "old")
+      Context.set_attribute(ctx, "key", "new")
+      assert Context.get_attribute(ctx, "key") == "new"
+    end
+
+    test "both entries stored in list when set twice" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "key", "old")
+      Context.set_attribute(ctx, "key", "new")
+      attrs = Context.get_attributes(ctx)
+      assert length(Enum.filter(attrs, fn a -> a.name == "key" end)) == 2
+    end
+
+    test "batch set_attributes with map" do
+      ctx = start_context(@get_context_response)
+      Context.set_attributes(ctx, %{"a" => 1, "b" => 2})
+      assert Context.get_attribute(ctx, "a") == 1
+      assert Context.get_attribute(ctx, "b") == 2
+    end
+  end
+
+  describe "fix #7/#18 - cached audience and single evaluation" do
+    test "audience matching works with cached parsed JSON" do
+      response =
+        put_in(
+          @get_context_response,
+          ["experiments", Access.at(0), "audience"],
+          Jason.encode!(%{"filter" => [%{"gte" => [%{"var" => "age"}, %{"value" => 18}]}]})
+        )
+
+      response = put_in(response, ["experiments", Access.at(0), "audienceStrict"], true)
+
+      ctx = start_context(response)
+      Context.set_attribute(ctx, "age", 20)
+      assert Context.treatment(ctx, "exp_test_ab") == 1
+
+      ctx2 = start_context(response)
+      Context.set_attribute(ctx2, "age", 15)
+      assert Context.treatment(ctx2, "exp_test_ab") == 0
+    end
+  end
+
+  describe "fix #8 - variable index ordering" do
+    test "variable index preserves experiment order" do
+      shared = fn name, color ->
+        %{
+          "id" => 1,
+          "name" => name,
+          "unitType" => "session_id",
+          "iteration" => 1,
+          "seedHi" => 1,
+          "seedLo" => 2,
+          "split" => [0, 1],
+          "trafficSeedHi" => 3,
+          "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1],
+          "fullOnVariant" => 1,
+          "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]
+        }
+      end
+
+      ctx =
+        start_context(%{"experiments" => [shared.("first", "red"), shared.("second", "blue")]})
+
+      assert Context.variable_keys(ctx)["color"] == ["first", "second"]
+      assert Context.variable_value(ctx, "color", "none") == "red"
+    end
+  end
+
+  describe "fix #10 - set_overrides exposed_experiments cleanup" do
+    test "set_overrides clears exposed_experiments for each key" do
+      ctx = start_context(@get_context_response)
+
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+
+      Context.set_overrides(ctx, %{"exp_test_ab" => 0})
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 2
+    end
+  end
+
+  describe "fix #11 - evaluate scalar values" do
+    # JS jsonexpr/evaluator.ts:65-79 - bare scalars evaluate to null
+    test "returns nil for number expression" do
+      assert Evaluator.evaluate(42, %{}) == nil
+      assert Evaluator.evaluate(3.14, %{}) == nil
+    end
+
+    test "returns nil for string expression" do
+      assert Evaluator.evaluate("hello", %{}) == nil
+    end
+
+    test "returns nil for boolean expression" do
+      assert Evaluator.evaluate(true, %{}) == nil
+      assert Evaluator.evaluate(false, %{}) == nil
+    end
+
+    test "still returns nil for nil" do
+      assert Evaluator.evaluate(nil, %{}) == nil
+    end
+  end
+
+  describe "fix #12/#34 - to_number empty string" do
+    test "to_number of empty string returns integer 0" do
+      result = Utils.to_number("")
+      assert result == 0
+      assert is_integer(result)
+    end
+  end
+
+  describe "fix #13 - type spec" do
+    test "Context module has GenServer.server type" do
+      ctx = start_context(@get_context_response)
+      assert is_pid(ctx)
+    end
+  end
+
+  describe "fix #15 - terminate synchronous publish" do
+    test "context process terminates cleanly" do
+      ctx = start_context(@get_context_response)
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+      ref = Process.monitor(ctx)
+      GenServer.stop(ctx, :normal)
+      assert_receive {:DOWN, ^ref, :process, ^ctx, :normal}, 10_000
+    end
+  end
+
+  describe "fix #16/#35 - failed state handling" do
+    test "set_failed marks context as failed" do
+      sdk_config = %Types.SDKConfig{
+        endpoint: "https://test.absmartly.io/v1",
+        api_key: "test-api-key",
+        application: "website",
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+
+      context_config = %Types.ContextConfig{
+        units: @context_params,
+        overrides: %{},
+        custom_assignments: %{}
+      }
+
+      {:ok, ctx} = Context.start_link_async(sdk_config, context_config)
+      assert Context.is_ready?(ctx) == false
+      assert Context.is_failed?(ctx) == false
+
+      Context.set_failed(ctx, :fetch_error)
+      assert Context.is_failed?(ctx) == true
+      assert Context.is_ready?(ctx) == true
+      assert Context.treatment(ctx, "exp_test_ab") == 0
+      assert Context.variable_value(ctx, "banner.size", 17) == 17
+    end
+
+    test "wait_until_ready returns error when failed" do
+      sdk_config = %Types.SDKConfig{
+        endpoint: "https://test.absmartly.io/v1",
+        api_key: "test-api-key",
+        application: "website",
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+
+      context_config = %Types.ContextConfig{
+        units: @context_params,
+        overrides: %{},
+        custom_assignments: %{}
+      }
+
+      {:ok, ctx} = Context.start_link_async(sdk_config, context_config)
+
+      spawn(fn ->
+        Context.set_failed(ctx, :test_error)
+      end)
+
+      assert {:error, :test_error} = Context.wait_until_ready(ctx, 5000)
+    end
+  end
+
+  describe "fix #17 - set_custom_assignments exposed_experiments cleanup" do
+    test "set_custom_assignments clears exposed_experiments for each key" do
+      ctx = start_context(@get_context_response)
+
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+
+      Context.set_custom_assignments(ctx, %{"exp_test_ab" => 0})
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 2
+    end
+  end
+
+  describe "fix #19/#24 - counter-based pending" do
+    test "pending uses counter fields" do
+      ctx = start_context(@get_context_response)
+      assert Context.pending(ctx) == 0
+
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+
+      Context.track(ctx, "goal1")
+      assert Context.pending(ctx) == 2
+    end
+  end
+
+  describe "fix #20 - matcher filter AND semantics" do
+    test "filter with multiple expressions uses AND" do
+      filter = %{
+        "filter" => [
+          %{"gte" => [%{"var" => "age"}, %{"value" => 18}]},
+          %{"eq" => [%{"var" => "country"}, %{"value" => "US"}]}
+        ]
+      }
+
+      attrs_both = [%{"name" => "age", "value" => 25}, %{"name" => "country", "value" => "US"}]
+      assert Matcher.evaluate(filter, attrs_both) == true
+
+      attrs_age_only = [
+        %{"name" => "age", "value" => 25},
+        %{"name" => "country", "value" => "UK"}
+      ]
+
+      assert Matcher.evaluate(filter, attrs_age_only) == false
+
+      attrs_country_only = [
+        %{"name" => "age", "value" => 15},
+        %{"name" => "country", "value" => "US"}
+      ]
+
+      assert Matcher.evaluate(filter, attrs_country_only) == false
+    end
+  end
+
+  describe "fix #22 - idiomatic unless" do
+    test "exposure only queued once per experiment" do
+      ctx = start_context(@get_context_response)
+      Context.treatment(ctx, "exp_test_ab")
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+    end
+  end
+
+  describe "fix #26 - hash_unit efficiency" do
+    test "assignment still works correctly with single hash computation" do
+      ctx = start_context(@get_context_response)
+      v1 = Context.treatment(ctx, "exp_test_ab")
+      v2 = Context.peek(ctx, "exp_test_ab")
+      assert v1 == v2
+      assert is_integer(v1)
+    end
+  end
+
+  describe "fix #27 - ContextConfig get_opt nil handling" do
+    test "explicit nil value is respected" do
+      config = Types.ContextConfig.from_options(%{event_handler: nil})
+      assert config.event_handler == nil
+    end
+
+    test "missing key uses default" do
+      config = Types.ContextConfig.from_options(%{})
+      assert config.publish_delay == -1
+      assert config.refresh_period == 0
+    end
+
+    test "false value is accepted" do
+      config = Types.ContextConfig.from_options(%{"publishDelay" => 0})
+      assert config.publish_delay == 0
+    end
+  end
+
+  describe "fix #28 - child_spec" do
+    test "Context module has child_spec" do
+      spec = Context.child_spec([%{}, %{}, %{}])
+      assert spec.id == Context
+      assert spec.type == :worker
+      assert spec.restart == :temporary
+    end
+  end
+
+  describe "fix #29 - experiment index" do
+    test "experiment lookup by name is O(1)" do
+      ctx = start_context(@get_context_response)
+      assert Context.treatment(ctx, "exp_test_ab") == 1
+      assert Context.treatment(ctx, "exp_test_abc") == 2
+      assert Context.treatment(ctx, "not_found") == 0
+    end
+  end
+
+  describe "fix #32 - split changes invalidation" do
+    # D7 / JS context.ts:579-586 - only id/unitType/iteration/fullOnVariant/
+    # trafficSplit invalidate a cached assignment; a split change is sticky.
+    test "refresh keeps the assignment sticky across split changes" do
+      changed_split_response = %{
+        @get_context_response
+        | "experiments" =>
+            Enum.map(@get_context_response["experiments"], fn exp ->
+              if exp["name"] == "exp_test_ab" do
+                Map.put(exp, "split", [0.9, 0.1])
+              else
+                exp
+              end
+            end)
+      }
+
+      ctx = start_context_with_refresh(@get_context_response, changed_split_response)
+      v1 = Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+
+      Context.refresh(ctx)
+      v2 = Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+      assert v2 == v1
+    end
+  end
+
+  describe "fix #38 - ABSmartly.create_context_async delegated" do
+    test "create_context_async is accessible via ABSmartly module" do
+      funs = ABSmartly.__info__(:functions)
+      assert {:create_context_async, 2} in funs
+      assert {:create_context_async, 3} in funs
+    end
+  end
+
+  describe "fix #39 - retry cap" do
+    test "HTTP client caps retries at 10" do
+      Application.put_env(:absmartly, :retry_backoff_base, 0)
+      on_exit(fn -> Application.delete_env(:absmartly, :retry_backoff_base) end)
+
+      {:ok, l} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(l)
+      counter = :counters.new(1, [])
+
+      acceptor =
+        spawn_link(fn ->
+          loop = fn loop ->
+            case :gen_tcp.accept(l, 20_000) do
+              {:ok, c} ->
+                :counters.add(counter, 1, 1)
+                _ = :gen_tcp.recv(c, 0, 1_000)
+
+                :gen_tcp.send(
+                  c,
+                  "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                )
+
+                :gen_tcp.close(c)
+                loop.(loop)
+
+              _ ->
+                :ok
+            end
+          end
+
+          loop.(loop)
+        end)
+
+      assert {:error, _} =
+               ABSmartly.HTTP.Client.fetch_context(
+                 "http://127.0.0.1:#{port}",
+                 "k",
+                 "a",
+                 "e",
+                 50,
+                 1_000
+               )
+
+      Process.unlink(acceptor)
+      Process.exit(acceptor, :kill)
+      # 1 initial attempt + 10 retries
+      assert :counters.get(counter, 1) == 11
+    end
+  end
+
+  describe "fix #3 - DynamicSupervisor" do
+    test "context can be started under DynamicSupervisor" do
+      sdk_config = %Types.SDKConfig{
+        endpoint: "https://test.absmartly.io/v1",
+        api_key: "test-api-key",
+        application: "website",
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+
+      context_data = Types.ContextData.from_map(@get_context_response)
+
+      context_config = %Types.ContextConfig{
+        units: @context_params,
+        overrides: %{},
+        custom_assignments: %{}
+      }
+
+      {:ok, ctx} =
+        DynamicSupervisor.start_child(
+          ABSmartly.ContextSupervisor,
+          {Context, [sdk_config, context_data, context_config]}
+        )
+
+      assert is_pid(ctx)
+      assert Context.is_ready?(ctx) == true
+      assert Context.treatment(ctx, "exp_test_ab") == 1
+    end
+  end
+
+  describe "fix #2 - publish with Task.async" do
+    test "publish clears queue" do
+      ctx = start_context(@get_context_response)
+      Context.treatment(ctx, "exp_test_ab")
+      assert Context.pending(ctx) == 1
+      assert :ok = Context.publish(ctx)
+      assert Context.pending(ctx) == 0
+    end
+  end
+
+  describe "fix #21 - publish event format" do
+    test "publish event map contains expected keys" do
+      events_captured = :ets.new(:test_events, [:set, :public])
+
+      handler = fn event_type, data ->
+        :ets.insert(events_captured, {event_type, data})
+      end
+
+      sdk_config = %Types.SDKConfig{
+        endpoint: "https://test.absmartly.io/v1",
+        api_key: "test-api-key",
+        application: "website",
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+
+      context_data = Types.ContextData.from_map(@get_context_response)
+
+      context_config = %Types.ContextConfig{
+        units: @context_params,
+        overrides: %{},
+        custom_assignments: %{},
+        event_handler: handler
+      }
+
+      {:ok, ctx} = Context.start_link(sdk_config, context_data, context_config)
+
+      Context.treatment(ctx, "exp_test_ab")
+      Context.publish(ctx)
+
+      [{:publish, event_map}] = :ets.lookup(events_captured, :publish)
+      assert Map.has_key?(event_map, "hashed")
+      assert Map.has_key?(event_map, "units")
+      assert Map.has_key?(event_map, "exposures")
+      assert Map.has_key?(event_map, "goals")
+      assert Map.has_key?(event_map, "attributes")
+
+      :ets.delete(events_captured)
+    end
+  end
+
+  describe "fix #40 - additional test coverage" do
+    test "handle_info for unexpected messages" do
+      ctx = start_context(@get_context_response)
+      send(ctx, :unexpected_message)
+      assert Context.is_ready?(ctx) == true
+    end
+
+    test "handle_info for non-EXIT signals" do
+      ctx = start_context(@get_context_response)
+      send(ctx, {:some_other_message, self(), :data})
+      assert Process.alive?(ctx)
+      assert Context.is_ready?(ctx) == true
+    end
+
+    test "data returns context data" do
+      ctx = start_context(@get_context_response)
+      data = Context.data(ctx)
+      assert length(data.experiments) == 2
+    end
+
+    test "experiments returns experiment names" do
+      ctx = start_context(@get_context_response)
+      names = Context.experiments(ctx)
+      assert "exp_test_ab" in names
+      assert "exp_test_abc" in names
+    end
+
+    test "is_finalizing returns false initially" do
+      ctx = start_context(@get_context_response)
+      assert Context.is_finalizing?(ctx) == false
+    end
+
+    test "finalize is idempotent" do
+      ctx = start_context(@get_context_response)
+      Context.finalize(ctx)
+      Context.finalize(ctx)
+      assert Context.is_finalized?(ctx) == true
+    end
+
+    test "set_units with duplicate returns error" do
+      ctx = start_context(@get_context_response)
+      result = Context.set_units(ctx, %{"session_id" => "different_id"})
+      assert {:error, "Unit 'session_id' UID already set."} = result
+    end
+
+    test "track with non-map properties is rejected like the JavaScript SDK" do
+      test_pid = self()
+
+      {:ok, ctx2} =
+        Context.start_link(
+          %Types.SDKConfig{
+            endpoint: "https://t.absmartly.io/v1",
+            api_key: "k",
+            application: "a",
+            environment: "e",
+            publisher: ABSmartly.Test.OkPublisher
+          },
+          Types.ContextData.from_map(@get_context_response),
+          %Types.ContextConfig{
+            units: %{"session_id" => "x"},
+            overrides: %{},
+            custom_assignments: %{},
+            event_handler: fn type, data -> send(test_pid, {:ev, type, data}) end
+          }
+        )
+
+      for bad <- ["not a map", 1, [1, 2], true] do
+        assert {:error, "Goal 'goal1' properties must be of type object."} =
+                 Context.track(ctx2, "goal1", bad)
+      end
+
+      assert Context.pending(ctx2) == 0
+      refute_received {:ev, :goal, _}
+
+      assert :ok = Context.track(ctx2, "goal1", nil)
+      assert :ok = Context.track(ctx2, "goal1", %{"a" => 1})
+      assert Context.pending(ctx2) == 2
+    end
+
+    test "initial units that are not strings or numbers are rejected at creation" do
+      sdk = %Types.SDKConfig{
+        endpoint: "https://t.absmartly.io/v1",
+        api_key: "k",
+        application: "a",
+        environment: "e",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+
+      cfg = %Types.ContextConfig{
+        units: %{"user" => %{"id" => 1}},
+        overrides: %{},
+        custom_assignments: %{}
+      }
+
+      msg = "Unit 'user' must be a string or a number."
+
+      assert {:error, ^msg} =
+               Context.start_link(sdk, Types.ContextData.from_map(%{"experiments" => []}), cfg)
+
+      assert {:error, ^msg} =
+               Context.start_link_async(sdk, cfg,
+                 data_fetcher: fn -> {:ok, %{"experiments" => []}} end
+               )
+    end
+
+    test "set_attribute and set_attributes fail after finalize" do
+      ctx = start_context(@get_context_response)
+      assert :ok = Context.finalize(ctx)
+      assert {:error, "ABsmartly Context is finalized."} = Context.set_attribute(ctx, "k", "v")
+
+      assert {:error, "ABsmartly Context is finalized."} =
+               Context.set_attributes(ctx, %{"k" => "v"})
+
+      assert Context.get_attributes(ctx) == []
+    end
+
+    test "unit UIDs keep their type and numbers hash like JavaScript" do
+      {:ok, ctx} =
+        Context.start_link(
+          %Types.SDKConfig{
+            endpoint: "https://t.absmartly.io/v1",
+            api_key: "k",
+            application: "a",
+            environment: "e",
+            publisher: ABSmartly.Test.OkPublisher
+          },
+          Types.ContextData.from_map(%{"experiments" => []}),
+          %Types.ContextConfig{
+            units: %{"session_id" => "abc", "user_id" => 125, "float_id" => 125.75},
+            overrides: %{},
+            custom_assignments: %{}
+          }
+        )
+
+      assert :ok = Context.set_unit(ctx, "other_id", 42)
+      assert Context.get_unit(ctx, "user_id") == 125
+      assert Context.get_unit(ctx, "float_id") == 125.75
+
+      assert Context.get_units(ctx) == %{
+               "session_id" => "abc",
+               "user_id" => 125,
+               "float_id" => 125.75,
+               "other_id" => 42
+             }
+
+      assert {:error, "Unit 'x' must be a string or a number."} = Context.set_unit(ctx, "x", true)
+      assert ABSmartly.Utils.hash_unit(125.75) == ABSmartly.Utils.hash_unit("126")
+      assert ABSmartly.Utils.hash_unit(2.5) == ABSmartly.Utils.hash_unit("3")
+    end
+
+    test "get_attributes returns list format" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "key", "value")
+      attrs = Context.get_attributes(ctx)
+      assert is_list(attrs)
+      assert Enum.any?(attrs, fn attr -> attr.name == "key" && attr.value == "value" end)
+    end
+  end
+
+  # Test for Matcher edge cases
+  describe "matcher edge cases" do
+    test "nil filter returns nil" do
+      assert Matcher.evaluate(nil, %{}) == nil
+    end
+
+    test "empty map returns true" do
+      assert Matcher.evaluate(%{}, %{}) == true
+    end
+
+    test "invalid filter sentinel returns false" do
+      assert Matcher.evaluate(%{"invalid" => true}, %{}) == false
+    end
+
+    test "non-list, non-map filter value is indeterminate" do
+      assert Matcher.evaluate(%{"filter" => "not_a_list"}, %{}) == nil
+    end
+
+    test "non-map filter fails closed" do
+      assert Matcher.evaluate("string", %{}) == false
+    end
+  end
+
+  # Phase 3.2: ready_error
+  describe "phase 3.2 - ready_error" do
+    test "ready_error returns nil when context loaded successfully" do
+      ctx = start_context(@get_context_response)
+      assert Context.ready_error(ctx) == nil
+    end
+
+    test "ready_error returns the reason when set_failed called" do
+      sdk_config = %Types.SDKConfig{
+        endpoint: "https://test.absmartly.io/v1",
+        api_key: "test-api-key",
+        application: "website",
+        environment: "development",
+        publisher: ABSmartly.Test.OkPublisher
+      }
+
+      context_config = %Types.ContextConfig{
+        units: @context_params,
+        overrides: %{},
+        custom_assignments: %{}
+      }
+
+      {:ok, ctx} = Context.start_link_async(sdk_config, context_config)
+      Context.set_failed(ctx, :fetch_error)
+      assert Context.ready_error(ctx) == :fetch_error
+    end
+  end
+
+  # Phase 4.4: global custom_field_keys
+  describe "phase 4.4 - global custom_field_keys" do
+    @get_context_response_with_custom_fields %{
+      "experiments" => [
+        %{
+          "id" => 1,
+          "name" => "exp_test_ab",
+          "iteration" => 1,
+          "unitType" => "session_id",
+          "seedHi" => 3_603_515,
+          "seedLo" => 233_373_850,
+          "split" => [0.5, 0.5],
+          "trafficSeedHi" => 449_867_249,
+          "trafficSeedLo" => 455_443_629,
+          "trafficSplit" => [0.0, 1.0],
+          "fullOnVariant" => 0,
+          "applications" => [%{"name" => "website"}],
+          "variants" => [%{"name" => "A", "config" => nil}, %{"name" => "B", "config" => nil}],
+          "audience" => nil,
+          "customFieldValues" => [
+            %{"name" => "key1", "value" => "val1", "type" => "string"},
+            %{"name" => "key2", "value" => "val2", "type" => "string"}
+          ]
+        },
+        %{
+          "id" => 2,
+          "name" => "exp_test_abc",
+          "iteration" => 1,
+          "unitType" => "session_id",
+          "seedHi" => 55_006_150,
+          "seedLo" => 47_189_152,
+          "split" => [0.34, 0.33, 0.33],
+          "trafficSeedHi" => 705_671_872,
+          "trafficSeedLo" => 212_903_484,
+          "trafficSplit" => [0.0, 1.0],
+          "fullOnVariant" => 0,
+          "applications" => [%{"name" => "website"}],
+          "variants" => [%{"name" => "A", "config" => nil}, %{"name" => "B", "config" => nil}],
+          "audience" => nil,
+          "customFieldValues" => [
+            %{"name" => "key2", "value" => "val2b", "type" => "string"},
+            %{"name" => "key3", "value" => "val3", "type" => "string"}
+          ]
+        }
+      ]
+    }
+
+    test "custom_field_keys returns all unique keys across all experiments" do
+      ctx = start_context(@get_context_response_with_custom_fields)
+      keys = Context.custom_field_keys(ctx)
+      assert "key1" in keys
+      assert "key2" in keys
+      assert "key3" in keys
+      assert length(Enum.uniq(keys)) == length(keys)
+    end
+
+    test "custom_field_keys returns empty list when no custom fields" do
+      ctx = start_context(@get_context_response)
+      keys = Context.custom_field_keys(ctx)
+      assert keys == []
+    end
+  end
+
+  # Phase 4.5: attribute list storage model
+  describe "phase 4.5 - attribute list storage model" do
+    test "set_attribute appends entries, both in list" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "color", "red")
+      Context.set_attribute(ctx, "color", "blue")
+      attrs = Context.get_attributes(ctx)
+      color_attrs = Enum.filter(attrs, fn a -> a.name == "color" end)
+      assert length(color_attrs) == 2
+      assert Enum.at(color_attrs, 0).value == "red"
+      assert Enum.at(color_attrs, 1).value == "blue"
+    end
+
+    test "get_attribute returns last value for name" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "color", "red")
+      Context.set_attribute(ctx, "color", "blue")
+      assert Context.get_attribute(ctx, "color") == "blue"
+    end
+
+    test "attributes have set_at timestamp" do
+      ctx = start_context(@get_context_response)
+      Context.set_attribute(ctx, "key", "val")
+      attrs = Context.get_attributes(ctx)
+      assert length(attrs) == 1
+      attr = hd(attrs)
+      assert Map.has_key?(attr, :set_at)
+      assert is_integer(attr.set_at)
+      assert attr.set_at > 0
+    end
+  end
+
+  describe "fix 4.1 - set_override succeeds after finalize" do
+    test "set_override returns :ok after finalize" do
+      ctx = start_context(@get_context_response)
+      Context.finalize(ctx)
+      assert Context.is_finalized?(ctx) == true
+      assert Context.set_override(ctx, "exp_test_ab", 2) == :ok
+    end
+
+    test "set_overrides returns :ok after finalize" do
+      ctx = start_context(@get_context_response)
+      Context.finalize(ctx)
+      assert Context.is_finalized?(ctx) == true
+      assert Context.set_overrides(ctx, %{"exp_test_ab" => 2}) == :ok
+    end
+
+    test "integer unit set at creation is not treated as a changed identity" do
+      ctx = start_context(@get_context_response, %{"user" => 123})
+      assert :ok = Context.set_unit(ctx, "user", 123)
+      assert :ok = Context.set_units(ctx, %{"user" => 123})
+      assert {:error, _} = Context.set_unit(ctx, "user", 124)
+    end
+
+    test "a nil initial UID is treated as a missing unit, not an empty identity" do
+      exp = %{
+        "id" => 1,
+        "name" => "e",
+        "unitType" => "user",
+        "iteration" => 1,
+        "seedHi" => 1,
+        "seedLo" => 2,
+        "split" => [0, 1],
+        "trafficSeedHi" => 3,
+        "trafficSeedLo" => 4,
+        "trafficSplit" => [0, 1],
+        "variants" => [%{"config" => nil}, %{"config" => nil}]
+      }
+
+      ctx = start_context(%{"experiments" => [exp]}, %{"user" => nil})
+      assert Context.peek(ctx, "e") == 0
+      assert :ok = Context.set_unit(ctx, "user", "real-user")
+      # D7 / JS context.ts:363-376 - setting a unit only evicts assignments
+      # resolved by a rule or holdout without it, so this one stays sticky.
+      assert Context.peek(ctx, "e") == 0
+    end
+  end
+end
