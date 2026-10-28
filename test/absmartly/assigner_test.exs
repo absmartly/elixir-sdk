@@ -41,11 +41,16 @@ defmodule ABSmartly.VariantAssignerTest do
     {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.5, 0.5], 668_037_254, 2_218_017_209, 0},
     {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 0, 0, 2},
     {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 0, 1, 0},
-    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 2_148_875_375, 2_130_045_848, 1},
-    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 993_098_128, 3_399_917_389, 0},
-    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 1_388_054_103, 3_528_952_622, 2},
-    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 2_257_487_056, 2_853_234_714, 1},
-    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 668_037_254, 2_218_017_209, 1}
+    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 2_148_875_375, 2_130_045_848,
+     1},
+    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 993_098_128, 3_399_917_389,
+     0},
+    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 1_388_054_103, 3_528_952_622,
+     2},
+    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 2_257_487_056, 2_853_234_714,
+     1},
+    {"e791e240fcd3df7d238cfc285f475e8152fcc0ec", [0.33, 0.33, 0.34], 668_037_254, 2_218_017_209,
+     1}
   ]
 
   describe "assign/4 should be deterministic" do
@@ -58,7 +63,9 @@ defmodule ABSmartly.VariantAssignerTest do
       @tag_expected expected
       test "unit=#{unit} split=#{split_str} seedHi=#{seed_hi} seedLo=#{seed_lo} -> #{expected}" do
         hashed = Utils.hash_unit(@tag_unit)
-        assert VariantAssigner.assign(hashed, @tag_split, @tag_seed_hi, @tag_seed_lo) == @tag_expected
+
+        assert VariantAssigner.assign(hashed, @tag_split, @tag_seed_hi, @tag_seed_lo) ==
+                 @tag_expected
       end
     end
   end

@@ -50,11 +50,12 @@ defmodule ABSmartly.Murmur3Test do
 
   describe "hash32/2 should match known hashes" do
     for {input, seed, expected} <- @murmur3_test_cases do
-      seed_label = case seed do
-        0x00000000 -> "0x00000000"
-        0xDEADBEEF -> "0xDEADBEEF"
-        0x00000001 -> "0x00000001"
-      end
+      seed_label =
+        case seed do
+          0x00000000 -> "0x00000000"
+          0xDEADBEEF -> "0xDEADBEEF"
+          0x00000001 -> "0x00000001"
+        end
 
       @tag_input input
       @tag_seed seed

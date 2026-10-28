@@ -7,6 +7,16 @@ defmodule ABSmartly.Types do
     @moduledoc """
     Configuration for SDK initialization.
     """
+    @type t :: %__MODULE__{
+            endpoint: String.t(),
+            api_key: String.t(),
+            application: String.t(),
+            environment: String.t(),
+            retries: non_neg_integer(),
+            timeout: non_neg_integer(),
+            publisher: module()
+          }
+
     @enforce_keys [:endpoint, :api_key, :application, :environment]
     defstruct [
       :endpoint,
