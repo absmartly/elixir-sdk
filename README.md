@@ -530,7 +530,7 @@ end
 
 **After:** the SDK always evaluates audiences with `application` and `environment` set to the names configured in the SDK. An attribute you set with the same name, at any time, overrides them. Names that are not configured or empty are left out. They are not published (the collector adds them server-side) and `get_attributes/1` does not return them. The SDK never injects `app_version` (one you set yourself with `Context.set_attribute(context, "app_version", ...)` is still used and published like any other attribute).
 
-**This changes assignment for running experiments.** A unit in an experiment with Audience enforced (`audienceStrict`) and an `environment` or `application` condition currently gets variant 0, even when it matches the condition and even when the experiment is full-on. After upgrading, a matching unit is randomised normally (or gets the full-on variant). Those experiments are broken today; this release fixes them, but their exposures will change. An audience on `app_version` no longer matches unless you set `app_version` yourself.
+**This changes assignment for running experiments.** A unit in an experiment with Audience enforced (`audienceStrict`) and an `environment` or `application` condition currently gets variant 0, even when it matches the condition and even when the experiment is full-on. After upgrading, a matching unit is randomised normally (or gets the full-on variant). Those experiments are broken today; this release fixes them, but their exposures will change. This SDK has never injected `app_version`, so audiences can only use an `app_version` value you set yourself (unchanged by this release).
 
 ## About A/B Smartly
 
