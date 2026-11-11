@@ -1551,14 +1551,32 @@ defmodule ABSmartly.Context do
         nil
 
       _audience ->
-        attrs_list =
-          Enum.map(state.attributes, fn attr ->
-            %{"name" => attr.name, "value" => attr.value}
-          end)
-
-        Matcher.evaluate(Map.get(state.audience_cache, experiment.name), attrs_list)
+        Matcher.evaluate(Map.get(state.audience_cache, experiment.name), evaluation_vars(state))
     end
   end
+
+  # The map audience filters are evaluated against: the SDK's `application` and
+  # `environment` names first (the collector adds the same two to every event
+  # server-side, so audiences can target them), then the user-set attributes on
+  # top so a value the user set with the same name always wins, even one set
+  # after an assignment was cached. Empty/absent system names are left out
+  # rather than mapped to nil. `app_version` is deliberately not injected.
+  # Mirrors the JavaScript SDK's `_getAttributesMap`.
+  defp evaluation_vars(state) do
+    Enum.reduce(state.attributes, system_attributes(state), fn attr, acc ->
+      Map.put(acc, attr.name, attr.value)
+    end)
+  end
+
+  defp system_attributes(state) do
+    %{}
+    |> put_non_empty("application", Map.get(state.sdk_config, :application))
+    |> put_non_empty("environment", Map.get(state.sdk_config, :environment))
+  end
+
+  defp put_non_empty(map, _key, nil), do: map
+  defp put_non_empty(map, _key, ""), do: map
+  defp put_non_empty(map, key, value), do: Map.put(map, key, value)
 
   defp full_on?(experiment) do
     experiment.full_on_variant != nil && experiment.full_on_variant > 0
