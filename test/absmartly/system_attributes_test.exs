@@ -123,12 +123,9 @@ defmodule ABSmartly.SystemAttributesTest do
     end
 
     test "user-set attribute overrides the system value and invalidates a cached assignment" do
-      # A production filter matches on the configured environment ...
       ctx = start_context(experiment(filter("environment", "production")))
       assert Context.treatment(ctx, "exp_system") == 1
 
-      # ... until the user sets environment to staging after the assignment was
-      # cached, which must invalidate it and now fail the production filter.
       :ok = Context.set_attribute(ctx, "environment", "staging")
       assert Context.peek(ctx, "exp_system") == 0
     end
