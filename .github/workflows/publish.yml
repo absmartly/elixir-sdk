@@ -51,6 +51,15 @@ jobs:
       - name: Run tests
         run: mix test
 
+      # mix hex.publish uploads the package before it builds the docs, so a
+      # docs failure there would leave a release without docs. Build both
+      # first so nothing is published unless both succeed.
+      - name: Build package
+        run: mix hex.build
+
+      - name: Build docs
+        run: mix docs
+
       - name: Publish to Hex
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
