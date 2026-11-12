@@ -39,6 +39,8 @@ defmodule ABSmartly.Types do
     @moduledoc """
     Experiment configuration from API.
     """
+    require Logger
+
     defstruct [
       :id,
       :name,
@@ -55,6 +57,7 @@ defmodule ABSmartly.Types do
       :variants,
       :audience_strict,
       :audience,
+      :assignment_rules,
       :custom_field_values
     ]
 
@@ -94,8 +97,30 @@ defmodule ABSmartly.Types do
         variants: map["variants"] || [],
         audience_strict: map["audienceStrict"] || false,
         audience: map["audience"],
+        assignment_rules: assignment_rules(map),
         custom_field_values: map["customFieldValues"]
       }
+    end
+
+    # The API sends `assignmentRules` as a JSON string. Anything else (an
+    # object, a list, a number) is ignored for this experiment only, like the
+    # Java SDK's AssignmentRulesDeserializer. An empty string means no rules.
+    defp assignment_rules(map) do
+      case map["assignmentRules"] do
+        rules when rules in [nil, ""] ->
+          nil
+
+        rules when is_binary(rules) ->
+          rules
+
+        other ->
+          Logger.warning(
+            "Ignoring assignmentRules for experiment #{inspect(map["name"])}: " <>
+              "expected a JSON string but got #{inspect(other)}"
+          )
+
+          nil
+      end
     end
   end
 
@@ -190,6 +215,14 @@ defmodule ABSmartly.Types do
       full_on: false,
       custom: false,
       audience_mismatch: false,
+      rule_override: false,
+      # The variant the experiment's assignment rules resolved to (nil when no
+      # rule matched), whether that was a split resolved without its unit, and
+      # the `assignmentRules` it was resolved from, so a cached assignment can
+      # be re-checked when attributes, the unit or the rules change.
+      rule_variant: nil,
+      rule_missing_unit: false,
+      rule_key: nil,
       audience_match_seq: 0
     ]
   end
@@ -209,7 +242,8 @@ defmodule ABSmartly.Types do
       :overridden,
       :full_on,
       :custom,
-      :audience_mismatch
+      :audience_mismatch,
+      :rule_override
     ]
 
     @doc """
@@ -227,7 +261,8 @@ defmodule ABSmartly.Types do
         "overridden" => exposure.overridden,
         "fullOn" => exposure.full_on,
         "custom" => exposure.custom,
-        "audienceMismatch" => exposure.audience_mismatch
+        "audienceMismatch" => exposure.audience_mismatch,
+        "ruleOverride" => exposure.rule_override
       }
     end
   end

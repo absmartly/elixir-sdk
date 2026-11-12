@@ -5,9 +5,8 @@ defmodule ABSmartly.SystemAttributesTest do
   overlaid on top. The names are never published (the collector adds them
   server-side) and `app_version` is never injected.
 
-  Mirrors the JavaScript SDK (reference implementation) brief §4 tests 1-8,
-  excluding test 5 (assignment-rule conditions), which this SDK does not
-  implement.
+  Mirrors the JavaScript SDK (reference implementation) brief §4 tests 1-8.
+  Test 5 (assignment-rule conditions) is in `ABSmartly.AssignmentRulesTest`.
   """
 
   use ExUnit.Case, async: true
