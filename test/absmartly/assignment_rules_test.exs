@@ -434,6 +434,30 @@ defmodule ABSmartly.AssignmentRulesTest do
       end
     end
 
+    test "a refresh whose rules no longer parse drops the rule variant" do
+      for rules <- ["not json", "{\"rules\":{}}"] do
+        {ctx, _} = start_context(experiment(rules([assign("All", nil, 1)])))
+        assert Context.treatment(ctx, "exp_test_abc") == 1
+
+        :ok = Context.refresh(ctx, %{"experiments" => [experiment(rules)]})
+        assert Context.treatment(ctx, "exp_test_abc") == normal_variant(), inspect(rules)
+        assert Context.pending(ctx) == 2
+      end
+    end
+
+    test "a custom assignment set after a rule win does not expose it again" do
+      {ctx, endpoint} = start_context(experiment(rules([assign("All", nil, 1)])))
+      assert Context.treatment(ctx, "exp_test_abc") == 1
+
+      :ok = Context.set_custom_assignment(ctx, "exp_test_abc", 0)
+      assert Context.treatment(ctx, "exp_test_abc") == 1
+
+      :ok = Context.set_custom_assignments(ctx, %{"exp_test_abc" => 2})
+      assert Context.treatment(ctx, "exp_test_abc") == 1
+
+      assert [%{"variant" => 1, "ruleOverride" => true}] = published_exposures(ctx, endpoint)
+    end
+
     test "a refresh that removes the experiment does not serve the stale rule variant" do
       {ctx, endpoint} = start_context(experiment(rules([assign("All", nil, 1)])))
       assert Context.treatment(ctx, "exp_test_abc") == 1
@@ -576,6 +600,21 @@ defmodule ABSmartly.AssignmentRulesTest do
       :ok = Context.set_attribute(ctx, "country", "US")
       assert Context.treatment(ctx, "exp_test_abc") == 0
 
+      :ok = Context.set_unit(ctx, "session_id", @session)
+      assert Context.treatment(ctx, "exp_test_abc") == 0
+
+      assert [%{"variant" => 0}] = published_exposures(ctx, endpoint)
+    end
+
+    test "an exposed split stays pinned when a custom assignment is set before its unit" do
+      {ctx, endpoint} =
+        start_context(experiment(rules([split("All", nil, "0/100/0")])),
+          units: %{"user_id" => "123"}
+        )
+
+      assert Context.treatment(ctx, "exp_test_abc") == 0
+
+      :ok = Context.set_custom_assignment(ctx, "exp_test_abc", 2)
       :ok = Context.set_unit(ctx, "session_id", @session)
       assert Context.treatment(ctx, "exp_test_abc") == 0
 

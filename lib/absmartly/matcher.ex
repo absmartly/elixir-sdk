@@ -162,7 +162,9 @@ defmodule ABSmartly.Matcher do
   defp parse_split(percentages) when is_binary(percentages) do
     values = percentages |> String.split("/") |> Enum.map(&Evaluator.number_convert/1)
 
-    if Enum.all?(values, &(is_number(&1) and &1 >= 0)) do
+    # A valid split never has a value above 100, and bounding them first keeps
+    # the sum finite (two values near the float maximum would overflow).
+    if Enum.all?(values, &(is_number(&1) and &1 >= 0 and &1 <= 100)) do
       gap = abs(100 - Enum.sum(values)) |> ABSmartly.Utils.number_to_fixed(2)
 
       if Evaluator.number_convert(gap) <= @split_sum_tolerance,

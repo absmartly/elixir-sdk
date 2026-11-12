@@ -164,7 +164,18 @@ defmodule ABSmartly.MatcherTest do
     end
 
     test "skips a split rule with invalid percentages" do
-      for percentages <- [[50, 50], 100, nil, "50/abc", "150/-50", "50/49", "", "Infinity/0"] do
+      for percentages <- [
+            [50, 50],
+            100,
+            nil,
+            "50/abc",
+            "150/-50",
+            "50/49",
+            "",
+            "Infinity/0",
+            "1e308/1e308/0",
+            "100.5/0"
+          ] do
         assert evaluate_us([split_rule(percentages), @fallback]) == {:variant, 2},
                inspect(percentages)
       end

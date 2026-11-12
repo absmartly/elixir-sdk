@@ -631,7 +631,7 @@ defmodule ABSmartly.Context do
     state = %{
       state
       | custom_assignments: Map.put(state.custom_assignments, name, variant),
-        exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+        exposed_experiments: reset_exposed_for_custom(state, state.exposed_experiments, name)
     }
 
     {:reply, :ok, state}
@@ -645,7 +645,7 @@ defmodule ABSmartly.Context do
         {state.custom_assignments, state.exposed_experiments},
         fn {experiment_name, variant}, {ca_acc, exp_acc} ->
           name = to_string(experiment_name)
-          {Map.put(ca_acc, name, variant), MapSet.delete(exp_acc, name)}
+          {Map.put(ca_acc, name, variant), reset_exposed_for_custom(state, exp_acc, name)}
         end
       )
 
@@ -1449,6 +1449,18 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # A new custom assignment re-exposes the experiment, except when its cached
+  # assignment was won by a rule: a rule wins over a custom assignment (as in
+  # the JavaScript SDK, a custom mismatch is not staleness for it), so the
+  # served variant and its exposure stay the same, and an exposed split
+  # resolved without its unit stays pinned.
+  defp reset_exposed_for_custom(state, exposed, name) do
+    case Map.get(state.assignments, name) do
+      %Types.Assignment{rule_override: true} -> exposed
+      _ -> MapSet.delete(exposed, name)
+    end
+  end
+
   # As in the JavaScript SDK, a custom assignment only replaces a randomized
   # assignment: not a full-on, traffic-excluded, missing-unit or strict
   # audience-excluded one (those are all unassigned or ineligible).
@@ -1492,22 +1504,20 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # Experiments without (parseable) rules resolve to no rule, so a rule
+  # variant cached from rules that were since replaced by invalid ones is stale.
   defp recheck_rule(cached, state, experiment, name) do
-    if Map.has_key?(state.rules_cache, name) do
-      # An exposed split resolved without its unit keeps resolving as if the
-      # unit were still missing, so a unit set afterwards cannot switch the
-      # variant the user already saw.
-      pinned_missing =
-        cached.rule_missing_unit and MapSet.member?(state.exposed_experiments, name)
+    # An exposed split resolved without its unit keeps resolving as if the
+    # unit were still missing, so a unit set afterwards cannot switch the
+    # variant the user already saw.
+    pinned_missing =
+      cached.rule_missing_unit and MapSet.member?(state.exposed_experiments, name)
 
-      {rule_variant, missing_unit} = resolve_rule(state, experiment, pinned_missing)
+    {rule_variant, missing_unit} = resolve_rule(state, experiment, pinned_missing)
 
-      if rule_variant == cached.rule_variant,
-        do: {:ok, %{cached | rule_missing_unit: missing_unit}},
-        else: :stale
-    else
-      {:ok, cached}
-    end
+    if rule_variant == cached.rule_variant,
+      do: {:ok, %{cached | rule_missing_unit: missing_unit}},
+      else: :stale
   end
 
   defp recheck_audience(%{rule_override: true}, _state, _experiment), do: :ok
