@@ -82,6 +82,7 @@ defmodule ABSmartly.HTTPIntegrationTest do
 
     assert get
     assert get.path == "/context"
+    assert header(get, "x-agent") == "absmartly-elixir-sdk/#{Mix.Project.config()[:version]}"
     assert get.query =~ "application=website"
     assert get.query =~ "environment=test"
 
@@ -94,7 +95,7 @@ defmodule ABSmartly.HTTPIntegrationTest do
     assert header(put, "x-application") == "website"
     assert header(put, "x-environment") == "test"
     assert header(put, "x-application-version") == "0"
-    assert header(put, "x-agent") not in [nil, ""]
+    assert header(put, "x-agent") == "absmartly-elixir-sdk/#{Mix.Project.config()[:version]}"
     assert header(put, "content-type") =~ "application/json"
 
     body = Jason.decode!(put.body)
