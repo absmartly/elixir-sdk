@@ -216,10 +216,6 @@ defmodule ABSmartly.Types do
       custom: false,
       audience_mismatch: false,
       rule_override: false,
-      # The variant the experiment's assignment rules resolved to (nil when no
-      # rule matched), whether that was a split resolved without its unit, and
-      # the `assignmentRules` it was resolved from, so a cached assignment can
-      # be re-checked when attributes, the unit or the rules change.
       rule_variant: nil,
       rule_missing_unit: false,
       rule_key: nil,

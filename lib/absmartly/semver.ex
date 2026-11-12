@@ -8,13 +8,21 @@ defmodule ABSmartly.Semver do
   pre-release is everything after the first `-`. Numeric identifiers compare
   numerically (leading zeros ignored) and sort before alphanumeric ones; a
   version without a pre-release is greater than the same version with one.
+
+  Parsing is deliberately as permissive as the JavaScript and Java SDKs', so
+  every SDK orders the same inputs the same way: a non-numeric core part (as
+  in `"1.x"` or `"garbage"`) is compared as an alphanumeric identifier, an
+  empty part (as in `"1..0"`) is an identifier of its own, and an empty
+  pre-release or build (`"1.0.0-"`, `"1.0.0+"`) counts as absent. Only an
+  empty version core gives `nil`.
   """
 
   @numeric ~r/^\d+$/
 
   @doc """
-  Compare two versions. Returns -1, 0 or 1, or nil when either is empty or not
-  a version.
+  Compare two versions. Returns -1, 0 or 1, or nil when either is not a
+  string or has an empty version core once a leading `v`/`V` and any `+build`
+  metadata are removed (`""`, `"v"`, `"+build"`, `"-beta"`).
 
   ## Examples
 

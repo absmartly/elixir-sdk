@@ -1469,10 +1469,7 @@ defmodule ABSmartly.Context do
 
   defp maybe_reassign(nil, state, _experiment, _name), do: {nil, state}
 
-  # Mirrors the JavaScript SDK's `audienceMatches` (context.ts). A cached
-  # assignment is rebuilt, and exposed again, when the rule outcome changed
-  # (different rules, or the matching rule now gives another variant) or, for
-  # an assignment no rule won, when the audience result flipped.
+  # Mirrors the JavaScript SDK's `audienceMatches` (context.ts).
   defp maybe_reassign(cached, state, experiment, name) do
     rules_changed = cached.rule_key != experiment.assignment_rules
 
@@ -1603,12 +1600,9 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # `{variant, missing_unit}` from the first matching assignment rule, or
-  # `{nil, false}` when none matches. As in the JavaScript SDK's `_resolveRule`,
-  # an out-of-range variant or a split without one percentage per variant
-  # falls back to normal assignment without trying later rules. A split
-  # resolved without its unit gives the full-on variant (0 for an experiment
-  # that is not full-on) and is re-resolved once the unit is set.
+  # As in the JavaScript SDK's `_resolveRule`, an unusable first match (an
+  # out-of-range variant, or a split without one percentage per variant) falls
+  # back to normal assignment rather than trying later rules.
   defp resolve_rule(state, experiment, pinned_missing) do
     case Map.get(state.rules_cache, experiment.name) do
       nil -> {nil, false}

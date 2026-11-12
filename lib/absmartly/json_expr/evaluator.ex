@@ -17,7 +17,8 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     other haystack gives `nil`.
   - `match` gives `nil` for an invalid (or over-long) regular expression.
   - `semver_*` convert both operands to strings and compare them as versions
-    (see `ABSmartly.Semver`); they give `nil` when either is not a version.
+    (see `ABSmartly.Semver`); they give `nil` when either has an empty
+    version core.
   """
 
   require Logger

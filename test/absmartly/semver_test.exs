@@ -63,6 +63,25 @@ defmodule ABSmartly.SemverTest do
       end
     end
 
+    # Recorded from the JavaScript SDK's versionCompare (main @ 5c52ff0); the
+    # Java SDK documents the same permissive parsing. Malformed versions are
+    # compared, not rejected, so every SDK targets them the same way.
+    test "compares malformed versions like the JavaScript and Java SDKs" do
+      for {lhs, rhs, expected} <- [
+            {"garbage", "1.0.0", 1},
+            {"1..0", "1.0.0", 1},
+            {"1.0.", "1.0.0", 1},
+            {"1.0.0-", "1.0.0", 0},
+            {"1.0.0+", "1.0.0", 0},
+            {"1.x", "1.0.0", 1},
+            {"abc", "abd", -1},
+            {"1.0.0-alpha..1", "1.0.0-alpha.1", 1},
+            {"1.0.0-rc-1", "1.0.0-rc", 1}
+          ] do
+        assert Semver.compare(lhs, rhs) == expected, "#{lhs} vs #{rhs}"
+      end
+    end
+
     test "gives nil for empty or non-version input" do
       for {lhs, rhs} <- [
             {"", "1.0.0"},
@@ -99,6 +118,13 @@ defmodule ABSmartly.SemverTest do
       assert eval("semver_lt", "1.0.0", "1.0.0") == false
       assert eval("semver_lte", "2.0.0", "2.0.0") == true
       assert eval("semver_lte", "2.0.1", "2.0.0") == false
+    end
+
+    test "malformed operands are compared, not treated as indeterminate" do
+      assert eval("semver_gt", "garbage", "1.0.0") == true
+      assert eval("semver_eq", "1.0.0-", "1.0.0") == true
+      assert eval("semver_eq", "1.0.0+", "1.0.0") == true
+      assert eval("semver_lt", "1..0", "1.0.0") == false
     end
 
     test "operands are converted to strings first" do
