@@ -14,23 +14,33 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   changed. To update it, copy the scenarios from cross-sdk-tests'
   `test_scenarios_complete.json` and update `source`. To review a change field
   by field, compare pretty-printed copies. Run from the repository root, in
-  Bash (for its process substitution), with `jq`:
+  Bash, with `jq`:
 
       fixture=test/fixtures/cross_sdk_scenarios.json
-      # Fails loudly on a bad revision: a process substitution's exit status
-      # never reaches git diff, which would otherwise show the whole fixture
-      # as added.
-      at() {
-        git rev-parse -q --verify "$1:$fixture" >/dev/null ||
-          { echo "error: no $fixture at $1" >&2; return 1; }
-        git show "$1:$fixture" | jq .
+
+      # fixture_diff OLD_REV [NEW_REV]: compares the fixture at OLD_REV with
+      # NEW_REV, or with the working tree. Both revisions are checked first,
+      # so a typo stops with an error instead of diffing an empty file.
+      fixture_diff() {
+        local rev
+        for rev in "$@"; do
+          git rev-parse -q --verify "$rev:$fixture" >/dev/null ||
+            { echo "error: no $fixture at $rev" >&2; return 2; }
+        done
+        local old=$(mktemp) new=$(mktemp)
+        git show "$1:$fixture" | jq . >"$old"
+        if [ -n "$2" ]; then git show "$2:$fixture" | jq . >"$new"; else jq . "$fixture" >"$new"; fi
+        git diff --no-index "$old" "$new"
+        local status=$?
+        rm -f "$old" "$new"
+        return $status
       }
 
       # Uncommitted changes, against the last commit that touched the fixture:
-      git diff --no-index <(at "$(git log -1 --format=%H -- "$fixture")") <(jq . "$fixture")
+      fixture_diff "$(git log -1 --format=%H -- "$fixture")"
 
       # A committed change <sha>, against its parent:
-      git diff --no-index <(at <sha>^) <(at <sha>)
+      fixture_diff <sha>^ <sha>
   """
 
   use ExUnit.Case, async: true
