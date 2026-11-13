@@ -16,7 +16,9 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   by field, compare pretty-printed copies against an explicit baseline (needs
   Bash, for its process substitution, and `jq`):
 
-      base=origin/main  # or the commit before the fixture change
+      # The last committed fixture, to review uncommitted changes. To review
+      # a committed change, use the commit before it instead.
+      base=$(git log -1 --format=%H -- test/fixtures/cross_sdk_scenarios.json)
       git diff --no-index \
         <(git show "$base":test/fixtures/cross_sdk_scenarios.json | jq .) \
         <(jq . test/fixtures/cross_sdk_scenarios.json)
