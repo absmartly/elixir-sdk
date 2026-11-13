@@ -12,8 +12,32 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    name: Check the tag matches mix.exs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Compare the tag with the mix.exs version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^  @version "\(.*\)"$/\1/p' mix.exs)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG does not match the mix.exs version $version (expected v$version)"
+            exit 1
+          fi
+
+  checks:
+    uses: ./.github/workflows/checks.yml
+
   publish:
     name: mix hex.publish
+    needs: [version, checks]
     runs-on: ubuntu-latest
     environment: hex
 
@@ -29,36 +53,8 @@ jobs:
           elixir-version: "1.17"
           otp-version: "26"
 
-      - name: Check the tag matches the mix.exs version
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          version=$(sed -n 's/^  @version "\(.*\)"$/\1/p' mix.exs)
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::Tag $TAG does not match the mix.exs version $version (expected v$version)"
-            exit 1
-          fi
-
       - name: Install dependencies
         run: mix deps.get
-
-      - name: Check formatting
-        run: mix format --check-formatted
-
-      - name: Compile
-        run: mix compile --warnings-as-errors
-
-      - name: Run tests
-        run: mix test --warnings-as-errors
-
-      # mix hex.publish uploads the package before it builds the docs, so a
-      # docs failure there would leave a release without docs. Build both
-      # first so nothing is published unless both succeed.
-      - name: Build package
-        run: mix hex.build
-
-      - name: Build docs
-        run: mix docs
 
       - name: Publish to Hex
         env:
