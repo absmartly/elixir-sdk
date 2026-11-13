@@ -17,7 +17,14 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   Bash (for its process substitution), with `jq`:
 
       fixture=test/fixtures/cross_sdk_scenarios.json
-      at() { git show "$1:$fixture" | jq .; }
+      # Fails loudly on a bad revision: a process substitution's exit status
+      # never reaches git diff, which would otherwise show the whole fixture
+      # as added.
+      at() {
+        git rev-parse -q --verify "$1:$fixture" >/dev/null ||
+          { echo "error: no $fixture at $1" >&2; return 1; }
+        git show "$1:$fixture" | jq .
+      }
 
       # Uncommitted changes, against the last commit that touched the fixture:
       git diff --no-index <(at "$(git log -1 --format=%H -- "$fixture")") <(jq . "$fixture")
