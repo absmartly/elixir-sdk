@@ -1,5 +1,5 @@
 defmodule ABSmartly.CrossSDKScenariosTest do
-  @moduledoc """
+  @moduledoc ~S"""
   Replays the cross-SDK conformance scenarios for custom assignment rules
   (230-239), the semver operators (240-245), audience re-evaluation (246-247)
   and system attributes (248-253) against the real `ABSmartly.Context` API.
@@ -13,10 +13,12 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   The fixture stores one scenario per line, so a diff shows which scenarios
   changed. To update it, copy the scenarios from cross-sdk-tests'
   `test_scenarios_complete.json` and update `source`. To review a change field
-  by field, compare pretty-printed copies, e.g.:
+  by field, compare pretty-printed copies against an explicit baseline (needs
+  Bash, for its process substitution, and `jq`):
 
+      base=origin/main  # or the commit before the fixture change
       git diff --no-index \
-        <(git show HEAD:test/fixtures/cross_sdk_scenarios.json | jq .) \
+        <(git show "$base":test/fixtures/cross_sdk_scenarios.json | jq .) \
         <(jq . test/fixtures/cross_sdk_scenarios.json)
   """
 
