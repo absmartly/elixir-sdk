@@ -1567,7 +1567,7 @@ defmodule ABSmartly.Context do
   end
 
   defp assign_without_rule(state, experiment, base) do
-    uid = Map.get(state.units, experiment.unit_type || "session_id")
+    uid = Map.get(state.units, unit_type(experiment))
 
     audience_mismatch = audience_result(state, experiment) == false
     base = %{base | audience_mismatch: audience_mismatch}
@@ -1602,7 +1602,7 @@ defmodule ABSmartly.Context do
   end
 
   defp resolve_rule(state, experiment, pinned_missing) do
-    uid = if pinned_missing, do: nil, else: Map.get(state.units, experiment.unit_type)
+    uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
 
     AssignmentRules.resolve(
       Map.get(state.rules_cache, experiment.name),
@@ -1612,6 +1612,8 @@ defmodule ABSmartly.Context do
       uid
     )
   end
+
+  defp unit_type(experiment), do: experiment.unit_type || "session_id"
 
   defp rules_environment(state) do
     case Map.get(state.sdk_config, :environment) do
@@ -1632,7 +1634,7 @@ defmodule ABSmartly.Context do
         experiment = Map.get(state.experiment_index, name)
 
         assignment.rule_missing_unit and experiment != nil and
-          experiment.unit_type in added_unit_types and
+          unit_type(experiment) in added_unit_types and
           not MapSet.member?(state.exposed_experiments, name)
       end)
 
@@ -1736,7 +1738,7 @@ defmodule ABSmartly.Context do
   defp parse_audience(_), do: nil
 
   defp create_exposure(experiment, assignment) do
-    unit_type = experiment.unit_type || "session_id"
+    unit_type = unit_type(experiment)
 
     %Types.Exposure{
       id: experiment.id,

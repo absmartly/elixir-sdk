@@ -620,6 +620,51 @@ defmodule ABSmartly.AssignmentRulesTest do
       assert [%{"variant" => 0}] = published_exposures(ctx, endpoint)
     end
 
+    test "without its unit a split gives variant 0 when the full-on variant is not a variant" do
+      for full_on_variant <- [-1, 3] do
+        {ctx, _} =
+          start_context(
+            experiment(rules([split("All", nil, "0/100/0")]), full_on_variant: full_on_variant),
+            units: %{"user_id" => "123"}
+          )
+
+        assert Context.peek(ctx, "exp_test_abc") == 0, inspect(full_on_variant)
+      end
+    end
+
+    test "an experiment without a unit type splits on session_id, like normal assignment" do
+      data = %{
+        Types.ExperimentData.from_map(experiment(rules([split("All", nil, "0/100/0")])))
+        | unit_type: nil
+      }
+
+      sdk_config = %Types.SDKConfig{
+        endpoint: CapturePublisher.start(),
+        api_key: "test-api-key",
+        application: "website",
+        environment: "production",
+        publisher: CapturePublisher
+      }
+
+      start = fn units ->
+        {:ok, ctx} =
+          Context.start_link(
+            sdk_config,
+            %Types.ContextData{experiments: [data]},
+            %Types.ContextConfig{units: units}
+          )
+
+        ctx
+      end
+
+      assert Context.peek(start.(%{"session_id" => @session}), "exp_test_abc") == 1
+
+      ctx = start.(%{"user_id" => "123"})
+      assert Context.peek(ctx, "exp_test_abc") == 0
+      :ok = Context.set_unit(ctx, "session_id", @session)
+      assert Context.peek(ctx, "exp_test_abc") == 1
+    end
+
     test "an assign rule's cached assignment is kept when the unit is set later" do
       {ctx, _} =
         start_context(experiment(rules([assign("All", nil, 1)])), units: %{"user_id" => "123"})

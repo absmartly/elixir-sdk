@@ -32,7 +32,7 @@ defmodule ABSmartly.AssignmentRules do
 
       {:split, split} when length(split) == variant_count ->
         if uid == nil do
-          {experiment.full_on_variant || 0, true}
+          {missing_unit_variant(experiment.full_on_variant, variant_count), true}
         else
           hashed_unit = Utils.hash_unit(uid)
 
@@ -46,4 +46,13 @@ defmodule ABSmartly.AssignmentRules do
         {nil, false}
     end
   end
+
+  # The full-on variant, or 0 (control) when the experiment is not full-on or
+  # its full-on variant is not one of its variants.
+  defp missing_unit_variant(full_on_variant, variant_count)
+       when is_integer(full_on_variant) and full_on_variant > 0 and
+              full_on_variant < variant_count,
+       do: full_on_variant
+
+  defp missing_unit_variant(_full_on_variant, _variant_count), do: 0
 end
