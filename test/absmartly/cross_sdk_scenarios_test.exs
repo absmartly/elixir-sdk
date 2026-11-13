@@ -9,6 +9,15 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   and events were recorded from the JavaScript reference SDK. As in the
   harness, an expected event's `data` is matched on the keys it lists, and a
   step's `events` must be exactly the events that step emitted, in order.
+
+  The fixture stores one scenario per line, so a diff shows which scenarios
+  changed. To update it, copy the scenarios from cross-sdk-tests'
+  `test_scenarios_complete.json` and update `source`. To review a change field
+  by field, compare pretty-printed copies, e.g.:
+
+      git diff --no-index \
+        <(git show HEAD:test/fixtures/cross_sdk_scenarios.json | jq .) \
+        <(jq . test/fixtures/cross_sdk_scenarios.json)
   """
 
   use ExUnit.Case, async: true
