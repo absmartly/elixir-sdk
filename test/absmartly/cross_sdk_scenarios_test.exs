@@ -13,21 +13,17 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   The fixture stores one scenario per line, so a diff shows which scenarios
   changed. To update it, copy the scenarios from cross-sdk-tests'
   `test_scenarios_complete.json` and update `source`. To review a change field
-  by field, compare pretty-printed copies against an explicit baseline. Run
-  from the repository root, in Bash (for its process substitution), with `jq`:
+  by field, compare pretty-printed copies. Run from the repository root, in
+  Bash (for its process substitution), with `jq`:
 
       fixture=test/fixtures/cross_sdk_scenarios.json
+      at() { git show "$1:$fixture" | jq .; }
 
-      # Uncommitted changes: compare with the last committed fixture.
-      git diff --no-index \
-        <(git show "$(git log -1 --format=%H -- "$fixture")":"$fixture" | jq .) \
-        <(jq . "$fixture")
+      # Uncommitted changes, against the last commit that touched the fixture:
+      git diff --no-index <(at "$(git log -1 --format=%H -- "$fixture")") <(jq . "$fixture")
 
-      # A committed change: compare that commit's fixture with its parent's.
-      commit=<sha>
-      git diff --no-index \
-        <(git show "$commit^":"$fixture" | jq .) \
-        <(git show "$commit":"$fixture" | jq .)
+      # A committed change <sha>, against its parent:
+      git diff --no-index <(at <sha>^) <(at <sha>)
   """
 
   use ExUnit.Case, async: true
