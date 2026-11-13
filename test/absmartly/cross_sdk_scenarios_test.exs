@@ -1,5 +1,5 @@
 defmodule ABSmartly.CrossSDKScenariosTest do
-  @moduledoc ~S"""
+  @moduledoc """
   Replays the cross-SDK conformance scenarios for custom assignment rules
   (230-239), the semver operators (240-245), audience re-evaluation (246-247)
   and system attributes (248-253) against the real `ABSmartly.Context` API.
@@ -13,34 +13,10 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   The fixture stores one scenario per line, so a diff shows which scenarios
   changed. To update it, copy the scenarios from cross-sdk-tests'
   `test_scenarios_complete.json` and update `source`. To review a change field
-  by field, compare pretty-printed copies. Run from the repository root, in
-  Bash, with `jq`:
+  by field, use `test/fixtures/diff_scenarios.sh` (needs Bash and `jq`):
 
-      fixture=test/fixtures/cross_sdk_scenarios.json
-
-      # fixture_diff OLD_REV [NEW_REV]: compares the fixture at OLD_REV with
-      # NEW_REV, or with the working tree. Both revisions are checked first,
-      # so a typo stops with an error instead of diffing an empty file.
-      fixture_diff() {
-        local rev
-        for rev in "$@"; do
-          git rev-parse -q --verify "$rev:$fixture" >/dev/null ||
-            { echo "error: no $fixture at $rev" >&2; return 2; }
-        done
-        local old=$(mktemp) new=$(mktemp)
-        git show "$1:$fixture" | jq . >"$old"
-        if [ -n "$2" ]; then git show "$2:$fixture" | jq . >"$new"; else jq . "$fixture" >"$new"; fi
-        git diff --no-index "$old" "$new"
-        local status=$?
-        rm -f "$old" "$new"
-        return $status
-      }
-
-      # Uncommitted changes, against the last commit that touched the fixture:
-      fixture_diff "$(git log -1 --format=%H -- "$fixture")"
-
-      # A committed change <sha>, against its parent:
-      fixture_diff <sha>^ <sha>
+      test/fixtures/diff_scenarios.sh HEAD             # uncommitted changes
+      test/fixtures/diff_scenarios.sh <sha>^ <sha>     # a committed change
   """
 
   use ExUnit.Case, async: true
