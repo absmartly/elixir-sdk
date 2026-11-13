@@ -4,6 +4,7 @@ defmodule ABSmartly.Context do
   require Logger
 
   alias ABSmartly.{
+    AssignmentRules,
     Types,
     Utils,
     VariantAssigner,
@@ -1600,44 +1601,16 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # As in the JavaScript SDK's `_resolveRule`, an unusable first match (an
-  # out-of-range variant, or a split without one percentage per variant) falls
-  # back to normal assignment rather than trying later rules.
   defp resolve_rule(state, experiment, pinned_missing) do
-    case Map.get(state.rules_cache, experiment.name) do
-      nil -> {nil, false}
-      rules -> resolve_rule(state, experiment, rules, pinned_missing)
-    end
-  end
+    uid = if pinned_missing, do: nil, else: Map.get(state.units, experiment.unit_type)
 
-  defp resolve_rule(state, experiment, rules, pinned_missing) do
-    variant_count = length(experiment.variants || [])
-    action = Matcher.evaluate_rules(rules, rules_environment(state), evaluation_vars(state))
-
-    case action do
-      {:variant, variant} when variant >= 0 and variant < variant_count ->
-        {variant, false}
-
-      {:split, split} when length(split) == variant_count ->
-        uid = if pinned_missing, do: nil, else: Map.get(state.units, experiment.unit_type)
-
-        if uid == nil do
-          {experiment.full_on_variant || 0, true}
-        else
-          variant =
-            VariantAssigner.assign(
-              Utils.hash_unit(uid),
-              split,
-              experiment.seed_hi,
-              experiment.seed_lo
-            )
-
-          {variant, false}
-        end
-
-      _ ->
-        {nil, false}
-    end
+    AssignmentRules.resolve(
+      Map.get(state.rules_cache, experiment.name),
+      experiment,
+      rules_environment(state),
+      evaluation_vars(state),
+      uid
+    )
   end
 
   defp rules_environment(state) do
@@ -1818,7 +1791,7 @@ defmodule ABSmartly.Context do
     # re-decoded on every assignment.
     rules_cache =
       Enum.reduce(experiments, %{}, fn experiment, cache ->
-        case Matcher.parse_rules(experiment.assignment_rules) do
+        case AssignmentRules.parse(experiment.assignment_rules) do
           nil -> cache
           rules -> Map.put(cache, experiment.name, rules)
         end
