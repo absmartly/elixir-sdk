@@ -14,7 +14,6 @@ defmodule ABSmartly.AssignmentRulesTest do
 
   @session "e791e240fcd3df7d238cfc285f475e8152fcc0ec"
   @us %{"eq" => [%{"var" => "country"}, %{"value" => "US"}]}
-  @gb %{"eq" => [%{"var" => "country"}, %{"value" => "GB"}]}
 
   defmodule CapturePublisher do
     @moduledoc false

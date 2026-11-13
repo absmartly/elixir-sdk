@@ -47,7 +47,7 @@ jobs:
         run: mix compile --warnings-as-errors
 
       - name: Run tests
-        run: mix test
+        run: mix test --warnings-as-errors
 
       # Same checks `mix hex.publish` runs, so a broken package or docs build
       # is caught before a release tag is pushed.

@@ -49,7 +49,7 @@ jobs:
         run: mix compile --warnings-as-errors
 
       - name: Run tests
-        run: mix test
+        run: mix test --warnings-as-errors
 
       # mix hex.publish uploads the package before it builds the docs, so a
       # docs failure there would leave a release without docs. Build both

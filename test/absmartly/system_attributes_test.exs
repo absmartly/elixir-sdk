@@ -67,7 +67,7 @@ defmodule ABSmartly.SystemAttributesTest do
     Jason.encode!(%{"filter" => [%{"eq" => [%{"var" => var}, %{"value" => value}]}]})
   end
 
-  defp sdk_config(opts \\ []) do
+  defp sdk_config(opts) do
     %Types.SDKConfig{
       endpoint: Keyword.get(opts, :endpoint, "https://test.absmartly.io/v1"),
       api_key: "test-api-key",
@@ -77,7 +77,7 @@ defmodule ABSmartly.SystemAttributesTest do
     }
   end
 
-  defp context_config(opts \\ []) do
+  defp context_config(opts) do
     %Types.ContextConfig{
       units: @units,
       overrides: %{},
