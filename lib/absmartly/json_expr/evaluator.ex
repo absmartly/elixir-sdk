@@ -4,8 +4,9 @@ defmodule ABSmartly.JSONExpr.Evaluator do
 
   Mirrors the JavaScript SDK's `jsonexpr` (src/jsonexpr): the same operators,
   the same type conversions and the same `null` results. Supported operators:
-  and, or, not, null, var, value, eq, gt, gte, lt, lte, in, match, plus
-  `contains` (an alias of `in`, haystack first).
+  and, or, not, null, var, value, eq, gt, gte, lt, lte, in, match,
+  semver_eq, semver_gt, semver_gte, semver_lt, semver_lte, plus `contains`
+  (an alias of `in`, haystack first).
 
   - A list expression is an implicit `and`; a map expression is dispatched on
     its operator key; anything else evaluates to `nil`.
@@ -15,6 +16,9 @@ defmodule ABSmartly.JSONExpr.Evaluator do
     needle is converted to a string) and a map haystack matches a key. Any
     other haystack gives `nil`.
   - `match` gives `nil` for an invalid (or over-long) regular expression.
+  - `semver_*` convert both operands to strings and compare them as versions
+    (see `ABSmartly.Semver`); they give `nil` when either has an empty
+    version core.
   """
 
   require Logger
@@ -22,7 +26,8 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   @max_regex_length 1000
   @regex_timeout_ms 100
 
-  @binary_operators ~w(eq gt gte lt lte in contains match)
+  @binary_operators ~w(eq gt gte lt lte in contains match
+                       semver_eq semver_gt semver_gte semver_lt semver_lte)
 
   @doc """
   Evaluate a JSON expression with given variables.
@@ -138,6 +143,18 @@ defmodule ABSmartly.JSONExpr.Evaluator do
   defp binary("in", haystack, needle), do: eval_in(haystack, needle)
   defp binary("contains", haystack, needle), do: eval_in(haystack, needle)
   defp binary("match", text, pattern), do: eval_match(text, pattern)
+  defp binary("semver_eq", lhs, rhs), do: semver_compare(lhs, rhs, &(&1 == 0))
+  defp binary("semver_gt", lhs, rhs), do: semver_compare(lhs, rhs, &(&1 > 0))
+  defp binary("semver_gte", lhs, rhs), do: semver_compare(lhs, rhs, &(&1 >= 0))
+  defp binary("semver_lt", lhs, rhs), do: semver_compare(lhs, rhs, &(&1 < 0))
+  defp binary("semver_lte", lhs, rhs), do: semver_compare(lhs, rhs, &(&1 <= 0))
+
+  defp semver_compare(lhs, rhs, fun) do
+    case ABSmartly.Semver.compare(string_convert(lhs), string_convert(rhs)) do
+      nil -> nil
+      result -> fun.(result)
+    end
+  end
 
   defp compare_result(nil, _fun), do: nil
   defp compare_result(cmp, fun), do: fun.(cmp)

@@ -215,6 +215,29 @@ Context.set_attributes(context, %{
 })
 ```
 
+Audience filters can also use `application` and `environment`, the application and environment names configured in the SDK. They are always available, but they are not real attributes: they are not published (the collector adds them on its side) and `get_attributes/1` does not return them. Names that are not configured or empty are left out. An attribute you set with the same name, at any time, takes precedence:
+
+```elixir
+Context.set_attribute(context, "environment", "staging") # audiences now see "staging"
+```
+
+Audience filters and assignment-rule conditions can compare versions with `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte`. A leading `v` and any `+build` metadata are ignored, missing parts count as `0` (`1.2` equals `1.2.0`), numeric parts compare as numbers (`1.10.0` is greater than `1.9.0`) and a pre-release sorts before its release (`1.0.0-beta` is less than `1.0.0`). A value that is missing or empty matches none of them.
+
+```json
+{"filter": [{"semver_gte": [{"var": "app_version"}, {"value": "2.4.0"}]}]}
+```
+
+### Assignment Rules
+
+An experiment's assignment rules, set in the Web Console, are evaluated in order, and the first matching rule takes precedence over audience targeting, traffic allocation, the full-on variant and custom assignments. Only `set_override/3` wins over a rule.
+
+- An `assign` rule gives a fixed variant.
+- A `split` rule randomizes the unit over its own percentages, e.g. `20/30/50`. While the experiment's unit is missing, a split rule gives the full-on variant (0 for an experiment that is not full-on); once the unit is set, the next read randomizes it, unless that variant was already exposed.
+
+Rule conditions see the same attributes as audience filters, including `application` and `environment`. Rules can also be scoped to environments; a rule scoped to environments never matches when the SDK has no environment configured. If the first matching rule's variant is out of range, or its split does not have one percentage per variant, normal assignment applies and later rules are not tried. Rules that are not valid are skipped.
+
+Exposures from a rule are published with `ruleOverride: true` (and `assigned: false`) so they can be excluded from analysis. A cached assignment is re-evaluated, and exposed again, when an attribute change or a refresh changes the outcome of the rules.
+
 ### Custom Assignments
 
 Custom assignments allow you to implement your own assignment logic while still benefiting from ABsmartly's analytics.
@@ -515,6 +538,22 @@ defmodule MyAppWeb.Router do
   end
 end
 ```
+
+## Changelog
+
+### Assignment rules, semver operators and a versioned `X-Agent`
+
+- **Assignment rules.** `assign` and `split` rules from an experiment's `assignmentRules` are applied (see [Assignment Rules](#assignment-rules)), and exposures carry a new `ruleOverride` flag. An `assignmentRules` value that is not a JSON string, or not valid JSON, is ignored for that experiment only.
+- **Semver operators.** `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte` for audience filters and rule conditions.
+- **`X-Agent`** is now `absmartly-elixir-sdk/<version>` (e.g. `absmartly-elixir-sdk/1.0.0`) instead of `absmartly-elixir-sdk`, so the collector can report which SDK version sent each request.
+
+### Audiences always see `application` and `environment`
+
+**Before:** audience filters saw only the attributes you set. The Web Console offers `application` and `environment` as attributes because the collector adds them to every event, but the SDK never had them, so a condition on either evaluated against a missing value and never matched.
+
+**After:** the SDK always evaluates audiences with `application` and `environment` set to the names configured in the SDK. An attribute you set with the same name, at any time, overrides them. Names that are not configured or empty are left out. They are not published (the collector adds them server-side) and `get_attributes/1` does not return them. The SDK never injects `app_version` (one you set yourself with `Context.set_attribute(context, "app_version", ...)` is still used and published like any other attribute).
+
+**This changes assignment for running experiments.** A unit in an experiment with Audience enforced (`audienceStrict`) and an `environment` or `application` condition currently gets variant 0, even when it matches the condition and even when the experiment is full-on. After upgrading, a matching unit is randomised normally (or gets the full-on variant). Those experiments are broken today; this release fixes them, but their exposures will change. This SDK has never injected `app_version`, so audiences can only use an `app_version` value you set yourself (unchanged by this release).
 
 ## About A/B Smartly
 

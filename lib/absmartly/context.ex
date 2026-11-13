@@ -4,6 +4,7 @@ defmodule ABSmartly.Context do
   require Logger
 
   alias ABSmartly.{
+    AssignmentRules,
     Types,
     Utils,
     VariantAssigner,
@@ -36,6 +37,7 @@ defmodule ABSmartly.Context do
     :event_handler,
     :exposed_experiments,
     :audience_cache,
+    :rules_cache,
     :data_fetcher,
     attrs_seq: 0,
     pending_waiters: [],
@@ -358,6 +360,7 @@ defmodule ABSmartly.Context do
       event_handler: context_config.event_handler,
       exposed_experiments: MapSet.new(),
       audience_cache: %{},
+      rules_cache: %{},
       data_fetcher: data_fetcher,
       pending_waiters: [],
       exposure_count: 0,
@@ -425,7 +428,8 @@ defmodule ABSmartly.Context do
   end
 
   defp mark_ready(state, context_data, indexes \\ nil) do
-    {var_index, exp_index, aud_cache} = indexes || build_indexes(context_data.experiments)
+    {var_index, exp_index, aud_cache, rules_cache} =
+      indexes || build_indexes(context_data.experiments)
 
     state = %{
       state
@@ -433,7 +437,8 @@ defmodule ABSmartly.Context do
         ready: true,
         variable_index: var_index,
         experiment_index: exp_index,
-        audience_cache: aud_cache
+        audience_cache: aud_cache,
+        rules_cache: rules_cache
     }
 
     # Emit before waking waiters so the event is observable once
@@ -492,7 +497,9 @@ defmodule ABSmartly.Context do
           if Map.has_key?(state.units, key) && Map.get(state.units, key) != uid_str do
             {:reply, {:error, "Unit '#{key}' UID already set."}, state}
           else
-            {:reply, :ok, %{state | units: Map.put(state.units, key, uid_str)}}
+            added = if Map.has_key?(state.units, key), do: [], else: [key]
+            state = %{state | units: Map.put(state.units, key, uid_str)}
+            {:reply, :ok, invalidate_rules_missing_unit(state, added)}
           end
       end
     end
@@ -521,7 +528,9 @@ defmodule ABSmartly.Context do
             Map.put(acc, key, uid_str)
           end)
 
-        {:reply, :ok, %{state | units: new_units}}
+        added = Map.keys(new_units) -- Map.keys(state.units)
+        state = %{state | units: new_units}
+        {:reply, :ok, invalidate_rules_missing_unit(state, added)}
       catch
         {:duplicate_unit, key} ->
           {:reply, {:error, "Unit '#{key}' UID already set."}, state}
@@ -623,7 +632,7 @@ defmodule ABSmartly.Context do
     state = %{
       state
       | custom_assignments: Map.put(state.custom_assignments, name, variant),
-        exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+        exposed_experiments: reset_exposed_for_custom(state, state.exposed_experiments, name)
     }
 
     {:reply, :ok, state}
@@ -637,7 +646,7 @@ defmodule ABSmartly.Context do
         {state.custom_assignments, state.exposed_experiments},
         fn {experiment_name, variant}, {ca_acc, exp_acc} ->
           name = to_string(experiment_name)
-          {Map.put(ca_acc, name, variant), MapSet.delete(exp_acc, name)}
+          {Map.put(ca_acc, name, variant), reset_exposed_for_custom(state, exp_acc, name)}
         end
       )
 
@@ -959,7 +968,8 @@ defmodule ABSmartly.Context do
           overridden: override != nil,
           full_on: false,
           custom: false,
-          audience_mismatch: false
+          audience_mismatch: false,
+          rule_override: false
         }
 
         queue_exposure(state, experiment_name, exposure)
@@ -1017,7 +1027,8 @@ defmodule ABSmartly.Context do
             acc_state
           end
 
-        if found == nil && (assignment.assigned || assignment.overridden) do
+        if found == nil &&
+             (assignment.assigned || assignment.overridden || assignment.rule_override) do
           variant_data = Enum.at(exp.variants, assignment.variant)
 
           if variant_data do
@@ -1363,7 +1374,7 @@ defmodule ABSmartly.Context do
     Types.PublishEvent.to_map(publish_event)
   end
 
-  defp do_refresh(state, context_data, {var_index, exp_index, aud_cache}) do
+  defp do_refresh(state, context_data, {var_index, exp_index, aud_cache, rules_cache}) do
     changed_names = changed_experiment_names(state.data.experiments, context_data.experiments)
 
     assignments =
@@ -1385,6 +1396,7 @@ defmodule ABSmartly.Context do
         variable_index: var_index,
         experiment_index: exp_index,
         audience_cache: aud_cache,
+        rules_cache: rules_cache,
         exposed_experiments: exposed_experiments
     }
 
@@ -1409,14 +1421,15 @@ defmodule ABSmartly.Context do
         eligible: true,
         full_on: false,
         custom: false,
-        audience_mismatch: false
+        audience_mismatch: false,
+        rule_override: false
       }
 
       {assignment, state}
     else
       cached = Map.get(state.assignments, name)
 
-      {cached, state} = maybe_reassign_for_audience(cached, state, experiment, name)
+      {cached, state} = maybe_reassign(cached, state, experiment, name)
 
       {assignment, state} =
         if cached != nil do
@@ -1437,61 +1450,126 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # A new custom assignment re-exposes the experiment, except when its cached
+  # assignment was won by a rule: a rule wins over a custom assignment (as in
+  # the JavaScript SDK, a custom mismatch is not staleness for it), so the
+  # served variant and its exposure stay the same, and an exposed split
+  # resolved without its unit stays pinned.
+  defp reset_exposed_for_custom(state, exposed, name) do
+    case Map.get(state.assignments, name) do
+      %Types.Assignment{rule_override: true} -> exposed
+      _ -> MapSet.delete(exposed, name)
+    end
+  end
+
   # As in the JavaScript SDK, a custom assignment only replaces a randomized
   # assignment: not a full-on, traffic-excluded, missing-unit or strict
   # audience-excluded one (those are all unassigned or ineligible).
   defp custom_applies?(custom, assignment),
     do: custom != nil and assignment.assigned and assignment.eligible and not assignment.full_on
 
-  defp maybe_reassign_for_audience(nil, state, _experiment, _name), do: {nil, state}
+  defp maybe_reassign(nil, state, _experiment, _name), do: {nil, state}
 
-  defp maybe_reassign_for_audience(cached, state, experiment, name) do
-    has_audience = experiment.audience != nil and experiment.audience != ""
+  # Mirrors the JavaScript SDK's `audienceMatches` (context.ts).
+  defp maybe_reassign(cached, state, experiment, name) do
+    rules_changed = cached.rule_key != experiment.assignment_rules
 
-    if has_audience and cached.audience_match_seq < state.attrs_seq do
-      # An indeterminate (nil) audience result keeps the cached flag, like the
-      # JavaScript SDK's `audienceMatches`.
-      new_mismatch =
-        case audience_result(state, experiment) do
-          nil -> cached.audience_mismatch
-          result -> not result
-        end
+    cond do
+      rules_changed and experiment.assignment_rules == nil and
+          (cached.rule_variant != nil or cached.rule_override) ->
+        reassign(state, experiment, name)
 
-      if new_mismatch != cached.audience_mismatch do
-        new_assignment = assign_variant(state, experiment)
+      rules_changed or cached.audience_match_seq < state.attrs_seq ->
+        recheck(cached, state, experiment, name)
 
-        state = %{
-          state
-          | assignments: Map.put(state.assignments, name, new_assignment),
-            exposed_experiments: MapSet.delete(state.exposed_experiments, name)
-        }
-
-        {new_assignment, state}
-      else
-        updated = %{cached | audience_match_seq: state.attrs_seq}
-        state = %{state | assignments: Map.put(state.assignments, name, updated)}
-        {updated, state}
-      end
-    else
-      {cached, state}
+      true ->
+        {cached, state}
     end
   end
 
-  # Same decision order as the JavaScript SDK's `_assign` (context.ts): the
-  # audience is evaluated first, a strict mismatch forces variant 0, a full-on
+  defp recheck(cached, state, experiment, name) do
+    with {:ok, cached} <- recheck_rule(cached, state, experiment, name),
+         :ok <- recheck_audience(cached, state, experiment) do
+      updated = %{
+        cached
+        | rule_key: experiment.assignment_rules,
+          audience_match_seq: state.attrs_seq
+      }
+
+      {updated, %{state | assignments: Map.put(state.assignments, name, updated)}}
+    else
+      :stale -> reassign(state, experiment, name)
+    end
+  end
+
+  # Experiments without (parseable) rules resolve to no rule, so a rule
+  # variant cached from rules that were since replaced by invalid ones is stale.
+  defp recheck_rule(cached, state, experiment, name) do
+    # An exposed split resolved without its unit keeps resolving as if the
+    # unit were still missing, so a unit set afterwards cannot switch the
+    # variant the user already saw.
+    pinned_missing =
+      cached.rule_missing_unit and MapSet.member?(state.exposed_experiments, name)
+
+    {rule_variant, missing_unit} = resolve_rule(state, experiment, pinned_missing)
+
+    if rule_variant == cached.rule_variant,
+      do: {:ok, %{cached | rule_missing_unit: missing_unit}},
+      else: :stale
+  end
+
+  defp recheck_audience(%{rule_override: true}, _state, _experiment), do: :ok
+
+  defp recheck_audience(cached, state, experiment) do
+    # An indeterminate (nil) audience result keeps the cached flag.
+    new_mismatch =
+      case audience_result(state, experiment) do
+        nil -> cached.audience_mismatch
+        result -> not result
+      end
+
+    if new_mismatch == cached.audience_mismatch, do: :ok, else: :stale
+  end
+
+  defp reassign(state, experiment, name) do
+    assignment = assign_variant(state, experiment)
+
+    state = %{
+      state
+      | assignments: Map.put(state.assignments, name, assignment),
+        exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+    }
+
+    {assignment, state}
+  end
+
+  # Same decision order as the JavaScript SDK's `_assign` (context.ts): a
+  # matching assignment rule wins over everything but an override, then the
+  # audience is evaluated, a strict mismatch forces variant 0, a full-on
   # experiment is assigned its full-on variant even without a unit, and only a
   # running experiment needs the unit for the traffic and variant split.
   defp assign_variant(state, experiment) do
-    unit_type = experiment.unit_type || "session_id"
-    uid = Map.get(state.units, unit_type)
-    base = %{base_assignment(experiment) | audience_match_seq: state.attrs_seq}
+    {rule_variant, missing_unit} = resolve_rule(state, experiment, false)
 
-    audience_mismatch =
-      case audience_result(state, experiment) do
-        false -> true
-        _ -> false
-      end
+    base = %{
+      base_assignment(experiment)
+      | audience_match_seq: state.attrs_seq,
+        rule_key: experiment.assignment_rules,
+        rule_variant: rule_variant,
+        rule_missing_unit: missing_unit
+    }
 
+    if rule_variant != nil do
+      %{base | variant: rule_variant, rule_override: true}
+    else
+      assign_without_rule(state, experiment, base)
+    end
+  end
+
+  defp assign_without_rule(state, experiment, base) do
+    uid = Map.get(state.units, unit_type(experiment))
+
+    audience_mismatch = audience_result(state, experiment) == false
     base = %{base | audience_mismatch: audience_mismatch}
 
     cond do
@@ -1523,6 +1601,46 @@ defmodule ABSmartly.Context do
     end
   end
 
+  defp resolve_rule(state, experiment, pinned_missing) do
+    uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
+
+    AssignmentRules.resolve(
+      Map.get(state.rules_cache, experiment.name),
+      experiment,
+      rules_environment(state),
+      evaluation_vars(state),
+      uid
+    )
+  end
+
+  defp unit_type(experiment), do: experiment.unit_type || "session_id"
+
+  defp rules_environment(state) do
+    case Map.get(state.sdk_config, :environment) do
+      "" -> nil
+      environment -> environment
+    end
+  end
+
+  # Like the JavaScript SDK's `_invalidateAssignmentsPinnedWithMissingUnit`:
+  # a split rule resolved without its unit is dropped once that unit is set,
+  # so the next read randomizes it. An exposed one is kept (it stays pinned
+  # to the variant the user already saw).
+  defp invalidate_rules_missing_unit(state, []), do: state
+
+  defp invalidate_rules_missing_unit(state, added_unit_types) do
+    assignments =
+      Map.reject(state.assignments, fn {name, assignment} ->
+        experiment = Map.get(state.experiment_index, name)
+
+        assignment.rule_missing_unit and experiment != nil and
+          unit_type(experiment) in added_unit_types and
+          not MapSet.member?(state.exposed_experiments, name)
+      end)
+
+    %{state | assignments: assignments}
+  end
+
   defp base_assignment(experiment) do
     %Types.Assignment{
       id: experiment.id,
@@ -1535,7 +1653,8 @@ defmodule ABSmartly.Context do
       eligible: true,
       full_on: false,
       custom: false,
-      audience_mismatch: false
+      audience_mismatch: false,
+      rule_override: false
     }
   end
 
@@ -1551,14 +1670,32 @@ defmodule ABSmartly.Context do
         nil
 
       _audience ->
-        attrs_list =
-          Enum.map(state.attributes, fn attr ->
-            %{"name" => attr.name, "value" => attr.value}
-          end)
-
-        Matcher.evaluate(Map.get(state.audience_cache, experiment.name), attrs_list)
+        Matcher.evaluate(Map.get(state.audience_cache, experiment.name), evaluation_vars(state))
     end
   end
+
+  # The map audience filters are evaluated against: the SDK's `application` and
+  # `environment` names first (the collector adds the same two to every event
+  # server-side, so audiences can target them), then the user-set attributes on
+  # top so a value the user set with the same name always wins, even one set
+  # after an assignment was cached. Empty/absent system names are left out
+  # rather than mapped to nil. `app_version` is deliberately not injected.
+  # Mirrors the JavaScript SDK's `_getAttributesMap`.
+  defp evaluation_vars(state) do
+    Enum.reduce(state.attributes, system_attributes(state), fn attr, acc ->
+      Map.put(acc, attr.name, attr.value)
+    end)
+  end
+
+  defp system_attributes(state) do
+    %{}
+    |> put_non_empty("application", Map.get(state.sdk_config, :application))
+    |> put_non_empty("environment", Map.get(state.sdk_config, :environment))
+  end
+
+  defp put_non_empty(map, _key, nil), do: map
+  defp put_non_empty(map, _key, ""), do: map
+  defp put_non_empty(map, key, value), do: Map.put(map, key, value)
 
   defp full_on?(experiment) do
     experiment.full_on_variant != nil && experiment.full_on_variant > 0
@@ -1601,7 +1738,7 @@ defmodule ABSmartly.Context do
   defp parse_audience(_), do: nil
 
   defp create_exposure(experiment, assignment) do
-    unit_type = experiment.unit_type || "session_id"
+    unit_type = unit_type(experiment)
 
     %Types.Exposure{
       id: experiment.id,
@@ -1614,7 +1751,8 @@ defmodule ABSmartly.Context do
       overridden: assignment.overridden,
       full_on: assignment.full_on,
       custom: assignment.custom,
-      audience_mismatch: assignment.audience_mismatch
+      audience_mismatch: assignment.audience_mismatch,
+      rule_override: assignment.rule_override
     }
   end
 
@@ -1651,7 +1789,17 @@ defmodule ABSmartly.Context do
 
     reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
 
-    {reversed_var_index, exp_index, aud_cache}
+    # Parsed once per installed data, so an experiment's rules are not
+    # re-decoded on every assignment.
+    rules_cache =
+      Enum.reduce(experiments, %{}, fn experiment, cache ->
+        case AssignmentRules.parse(experiment.assignment_rules) do
+          nil -> cache
+          rules -> Map.put(cache, experiment.name, rules)
+        end
+      end)
+
+    {reversed_var_index, exp_index, aud_cache, rules_cache}
   end
 
   # Assignments are sticky across a refresh, as in the JavaScript SDK's
@@ -1704,7 +1852,8 @@ defmodule ABSmartly.Context do
         data: %Types.ContextData{experiments: []},
         variable_index: %{},
         experiment_index: %{},
-        audience_cache: %{}
+        audience_cache: %{},
+        rules_cache: %{}
     }
 
     emit_event(state, :error, reason)
