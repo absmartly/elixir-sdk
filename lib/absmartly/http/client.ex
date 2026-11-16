@@ -8,6 +8,16 @@ defmodule ABSmartly.HTTP.Client do
 
   @default_timeout 30_000
 
+  # "<name>/<version>", e.g. "absmartly-elixir-sdk/1.0.0", so the collector can
+  # report which SDK and version sent each request. The version is the one in
+  # mix.exs, which is also the version published to Hex.
+  @agent "absmartly-elixir-sdk/#{Mix.Project.config()[:version]}"
+
+  @doc """
+  The value sent as the `X-Agent` header: `"absmartly-elixir-sdk/<version>"`.
+  """
+  def agent, do: @agent
+
   @doc """
   Fetch context data from API endpoint.
 
@@ -97,7 +107,7 @@ defmodule ABSmartly.HTTP.Client do
       {"X-Application", application},
       {"X-Environment", environment},
       {"X-Application-Version", "0"},
-      {"X-Agent", "absmartly-elixir-sdk"},
+      {"X-Agent", @agent},
       {"Content-Type", "application/json"}
     ]
   end

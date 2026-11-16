@@ -1,17 +1,21 @@
 defmodule ABSmartly.MixProject do
   use Mix.Project
 
+  @version "1.0.0"
+  @source_url "https://github.com/absmartly/elixir-sdk"
+
   def project do
     [
       app: :absmartly,
-      version: "1.0.0",
+      version: @version,
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: "ABSmartly SDK for Elixir",
       package: package(),
+      docs: docs(),
       name: "ABSmartly",
-      source_url: "https://github.com/absmartly/elixir-sdk"
+      source_url: @source_url
     ]
   end
 
@@ -34,7 +38,15 @@ defmodule ABSmartly.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => "https://github.com/absmartly/elixir-sdk"}
+      links: %{"GitHub" => @source_url}
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md"],
+      source_ref: "v#{@version}"
     ]
   end
 end
