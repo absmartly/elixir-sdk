@@ -67,6 +67,8 @@ defmodule ABSmartly.SystemAttributesTest do
     Jason.encode!(%{"filter" => [%{"eq" => [%{"var" => var}, %{"value" => value}]}]})
   end
 
+  defp absent(var), do: Jason.encode!(%{"filter" => [%{"null" => %{"var" => var}}]})
+
   defp sdk_config(opts) do
     %Types.SDKConfig{
       endpoint: Keyword.get(opts, :endpoint, "https://test.absmartly.io/v1"),
@@ -194,6 +196,27 @@ defmodule ABSmartly.SystemAttributesTest do
     test "app_version is never injected, so a filter on it does not match" do
       ctx = start_context(experiment(filter("app_version", "1.0.0")))
       assert Context.treatment(ctx, "exp_system") == 0
+    end
+
+    # `{"null": {"var": name}}` matches only when the evaluation map has no
+    # value for the name, so these prove absence, not just a different value.
+    test "app_version is absent from the evaluation map" do
+      ctx = start_context(experiment(absent("app_version")))
+      assert Context.treatment(ctx, "exp_system") == 1
+    end
+
+    test "configured application and environment are present in the evaluation map" do
+      for name <- ["application", "environment"] do
+        ctx = start_context(experiment(absent(name)))
+        assert Context.treatment(ctx, "exp_system") == 0, name
+      end
+    end
+
+    test "a null or empty configured application or environment is absent" do
+      for name <- ["application", "environment"], value <- [nil, ""] do
+        ctx = start_context(experiment(absent(name)), [{String.to_atom(name), value}])
+        assert Context.treatment(ctx, "exp_system") == 1, "#{name} = #{inspect(value)}"
+      end
     end
 
     test "system attributes are not returned by get_attributes" do

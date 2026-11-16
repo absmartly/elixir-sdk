@@ -360,6 +360,27 @@ defmodule ABSmartly.AssignmentRulesTest do
       assert Context.peek(ctx, "exp_test_abc") == 1
     end
 
+    # The environments scope is the configured environment; only the
+    # conditions see the user-set one.
+    test "a user-set environment does not change the rule's environment scope" do
+      staging = %{"eq" => [%{"var" => "environment"}, %{"value" => "staging"}]}
+      attributes = [%{"name" => "environment", "value" => "staging"}]
+
+      {ctx, _} =
+        start_context(experiment(rules([assign("prod", staging, 1, ["production"])])),
+          attributes: attributes
+        )
+
+      assert Context.treatment(ctx, "exp_test_abc") == 1
+
+      {ctx, _} =
+        start_context(experiment(rules([assign("staging", nil, 1, ["staging"])])),
+          attributes: attributes
+        )
+
+      assert Context.treatment(ctx, "exp_test_abc") == normal_variant()
+    end
+
     test "rule conditions can use semver operators" do
       condition = %{"semver_gte" => [%{"var" => "app_version"}, %{"value" => "2.4.0"}]}
       {ctx, _} = start_context(experiment(rules([assign("new", condition, 1)])))
