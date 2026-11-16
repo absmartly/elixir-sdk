@@ -39,6 +39,7 @@ defmodule ABSmartly.Context do
     :audience_cache,
     :rules_cache,
     :data_fetcher,
+    :attrs_map,
     attrs_seq: 0,
     pending_waiters: [],
     exposure_count: 0,
@@ -1427,6 +1428,7 @@ defmodule ABSmartly.Context do
 
       {assignment, state}
     else
+      state = cache_evaluation_vars(state, experiment)
       cached = Map.get(state.assignments, name)
 
       {cached, state} = maybe_reassign(cached, state, experiment, name)
@@ -1601,16 +1603,24 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # Without parsed rules there is nothing to resolve, so the evaluation map is
+  # not needed.
   defp resolve_rule(state, experiment, pinned_missing) do
-    uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
+    case Map.get(state.rules_cache, experiment.name) do
+      nil ->
+        {nil, false}
 
-    AssignmentRules.resolve(
-      Map.get(state.rules_cache, experiment.name),
-      experiment,
-      rules_environment(state),
-      evaluation_vars(state),
-      uid
-    )
+      rules ->
+        uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
+
+        AssignmentRules.resolve(
+          rules,
+          experiment,
+          rules_environment(state),
+          evaluation_vars(state),
+          uid
+        )
+    end
   end
 
   defp unit_type(experiment), do: experiment.unit_type || "session_id"
@@ -1674,6 +1684,29 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # Builds the evaluation map once per attribute change, and only for an
+  # experiment that needs it (one with parsed rules or an audience), so it is
+  # shared by every experiment assigned before the next change. Mirrors the
+  # JavaScript SDK's `_getAttributesMap` cache.
+  defp cache_evaluation_vars(state, experiment) do
+    needs_vars =
+      Map.has_key?(state.rules_cache, experiment.name) or
+        experiment.audience not in [nil, ""]
+
+    case state.attrs_map do
+      {seq, _vars} when seq == state.attrs_seq -> state
+      _ when needs_vars -> %{state | attrs_map: {state.attrs_seq, build_evaluation_vars(state)}}
+      _ -> state
+    end
+  end
+
+  defp evaluation_vars(state) do
+    case state.attrs_map do
+      {seq, vars} when seq == state.attrs_seq -> vars
+      _ -> build_evaluation_vars(state)
+    end
+  end
+
   # The map audience filters are evaluated against: the SDK's `application` and
   # `environment` names first (the collector adds the same two to every event
   # server-side, so audiences can target them), then the user-set attributes on
@@ -1681,7 +1714,7 @@ defmodule ABSmartly.Context do
   # after an assignment was cached. Empty/absent system names are left out
   # rather than mapped to nil. `app_version` is deliberately not injected.
   # Mirrors the JavaScript SDK's `_getAttributesMap`.
-  defp evaluation_vars(state) do
+  defp build_evaluation_vars(state) do
     Enum.reduce(state.attributes, system_attributes(state), fn attr, acc ->
       Map.put(acc, attr.name, attr.value)
     end)
