@@ -543,9 +543,15 @@ end
 
 ### Assignment rules, semver operators and a versioned `X-Agent`
 
-- **Assignment rules.** `assign` and `split` rules from an experiment's `assignmentRules` are applied (see [Assignment Rules](#assignment-rules)), and exposures carry a new `ruleOverride` flag. An `assignmentRules` value that is not a JSON string, or not valid JSON, is ignored for that experiment only.
+#### Added
+
+- **Assignment rules.** `assign` and `split` rules from an experiment's `assignmentRules` are applied (see [Assignment Rules](#assignment-rules)). An `assignmentRules` value that is not a JSON string, or not valid JSON, is ignored for that experiment only.
 - **Semver operators.** `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte` for audience filters and rule conditions.
-- **`X-Agent`** is now `absmartly-elixir-sdk/<version>` (e.g. `absmartly-elixir-sdk/1.0.0`) instead of `absmartly-elixir-sdk`, so the collector can report which SDK version sent each request.
+
+#### Changed
+
+- **Exposures carry `ruleOverride`.** `ABSmartly.Types.Exposure` (the `:exposure` event's data) has a new `rule_override` field, and every published exposure now has a `ruleOverride` key: `true` when a rule chose the variant, `false` for every other exposure (always sent, as in the JavaScript SDK).
+- **`X-Agent` is versioned.** The header, and the value returned by `ABSmartly.HTTP.Client.agent/0`, is now `absmartly-elixir-sdk/<version>` (e.g. `absmartly-elixir-sdk/1.0.0`) instead of `absmartly-elixir-sdk`, so the collector can report which SDK version sent each request.
 
 ### Audiences always see `application` and `environment`
 
