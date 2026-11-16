@@ -1428,7 +1428,6 @@ defmodule ABSmartly.Context do
 
       {assignment, state}
     else
-      state = cache_evaluation_vars(state, experiment)
       cached = Map.get(state.assignments, name)
 
       {cached, state} = maybe_reassign(cached, state, experiment, name)
@@ -1437,6 +1436,7 @@ defmodule ABSmartly.Context do
         if cached != nil do
           {cached, state}
         else
+          state = cache_evaluation_vars(state, experiment)
           assignment = assign_variant(state, experiment)
           {assignment, %{state | assignments: Map.put(state.assignments, name, assignment)}}
         end
@@ -1482,7 +1482,7 @@ defmodule ABSmartly.Context do
         reassign(state, experiment, name)
 
       rules_changed or cached.audience_match_seq < state.attrs_seq ->
-        recheck(cached, state, experiment, name)
+        recheck(cached, cache_evaluation_vars(state, experiment), experiment, name)
 
       true ->
         {cached, state}

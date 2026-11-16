@@ -252,6 +252,24 @@ defmodule ABSmartly.AssignmentRulesTest do
       assert Context.treatment(ctx, "exp_test_abc") == 1
     end
 
+    test "a rule whose conditions fail to evaluate is skipped for the next rule" do
+      bad = [
+        %{"match" => [%{"var" => "country"}, %{"value" => "("}]},
+        %{"semver_gt" => [%{"var" => "country"}, %{"value" => %{}}]},
+        %{"gt" => [%{"value" => [1]}, %{"value" => %{}}]},
+        %{"future_op" => [1]}
+      ]
+
+      rules = Enum.map(bad, &assign("bad", &1, 0)) ++ [assign("All", nil, 1)]
+
+      {ctx, _} =
+        start_context(experiment(rules(rules)),
+          attributes: [%{"name" => "country", "value" => "US"}]
+        )
+
+      assert Context.treatment(ctx, "exp_test_abc") == 1
+    end
+
     test "a rule without conditions matches everyone" do
       rule = %{"type" => "assign", "variant" => 0}
       {ctx, _} = start_context(experiment(rules([rule])))

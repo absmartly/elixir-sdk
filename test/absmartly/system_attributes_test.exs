@@ -193,6 +193,26 @@ defmodule ABSmartly.SystemAttributesTest do
       assert "user_agent" in attr_names
     end
 
+    test "a user-set app_version is evaluated and published" do
+      endpoint = CapturePublisher.start()
+
+      ctx =
+        start_context(
+          experiment(filter("app_version", "2.1.0")),
+          endpoint: endpoint,
+          publisher: CapturePublisher
+        )
+
+      :ok = Context.set_attribute(ctx, "app_version", "2.1.0")
+      assert Context.treatment(ctx, "exp_system") == 1
+      :ok = Context.publish(ctx)
+
+      [event_map] = CapturePublisher.events(endpoint)
+
+      assert [%{"name" => "app_version", "value" => "2.1.0"}] =
+               Enum.filter(event_map["attributes"], &(&1["name"] == "app_version"))
+    end
+
     test "app_version is never injected, so a filter on it does not match" do
       ctx = start_context(experiment(filter("app_version", "1.0.0")))
       assert Context.treatment(ctx, "exp_system") == 0
