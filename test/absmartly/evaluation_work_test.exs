@@ -78,8 +78,15 @@ defmodule ABSmartly.EvaluationWorkTest do
 
     try do
       fun.()
-      # A synchronous call, so every trace message of `fun` has arrived.
+      # A synchronous call, so `fun`'s calls have all run, then wait until
+      # every trace message they generated has been delivered.
       Context.pending(ctx)
+      ref = :erlang.trace_delivered(ctx)
+
+      receive do
+        {:trace_delivered, ^ctx, ^ref} -> :ok
+      end
+
       Map.new(mfas, &{&1, drain(&1, 0)})
     after
       Enum.each(mfas, &:erlang.trace_pattern(&1, false, [:local]))
