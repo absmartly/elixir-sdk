@@ -182,6 +182,27 @@ defmodule ABSmartly.AssignmentRulesTest do
       end
     end
 
+    test "an integral float variant (JSON 1.0 or 1e0) is that integer variant" do
+      for json <- ["1.0", "1e0"] do
+        rules = ~s({"rules":[{"type":"assign","variant":#{json}},{"type":"assign","variant":0}]})
+        {ctx, endpoint} = start_context(experiment(rules))
+
+        assert Context.treatment(ctx, "exp_test_abc") === 1, json
+
+        assert [%{"variant" => variant, "ruleOverride" => true}] =
+                 published_exposures(ctx, endpoint)
+
+        assert variant === 1, json
+      end
+    end
+
+    test "an out-of-range integral float variant falls back without trying later rules" do
+      rules = ~s({"rules":[{"type":"assign","variant":3.0},{"type":"assign","variant":1}]})
+      {ctx, _} = start_context(experiment(rules))
+
+      assert Context.treatment(ctx, "exp_test_abc") == normal_variant()
+    end
+
     test "rules with an invalid action are skipped" do
       bad = [
         %{"type" => "assign", "variant" => 1.5},
@@ -518,6 +539,25 @@ defmodule ABSmartly.AssignmentRulesTest do
 
       :ok = Context.set_attribute(ctx, "country", "US")
       assert Context.treatment(ctx, "exp_test_abc") == normal_variant()
+    end
+
+    # Like the JavaScript SDK, a split only has to sum to 100 within 0.01 after
+    # rounding the gap to two decimals; no single value has to be <= 100.
+    test "a split summing to 100 within the rounded tolerance wins, beyond it is skipped" do
+      for {percentages, expected} <- [
+            {"100.01/0/0", 0},
+            {"100.014/0/0", 0},
+            {"0/100.01/0", 1},
+            {"100.015/0/0", 2},
+            {"100.02/0/0", 2}
+          ] do
+        {ctx, _} =
+          start_context(
+            experiment(rules([split("near", nil, percentages), assign("All", nil, 2)]))
+          )
+
+        assert Context.treatment(ctx, "exp_test_abc") == expected, percentages
+      end
     end
 
     test "a split with invalid percentages is skipped" do

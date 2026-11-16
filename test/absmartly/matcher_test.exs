@@ -144,12 +144,30 @@ defmodule ABSmartly.MatcherTest do
             "rule",
             %{"type" => "assign"},
             %{"type" => "assign", "variant" => 1.5},
+            %{"type" => "assign", "variant" => 1.0e-9},
             %{"type" => "assign", "variant" => "1"},
             %{"type" => "other", "variant" => 1},
             %{"variant" => 1}
           ] do
         assert evaluate_us([rule, @fallback]) == {:variant, 2}, inspect(rule)
       end
+    end
+
+    # JSON `1.0` and `1e0` decode to floats, but like JavaScript's
+    # Number.isInteger they are integral, so they are accepted as variant 1.
+    test "accepts an integral float variant as that integer" do
+      for json <- ["1.0", "1e0", "1.0E0", "10e-1"] do
+        rules =
+          Matcher.parse_rules(
+            ~s({"rules":[{"type":"assign","variant":#{json}},{"type":"assign","variant":2}]})
+          )
+
+        assert {:variant, 1} = result = Matcher.evaluate_rules(rules, "production", %{})
+        assert result === {:variant, 1}, json
+      end
+
+      assert evaluate_us([assign_rule(-0.0)]) === {:variant, 0}
+      assert evaluate_us([assign_rule(3.0e0)]) === {:variant, 3}
     end
 
     test "returns out-of-range variants (bounds checking is the caller's job)" do
@@ -174,7 +192,10 @@ defmodule ABSmartly.MatcherTest do
             "",
             "Infinity/0",
             "1e308/1e308/0",
-            "100.5/0"
+            "100.5/0",
+            "100.015/0",
+            "100.015/0/0",
+            "100.02/0"
           ] do
         assert evaluate_us([split_rule(percentages), @fallback]) == {:variant, 2},
                inspect(percentages)
@@ -184,7 +205,7 @@ defmodule ABSmartly.MatcherTest do
     # Same check as the backend's experiment split: the gap from 100 is rounded
     # to two decimals before being compared with 0.01.
     test "accepts a split whose gap from 100 rounds to 0.01" do
-      for percentages <- ["50/50.014", "50/49.986", "50/50.01"] do
+      for percentages <- ["50/50.014", "50/49.986", "50/50.01", "100.01/0", "100.014/0/0"] do
         expected =
           percentages
           |> String.split("/")

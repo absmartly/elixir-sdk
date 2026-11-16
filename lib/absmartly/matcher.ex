@@ -64,6 +64,11 @@ defmodule ABSmartly.Matcher do
 
   @split_sum_tolerance 0.01
 
+  # No value above this can be part of a split that passes the sum check (its
+  # gap from 100 alone would round above the tolerance), so rejecting it early
+  # changes no result and keeps the sum finite.
+  @max_split_value 101
+
   @doc """
   Parse an experiment's `assignmentRules` JSON into its list of rules.
 
@@ -120,6 +125,12 @@ defmodule ABSmartly.Matcher do
   defp rule_action(%{"type" => "assign", "variant" => variant}) when is_integer(variant),
     do: {:variant, variant}
 
+  # JSON `1.0` and `1e0` decode to floats; like JavaScript's Number.isInteger
+  # they are integral, so they count as that integer variant.
+  defp rule_action(%{"type" => "assign", "variant" => variant})
+       when is_float(variant) and trunc(variant) == variant,
+       do: {:variant, trunc(variant)}
+
   defp rule_action(%{"type" => "split", "percentages" => percentages}),
     do: parse_split(percentages)
 
@@ -162,9 +173,9 @@ defmodule ABSmartly.Matcher do
   defp parse_split(percentages) when is_binary(percentages) do
     values = percentages |> String.split("/") |> Enum.map(&Evaluator.number_convert/1)
 
-    # A valid split never has a value above 100, and bounding them first keeps
-    # the sum finite (two values near the float maximum would overflow).
-    if Enum.all?(values, &(is_number(&1) and &1 >= 0 and &1 <= 100)) do
+    # Bounding the values first keeps the sum finite (two values near the
+    # float maximum would overflow).
+    if Enum.all?(values, &(is_number(&1) and &1 >= 0 and &1 <= @max_split_value)) do
       gap = abs(100 - Enum.sum(values)) |> ABSmartly.Utils.number_to_fixed(2)
 
       if Evaluator.number_convert(gap) <= @split_sum_tolerance,
