@@ -1,8 +1,12 @@
 defmodule ABSmartly.CrossSDKScenariosTest do
   @moduledoc """
   Replays the cross-SDK conformance scenarios for custom assignment rules
-  (230-239), the semver operators (240-245), audience re-evaluation (246-247)
-  and system attributes (248-253) against the real `ABSmartly.Context` API.
+  (230-239, 300-314), the semver operators (240-245, 315-319), audience
+  re-evaluation (246-247), system attributes (248-253) and blank client
+  applications (322-323) against the real `ABSmartly.Context` API.
+
+  A scenario runs unless it `requires` a capability this SDK does not have
+  (see `@unsupported`), as in the cross-SDK harness.
 
   The scenarios are vendored from absmartly/cross-sdk-tests (see the `source`
   field of `test/fixtures/cross_sdk_scenarios.json`); their expected results
@@ -27,11 +31,30 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   @external_resource @fixture
   @scenarios @fixture |> File.read!() |> Jason.decode!() |> Map.fetch!("scenarios")
 
-  for scenario <- @scenarios do
+  # Capabilities a scenario can require that this SDK does not have, or that
+  # this in-process replay cannot drive:
+  # - holdouts: the SDK does not implement holdouts.
+  # - clientRejectsBlankApplication: the SDK accepts a blank application (it
+  #   runs clientAcceptsBlankApplication instead).
+  # - xAgentHeader: needs real HTTP requests; `ABSmartly.HTTPIntegrationTest`
+  #   checks the X-Agent header against these scenarios' patterns.
+  @unsupported ["holdouts", "clientRejectsBlankApplication", "xAgentHeader"]
+
+  for scenario <- @scenarios,
+      not Enum.any?(scenario["requires"] || [], &(&1 in @unsupported)) do
     @scenario scenario
     test scenario["name"] do
       run_scenario(@scenario)
     end
+  end
+
+  # Guards the vendored set: every scenario of the pinned ranges is present,
+  # so dropping one while updating the fixture fails here.
+  test "the fixture has every scenario of 230-253 and 300-323" do
+    numbers =
+      Enum.map(@scenarios, &(&1["name"] |> String.split(" ") |> hd() |> String.to_integer()))
+
+    assert Enum.sort(numbers) == Enum.to_list(230..253) ++ Enum.to_list(300..323)
   end
 
   defp run_scenario(scenario) do
@@ -96,6 +119,7 @@ defmodule ABSmartly.CrossSDKScenariosTest do
         "customAssignment" -> custom_assignment(ctx, params)
         "variableValue" -> Context.variable_value(ctx, params["key"], params["defaultValue"])
         "refresh" -> ok(Context.refresh(ctx, params["newData"]))
+        "setUnit" -> ok(Context.set_unit(ctx, params["unitType"], params["uid"]))
       end
 
     {result, ctx}

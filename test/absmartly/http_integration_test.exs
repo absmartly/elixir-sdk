@@ -46,6 +46,24 @@ defmodule ABSmartly.HTTPIntegrationTest do
               ]
             })
 
+  # The X-Agent patterns of cross-SDK scenarios 320 (GET) and 321 (PUT).
+  @fixture Path.expand("../fixtures/cross_sdk_scenarios.json", __DIR__)
+  @external_resource @fixture
+  @x_agent_patterns @fixture
+                    |> File.read!()
+                    |> Jason.decode!()
+                    |> Map.fetch!("scenarios")
+                    |> Enum.flat_map(& &1["steps"])
+                    |> Enum.filter(&(&1["action"] == "capturedRequests"))
+                    |> Map.new(
+                      &{&1["params"]["method"],
+                       String.replace(
+                         &1["expect"]["headerPatterns"]["X-Agent"],
+                         "{lang}",
+                         "elixir"
+                       )}
+                    )
+
   setup do
     {:ok, server} = start_server()
     on_exit(fn -> stop_server(server) end)
@@ -97,6 +115,13 @@ defmodule ABSmartly.HTTPIntegrationTest do
     assert header(put, "x-application-version") == "0"
     assert header(put, "x-agent") == "absmartly-elixir-sdk/#{Mix.Project.config()[:version]}"
     assert header(put, "content-type") =~ "application/json"
+
+    assert map_size(@x_agent_patterns) == 2
+
+    for request <- [get, put] do
+      pattern = Regex.compile!(Map.fetch!(@x_agent_patterns, request.method))
+      assert header(request, "x-agent") =~ pattern
+    end
 
     body = Jason.decode!(put.body)
     assert body["hashed"] == true
