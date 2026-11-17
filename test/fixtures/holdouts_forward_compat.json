@@ -1,0 +1,58 @@
+{
+  "futureRootField": {"switchbackClusters": {"b": 2, "a": 1}},
+  "experiments": [
+    {
+      "id": 1, "name": "exp_covered_a", "iteration": 1, "unitType": "session_id",
+      "seedHi": 100, "seedLo": 200, "split": [0.5, 0.5],
+      "trafficSeedHi": 1, "trafficSeedLo": 2, "trafficSplit": [0, 1], "fullOnVariant": 0,
+      "applications": [{"name": "website"}],
+      "variants": [{"name": "A", "config": null}, {"name": "B", "config": "{\"color\":\"blue\"}"}],
+      "audience": null, "audienceStrict": false, "customFieldValues": null,
+      "holdoutIds": [11, 12],
+      "holdoutType": "full",
+      "futureHoldoutMode": {"kind": "sticky", "ids": [11]}
+    },
+    {
+      "id": 2, "name": "exp_covered_b", "iteration": 1, "unitType": "user_id",
+      "seedHi": 100, "seedLo": 200, "split": [0.5, 0.5],
+      "trafficSeedHi": 1, "trafficSeedLo": 2, "trafficSplit": [0, 1], "fullOnVariant": 0,
+      "applications": [{"name": "website"}],
+      "variants": [{"name": "A", "config": null}, {"name": "B", "config": null}],
+      "audience": null, "audienceStrict": false, "customFieldValues": null,
+      "holdoutIds": [12, "13", null, 1.5, {"id": 11}, 99]
+    },
+    {
+      "id": 3, "name": "exp_bad_holdout_ids", "iteration": 1, "unitType": "session_id",
+      "seedHi": 100, "seedLo": 200, "split": [0.5, 0.5],
+      "trafficSeedHi": 1, "trafficSeedLo": 2, "trafficSplit": [0, 1], "fullOnVariant": 0,
+      "applications": [{"name": "website"}],
+      "variants": [{"name": "A", "config": null}, {"name": "B", "config": null}],
+      "audience": null, "audienceStrict": false, "customFieldValues": null,
+      "holdoutIds": "11",
+      "holdoutType": 3
+    }
+  ],
+  "holdouts": [
+    {
+      "id": 11, "name": "holdout_a", "iteration": 1, "unitType": "session_id",
+      "seedHi": 13, "seedLo": 111, "split": [0.1, 0.9],
+      "holdoutType": "full",
+      "futureScalar": 7,
+      "futureObject": {"nested": {"deeper": [1, 2, 3]}},
+      "futureArray": [{"x": 1}, "two", 3.5, null],
+      "trafficSplit": [0, 1], "variants": [{"name": "A", "config": null, "futureVariantField": true}]
+    },
+    {
+      "id": 12, "name": "holdout_b", "iteration": 1, "unitType": "session_id",
+      "seedHi": 1, "seedLo": 222, "split": [0.1, 0.9],
+      "futureScalar": "x", "futureObject": {}, "futureArray": []
+    },
+    {"id": "13", "name": "string id", "split": [1, 0]},
+    {"name": "no id", "split": [1, 0]},
+    null,
+    "not an object",
+    42,
+    {"id": 14, "name": "bad split", "split": "1/0"},
+    {"id": 15, "name": "bad seeds", "seedHi": "1", "seedLo": null, "iteration": "2", "split": [0.1, 0.9]}
+  ]
+}

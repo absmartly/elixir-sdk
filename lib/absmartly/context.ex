@@ -44,8 +44,6 @@ defmodule ABSmartly.Context do
     pending_waiters: [],
     exposure_count: 0,
     goal_count: 0,
-    # Holdouts with a non-empty split, by id.
-    holdouts_by_id: %{},
     # The holdouts covering each covered experiment, by experiment name: a
     # list of HoldoutData sorted by id. Experiments without coverage have no
     # entry, so a payload without holdouts costs nothing.
@@ -443,7 +441,7 @@ defmodule ABSmartly.Context do
     {var_index, exp_index, aud_cache, rules_cache} =
       indexes || build_indexes(context_data.experiments)
 
-    {holdouts_by_id, experiment_holdouts} = build_holdout_index(context_data)
+    experiment_holdouts = build_holdout_index(context_data)
 
     state = %{
       state
@@ -453,7 +451,6 @@ defmodule ABSmartly.Context do
         experiment_index: exp_index,
         audience_cache: aud_cache,
         rules_cache: rules_cache,
-        holdouts_by_id: holdouts_by_id,
         experiment_holdouts: experiment_holdouts
     }
 
@@ -1071,21 +1068,16 @@ defmodule ABSmartly.Context do
             do: expose(acc_state, exp.name, exp, assignment),
             else: acc_state
 
-        variant_data = Enum.at(exp.variants, assignment.variant)
-
         cond do
-          variant_data == nil ->
-            {:cont, {fallback, acc_state}}
-
           assignment.assigned || assignment.overridden || assignment.rule_override ->
-            config = parse_variant_config(variant_data["config"])
+            config = variant_config(exp, assignment)
 
             if is_map(config) && Map.has_key?(config, key),
               do: {:halt, {{:found, config[key]}, acc_state}},
               else: {:cont, {fallback, acc_state}}
 
           assignment.suppressed and fallback == nil ->
-            {:cont, {{:suppressed, parse_variant_config(variant_data["config"])}, acc_state}}
+            {:cont, {{:suppressed, variant_config(exp, assignment)}, acc_state}}
 
           true ->
             {:cont, {fallback, acc_state}}
@@ -1101,6 +1093,13 @@ defmodule ABSmartly.Context do
 
       _ ->
         {default_value, state}
+    end
+  end
+
+  defp variant_config(experiment, assignment) do
+    case Enum.at(experiment.variants, assignment.variant) do
+      nil -> nil
+      variant_data -> parse_variant_config(variant_data["config"])
     end
   end
 
@@ -1437,7 +1436,7 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    {holdouts_by_id, experiment_holdouts} = build_holdout_index(context_data)
+    experiment_holdouts = build_holdout_index(context_data)
 
     # Like the JavaScript SDK's `holdoutSetMatches`, a change of the holdouts
     # covering an experiment (their ids or iterations) re-resolves it, even
@@ -1459,7 +1458,6 @@ defmodule ABSmartly.Context do
         audience_cache: aud_cache,
         rules_cache: rules_cache,
         exposed_experiments: exposed_experiments,
-        holdouts_by_id: holdouts_by_id,
         experiment_holdouts: experiment_holdouts
     }
 
@@ -1515,15 +1513,15 @@ defmodule ABSmartly.Context do
   end
 
   # A new custom assignment re-exposes the experiment, except when its cached
-  # assignment was won by a rule or suppressed by a holdout: a rule and a
-  # holdout both win over a custom assignment (as in the JavaScript SDK, a
-  # custom mismatch is not staleness for them), so the served variant and its
-  # exposure stay the same, and an exposed split resolved without its unit
-  # stays pinned.
+  # assignment was won by a rule: a rule wins over a custom assignment (as in
+  # the JavaScript SDK, a custom mismatch is not staleness for it), so the
+  # served variant and its exposure stay the same, and an exposed split
+  # resolved without its unit stays pinned. (A suppressed experiment never
+  # queues its own exposure, and its holdouts expose once, so re-marking it
+  # changes nothing.)
   defp reset_exposed_for_custom(state, exposed, name) do
     case Map.get(state.assignments, name) do
       %Types.Assignment{rule_override: true} -> exposed
-      %Types.Assignment{suppressed: true} -> exposed
       _ -> MapSet.delete(exposed, name)
     end
   end
@@ -1663,13 +1661,13 @@ defmodule ABSmartly.Context do
     end
   end
 
+  # `holdout` is always the installed definition: arms are resolved from the
+  # current index, never from a definition pinned before a refresh.
   defp holdout_arm(state, holdout, unit_type) do
-    # `holdout` may predate a refresh; prefer the live definition.
-    live = Map.get(state.holdouts_by_id, holdout.id, holdout)
-    key = {live.id, unit_type}
+    key = {holdout.id, unit_type}
 
     case Map.get(state.holdout_assignments, key) do
-      %{iteration: iteration} = arm when iteration == live.iteration ->
+      %{iteration: iteration} = arm when iteration == holdout.iteration ->
         {arm, state}
 
       _ ->
@@ -1680,17 +1678,17 @@ defmodule ABSmartly.Context do
           uid ->
             arm = %{
               ref: make_ref(),
-              id: live.id,
-              iteration: live.iteration,
+              id: holdout.id,
+              iteration: holdout.iteration,
               unit_type: unit_type,
               variant:
                 VariantAssigner.assign(
                   Utils.hash_unit(uid),
-                  live.split,
-                  live.seed_hi,
-                  live.seed_lo
+                  holdout.split,
+                  holdout.seed_hi,
+                  holdout.seed_lo
                 ),
-              arm_count: length(live.split)
+              arm_count: length(holdout.split)
             }
 
             {arm, %{state | holdout_assignments: Map.put(state.holdout_assignments, key, arm)}}
@@ -2042,21 +2040,18 @@ defmodule ABSmartly.Context do
           into: %{},
           do: {holdout.id, holdout}
 
-    experiment_holdouts =
-      for %{holdout_ids: [_ | _] = ids} = experiment <- experiments,
-          covering =
-            ids
-            |> Enum.uniq()
-            |> Enum.sort()
-            |> Enum.flat_map(&List.wrap(Map.get(holdouts_by_id, &1))),
-          covering != [],
-          into: %{},
-          do: {experiment.name, covering}
-
-    {holdouts_by_id, experiment_holdouts}
+    for %{holdout_ids: [_ | _] = ids} = experiment <- experiments,
+        covering =
+          ids
+          |> Enum.uniq()
+          |> Enum.sort()
+          |> Enum.flat_map(&List.wrap(Map.get(holdouts_by_id, &1))),
+        covering != [],
+        into: %{},
+        do: {experiment.name, covering}
   end
 
-  defp build_holdout_index(_context_data), do: {%{}, %{}}
+  defp build_holdout_index(_context_data), do: %{}
 
   defp holdout_changed_names(old, new) when old == %{} and new == %{}, do: []
 
@@ -2122,7 +2117,6 @@ defmodule ABSmartly.Context do
         experiment_index: %{},
         audience_cache: %{},
         rules_cache: %{},
-        holdouts_by_id: %{},
         experiment_holdouts: %{}
     }
 

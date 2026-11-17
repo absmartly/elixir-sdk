@@ -46,7 +46,7 @@ defmodule ABSmartly.EvaluationWorkTest do
     })
   end
 
-  defp start_context(experiments, attributes) do
+  defp start_context(experiments, attributes, holdouts \\ []) do
     sdk_config = %Types.SDKConfig{
       endpoint: "https://test.absmartly.io/v1",
       api_key: "test-api-key",
@@ -62,7 +62,7 @@ defmodule ABSmartly.EvaluationWorkTest do
       custom_assignments: %{}
     }
 
-    data = Types.ContextData.from_map(%{"experiments" => experiments})
+    data = Types.ContextData.from_map(%{"experiments" => experiments, "holdouts" => holdouts})
     {:ok, ctx} = Context.start_link(sdk_config, data, context_config)
     ctx
   end
@@ -172,6 +172,32 @@ defmodule ABSmartly.EvaluationWorkTest do
       end)
 
     assert counts == %{@rules => 1}
+    assert Context.pending(ctx) == 1
+  end
+
+  @audience {ABSmartly.Matcher, :evaluate, 2}
+
+  # A held-out unit's assignment never evaluates its audience (the JavaScript
+  # SDK skips it), not on assignment and not after an attribute change.
+  test "a suppressed experiment never evaluates its audience" do
+    experiment =
+      experiment("exp_held_out", audience: Jason.encode!(%{"filter" => [@us]}))
+      |> Map.put("holdoutIds", [11])
+
+    holdout = %{"id" => 11, "name" => "h", "seedHi" => 0, "seedLo" => 0, "split" => [1.0, 0.0]}
+
+    ctx = start_context([experiment], [], [holdout])
+
+    counts =
+      count_calls(ctx, [@audience], fn ->
+        assert Context.treatment(ctx, "exp_held_out") == 0
+        :ok = Context.set_attribute(ctx, "country", "US")
+        assert Context.treatment(ctx, "exp_held_out") == 0
+        :ok = Context.set_attribute(ctx, "country", "GB")
+        assert Context.treatment(ctx, "exp_held_out") == 0
+      end)
+
+    assert counts == %{@audience => 0}
     assert Context.pending(ctx) == 1
   end
 end
