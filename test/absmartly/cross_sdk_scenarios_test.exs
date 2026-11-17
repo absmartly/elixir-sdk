@@ -3,8 +3,9 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   Replays the cross-SDK conformance scenarios for holdouts (203-227), custom
   assignment rules (230-239, 300-314, 324-330), the semver operators (240-245,
   315-319, 331-332), audience re-evaluation (246-247), system attributes
-  (248-253) and blank client applications (322-323) against the real
-  `ABSmartly.Context` API.
+  (248-253), blank client applications (322-323) and switchback inertness
+  (421, ungated: switchback fields in a payload leave unit experiments alone)
+  against the real `ABSmartly.Context` API.
 
   A scenario runs unless it `requires` a capability this SDK does not have
   (see `@unsupported`), as in the cross-SDK harness.
@@ -51,12 +52,13 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
   # Guards the vendored set: every scenario of the pinned ranges is present,
   # so dropping one while updating the fixture fails here.
-  test "the fixture has every scenario of 203-227, 230-253 and 300-332" do
+  test "the fixture has every scenario of 203-227, 230-253, 300-332 and 421" do
     numbers =
       Enum.map(@scenarios, &(&1["name"] |> String.split(" ") |> hd() |> String.to_integer()))
 
     assert Enum.sort(numbers) ==
-             Enum.to_list(203..227) ++ Enum.to_list(230..253) ++ Enum.to_list(300..332)
+             Enum.to_list(203..227) ++
+               Enum.to_list(230..253) ++ Enum.to_list(300..332) ++ [421]
   end
 
   # Guards the gate: every holdout scenario runs here, none is skipped.
