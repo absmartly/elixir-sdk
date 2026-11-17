@@ -1,9 +1,10 @@
 defmodule ABSmartly.CrossSDKScenariosTest do
   @moduledoc """
-  Replays the cross-SDK conformance scenarios for custom assignment rules
-  (230-239, 300-314), the semver operators (240-245, 315-319), audience
-  re-evaluation (246-247), system attributes (248-253) and blank client
-  applications (322-323) against the real `ABSmartly.Context` API.
+  Replays the cross-SDK conformance scenarios for holdouts (203-227), custom
+  assignment rules (230-239, 300-314, 324-330), the semver operators (240-245,
+  315-319, 331-332), audience re-evaluation (246-247), system attributes
+  (248-253) and blank client applications (322-323) against the real
+  `ABSmartly.Context` API.
 
   A scenario runs unless it `requires` a capability this SDK does not have
   (see `@unsupported`), as in the cross-SDK harness.
@@ -11,8 +12,9 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   The scenarios are vendored from absmartly/cross-sdk-tests (see the `source`
   field of `test/fixtures/cross_sdk_scenarios.json`); their expected results
   and events were recorded from the JavaScript reference SDK. As in the
-  harness, an expected event's `data` is matched on the keys it lists, and a
-  step's `events` must be exactly the events that step emitted, in order.
+  harness, an expected event's `data` is matched on the keys it lists (at
+  every depth; lists must have the same length), and a step's `events` must be
+  exactly the events that step emitted, in order.
 
   The fixture stores one scenario per line, so a diff shows which scenarios
   changed. To update it, copy the scenarios from cross-sdk-tests'
@@ -33,12 +35,11 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
   # Capabilities a scenario can require that this SDK does not have, or that
   # this in-process replay cannot drive:
-  # - holdouts: the SDK does not implement holdouts.
   # - clientRejectsBlankApplication: the SDK accepts a blank application (it
   #   runs clientAcceptsBlankApplication instead).
   # - xAgentHeader: needs real HTTP requests; `ABSmartly.HTTPIntegrationTest`
   #   checks the X-Agent header against these scenarios' patterns.
-  @unsupported ["holdouts", "clientRejectsBlankApplication", "xAgentHeader"]
+  @unsupported ["clientRejectsBlankApplication", "xAgentHeader"]
 
   for scenario <- @scenarios,
       not Enum.any?(scenario["requires"] || [], &(&1 in @unsupported)) do
@@ -50,11 +51,21 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
   # Guards the vendored set: every scenario of the pinned ranges is present,
   # so dropping one while updating the fixture fails here.
-  test "the fixture has every scenario of 230-253 and 300-323" do
+  test "the fixture has every scenario of 203-227, 230-253 and 300-332" do
     numbers =
       Enum.map(@scenarios, &(&1["name"] |> String.split(" ") |> hd() |> String.to_integer()))
 
-    assert Enum.sort(numbers) == Enum.to_list(230..253) ++ Enum.to_list(300..323)
+    assert Enum.sort(numbers) ==
+             Enum.to_list(203..227) ++ Enum.to_list(230..253) ++ Enum.to_list(300..332)
+  end
+
+  # Guards the gate: every holdout scenario runs here, none is skipped.
+  test "every holdout scenario runs" do
+    holdout_scenarios =
+      Enum.filter(@scenarios, &Enum.any?(&1["requires"] || [], fn r -> r =~ "holdout" end))
+
+    assert length(holdout_scenarios) == 25
+    refute Enum.any?(holdout_scenarios, &Enum.any?(&1["requires"], fn r -> r in @unsupported end))
   end
 
   defp run_scenario(scenario) do
@@ -82,7 +93,10 @@ defmodule ABSmartly.CrossSDKScenariosTest do
     end)
   end
 
-  defp run_step(%{"action" => "createContextWith", "params" => params}, nil, scenario, events) do
+  # Both create the context from the scenario's data: the harness serves it
+  # from its mock collector for createContext.
+  defp run_step(%{"action" => create, "params" => params}, nil, scenario, events)
+       when create in ["createContext", "createContextWith"] do
     # Without a `client` the harness uses its fixed test application and
     # environment; a `client` that leaves a name out means it is not configured.
     client = params["client"] || %{"application" => "test-app", "environment" => "test"}
@@ -118,6 +132,8 @@ defmodule ABSmartly.CrossSDKScenariosTest do
         "override" -> ok(Context.set_override(ctx, params["experimentName"], params["variant"]))
         "customAssignment" -> custom_assignment(ctx, params)
         "variableValue" -> Context.variable_value(ctx, params["key"], params["defaultValue"])
+        "peekVariableValue" -> peek_variable_value(ctx, params)
+        "publish" -> ok(Context.publish(ctx))
         "refresh" -> ok(Context.refresh(ctx, params["newData"]))
         "setUnit" -> ok(Context.set_unit(ctx, params["unitType"], params["uid"]))
       end
@@ -127,6 +143,9 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
   defp custom_assignment(ctx, params),
     do: ok(Context.set_custom_assignment(ctx, params["experimentName"], params["variant"]))
+
+  defp peek_variable_value(ctx, params),
+    do: Context.peek_variable_value(ctx, params["key"], params["defaultValue"])
 
   defp ok(:ok), do: nil
 
@@ -143,8 +162,20 @@ defmodule ABSmartly.CrossSDKScenariosTest do
     actual = normalize(actual)
 
     for {key, value} <- expected do
-      assert Map.get(actual, key) == value,
+      assert Map.has_key?(actual, key) and matches?(Map.get(actual, key), value),
              "#{type} event #{key}: expected #{inspect(value)}, got #{inspect(Map.get(actual, key))}"
     end
   end
+
+  # The harness's values_match: objects match on the keys they list, lists
+  # positionally with the same length.
+  defp matches?(%{} = actual, %{} = expected),
+    do: Enum.all?(expected, fn {k, v} -> Map.has_key?(actual, k) and matches?(actual[k], v) end)
+
+  defp matches?(actual, expected) when is_list(actual) and is_list(expected),
+    do:
+      length(actual) == length(expected) and
+        Enum.all?(Enum.zip(actual, expected), fn {a, e} -> matches?(a, e) end)
+
+  defp matches?(actual, expected), do: actual == expected
 end
