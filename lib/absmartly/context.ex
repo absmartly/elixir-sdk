@@ -1714,9 +1714,10 @@ defmodule ABSmartly.Context do
 
   # Mirrors the JavaScript SDK's `isHeldOutBy`: arm 0 always holds the unit
   # out, and arm 1 of a three-arm holdout holds it out of experiments that are
-  # not full-on. The arity comes from the split, never from `holdoutType`.
+  # not full-on. The arity comes from the split, never from `holdoutType`. A
+  # missing fullOnVariant is not full-on here, as in assignment (`full_on?/1`).
   defp held_out_by?(0, _arm_count, _full_on_variant), do: true
-  defp held_out_by?(1, 3, full_on_variant), do: full_on_variant == 0
+  defp held_out_by?(1, 3, full_on_variant), do: full_on_variant in [0, nil]
   defp held_out_by?(_variant, _arm_count, _full_on_variant), do: false
 
   defp holdout_unit_missing?(%{holdout_arms: nil}), do: false

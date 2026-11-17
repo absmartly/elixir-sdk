@@ -646,6 +646,43 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
+  # Not in ContextHoldoutTest: an experiment without fullOnVariant is not
+  # full-on (it randomizes), so arm 1 of a three-arm holdout holds it out.
+  test "three-arm arm 1 holds out an experiment without fullOnVariant" do
+    experiment = covered(1, "exp_no_full_on", [21]) |> Map.delete("fullOnVariant")
+
+    {ctx, ep} = start(data([three_arm(21, "holdout_three_arm", @three_arm_1)], experiment))
+
+    assert Context.treatment(ctx, "exp_no_full_on") == 0
+    assert published(ctx, ep) == [holdout_exposure(21, "holdout_three_arm", 1)]
+  end
+
+  # Not in ContextHoldoutTest: pins the JavaScript SDK (javascript-sdk
+  # 311cfca, run through the same sequence): the override fast path checks only
+  # the variant and the holdout ids/iterations, not unitType, so an exposed
+  # overridden experiment whose unit type changes on a refresh is not exposed
+  # again, and neither is its holdout for the new unit type.
+  test "an overridden experiment whose unit type changes is not re-exposed, as in JS" do
+    holdout = holdout(11, "holdout_a", @holdout_b)
+
+    {ctx, ep} =
+      start(data([holdout], covered(1, "exp_unit_change", [11])),
+        units: %{"session_id" => @uid, "user_id" => @uid},
+        overrides: %{"exp_unit_change" => 1}
+      )
+
+    assert Context.treatment(ctx, "exp_unit_change") == 1
+
+    refresh(ctx, data([holdout], covered(1, "exp_unit_change", [11], unit_type: "user_id")))
+
+    assert Context.treatment(ctx, "exp_unit_change") == 1
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_unit_change", 1, assigned: false, overridden: true),
+             holdout_exposure(11, "holdout_a", 1)
+           ]
+  end
+
   # --- missing units and malformed payloads ----------------------------------
 
   # unconfiguredUnitTypeGetsControlValuesAndEmitsNoExposureAtAll

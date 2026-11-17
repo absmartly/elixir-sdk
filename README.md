@@ -242,7 +242,7 @@ Exposures from a rule are published with `ruleOverride: true` (and `assigned: fa
 
 A holdout keeps a share of units out of a set of experiments, to measure their combined impact. Holdouts are configured in the Web Console and need no code: the SDK applies them to every experiment they cover.
 
-- A unit **held out** of an experiment gets variant 0 (control), so `Context.treatment/2` returns 0 and `Context.variable_value/3` returns the control variant's value (or your default when control does not set the key). The experiment publishes no exposure of its own for that unit.
+- A unit **held out** of an experiment gets variant 0 (control), so `Context.treatment/2` returns 0. The experiment publishes no exposure of its own for that unit, and never supplies a variable key that another experiment the unit is assigned to, overridden into or given by a rule supplies: `Context.variable_value/3` falls back to the held-out experiment's control value only when no such experiment has the key (and to your default when control does not set it either).
 - In a three-arm holdout, the second arm holds units out of the covered experiments that are not full-on, and full-on experiments serve their full-on variant as usual.
 - An experiment covered by several holdouts is held out when any one of them holds the unit out.
 - `Context.set_override/3` and a matching [assignment rule](#assignment-rules) win over a holdout.

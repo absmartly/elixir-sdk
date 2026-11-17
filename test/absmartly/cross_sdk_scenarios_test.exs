@@ -73,7 +73,9 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   defp run_scenario(scenario) do
     {:ok, events} = Agent.start_link(fn -> [] end)
 
-    Enum.reduce(scenario["steps"], nil, fn step, ctx ->
+    scenario["steps"]
+    |> Enum.with_index()
+    |> Enum.reduce({nil, %{}}, fn {step, index}, {ctx, earlier} ->
       {result, ctx} = run_step(step, ctx, scenario, events)
       emitted = Agent.get_and_update(events, &{Enum.reverse(&1), []})
       expect = step["expect"]
@@ -86,14 +88,32 @@ defmodule ABSmartly.CrossSDKScenariosTest do
       assert length(emitted) == length(expected_events),
              "#{step["action"]} #{inspect(step["params"])}: events #{inspect(emitted)}"
 
-      for {{type, data}, expected} <- Enum.zip(emitted, expected_events) do
+      emitted
+      |> Enum.zip(expected_events)
+      |> Enum.with_index()
+      |> Enum.each(fn {{{type, data}, expected}, i} ->
         assert type == expected["type"]
         if expected["data"], do: assert_subset(expected["data"], data, type)
-      end
+        if ref = expected["sameShapeAs"], do: assert_same_shape(earlier, ref, i, data, type)
+      end)
 
-      ctx
+      {ctx, Map.put(earlier, index, Enum.map(emitted, fn {_type, data} -> normalize(data) end))}
     end)
   end
+
+  # The harness's sameShapeAs: the event has the same keys (at every depth)
+  # and list lengths as event `i` of the earlier step `ref`; values are
+  # checked by `data`.
+  defp assert_same_shape(earlier, ref, i, data, type) do
+    reference = earlier |> Map.fetch!(ref) |> Enum.fetch!(i)
+
+    assert shape(normalize(data)) == shape(reference),
+           "#{type} event: not the same shape as step #{ref} event #{i}"
+  end
+
+  defp shape(%{} = map), do: Map.new(map, fn {k, v} -> {k, shape(v)} end)
+  defp shape(list) when is_list(list), do: Enum.map(list, &shape/1)
+  defp shape(_scalar), do: :scalar
 
   # Both create the context from the scenario's data: the harness serves it
   # from its mock collector for createContext.
