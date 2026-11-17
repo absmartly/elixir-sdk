@@ -8,8 +8,6 @@ defmodule ABSmartly.ForwardCompatTest do
 
   use ExUnit.Case, async: true
 
-  import ExUnit.CaptureLog
-
   alias ABSmartly.{Context, Types, Utils, VariantAssigner}
 
   @holdouts_fixture Path.expand("../fixtures/holdouts_forward_compat.json", __DIR__)
@@ -155,14 +153,13 @@ defmodule ABSmartly.ForwardCompatTest do
   test "unknown and malformed fields in holdouts are ignored, with no log output" do
     payload = @holdouts_fixture |> File.read!() |> Jason.decode!()
 
-    log =
-      capture_log([level: :warning], fn ->
-        ctx = start_context(payload, %{"session_id" => @session, "user_id" => @session})
-        send(self(), {:ctx, ctx})
+    # Decoding runs in this process and evaluation in the context's, so only
+    # their log events count: other tests run concurrently (async: true).
+    {log, ctx} =
+      log_events_of_self_and_context(fn ->
+        start_context(payload, %{"session_id" => @session, "user_id" => @session})
       end)
 
-    assert log == ""
-    assert_received {:ctx, ctx}
     assert Context.is_ready?(ctx)
 
     # Holdout 11 holds the unit out, so the union suppresses exp_covered_a.
@@ -192,6 +189,47 @@ defmodule ABSmartly.ForwardCompatTest do
     assert Enum.map(data.holdouts, & &1.id) == [11, 12, 14, 15]
     assert Enum.find(data.holdouts, &(&1.id == 14)).split == []
     assert %{seed_hi: 0, seed_lo: 0, iteration: 0} = Enum.find(data.holdouts, &(&1.id == 15))
+
+    # Reading everything above logged nothing at warning level or above.
+    assert log.() == []
+  end
+
+  # Runs `fun` (which returns the context) with a logger handler that keeps
+  # the warning-or-above events of this process and of that context only.
+  # Returns a function reading them, and the context.
+  defp log_events_of_self_and_context(fun) do
+    test_pid = self()
+    {:ok, events} = Agent.start_link(fn -> [] end)
+    pids = :ets.new(:log_pids, [:public, :set])
+    :ets.insert(pids, {test_pid})
+    id = :"holdout_log_#{System.unique_integer([:positive])}"
+
+    :ok =
+      :logger.add_handler(id, __MODULE__.LogSink, %{
+        level: :warning,
+        config: %{events: events, pids: pids}
+      })
+
+    on_exit(fn -> :logger.remove_handler(id) end)
+
+    ctx = fun.()
+    :ets.insert(pids, {ctx})
+
+    {fn ->
+       # A synchronous call, so the context's earlier logging has run.
+       :sys.get_state(ctx)
+       Agent.get(events, &Enum.reverse/1)
+     end, ctx}
+  end
+
+  defmodule LogSink do
+    @moduledoc false
+    def log(%{meta: meta, level: level, msg: msg}, %{config: %{events: events, pids: pids}}) do
+      pid = Map.get(meta, :pid)
+
+      if pid && :ets.member(pids, pid),
+        do: Agent.update(events, &[{level, msg} | &1])
+    end
   end
 
   defp pending_exposures(ctx), do: :sys.get_state(ctx).exposures |> Enum.reverse()

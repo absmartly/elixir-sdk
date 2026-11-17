@@ -245,15 +245,20 @@ defmodule ABSmartly.Types do
       }
     end
 
-    # An id is an integer or an integral float, as in the JavaScript SDK where
-    # `11.0` and `11` are the same key.
+    # An integer, or an integral float (`11.0`), as the integer; the
+    # JavaScript SDK makes no difference between `11.0` and `11`.
     @doc false
     def integer_id(id) when is_integer(id), do: id
     def integer_id(id) when is_float(id) and id == trunc(id), do: trunc(id)
     def integer_id(_id), do: nil
 
-    defp integer_or(value, _default) when is_integer(value), do: value
-    defp integer_or(_value, default), do: default
+    # An integral float (`13.0`) is the integer, as in the JavaScript SDK.
+    defp integer_or(value, default) do
+      case integer_id(value) do
+        nil -> default
+        integer -> integer
+      end
+    end
   end
 
   defmodule ContextData do

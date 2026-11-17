@@ -608,10 +608,16 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
-  # Not in ContextHoldoutTest: integral float ids are the integer ids, as in
-  # the JavaScript SDK (`11.0` and `11` are the same key); 1.5 is no id.
-  test "integral float holdout ids match integer ids" do
-    holdout = holdout(11, "holdout_a", @holdout_a) |> Map.put("id", 11.0)
+  # Not in ContextHoldoutTest: integral floats are the integers, as in the
+  # JavaScript SDK (`11.0` and `11` are the same id, `13.0` the same seed);
+  # 11.5 is no id.
+  test "integral float holdout ids, seeds and iterations match integers" do
+    {seed_hi, seed_lo} = @holdout_a
+
+    holdout =
+      holdout(11, "holdout_a", @holdout_a)
+      |> Map.merge(%{"id" => 11.0, "seedHi" => seed_hi * 1.0, "seedLo" => seed_lo * 1.0})
+      |> Map.put("iteration", 1.0)
 
     {ctx, ep} =
       start(
@@ -623,6 +629,18 @@ defmodule ABSmartly.HoldoutsTest do
 
     assert Context.treatment(ctx, "exp_float_ids") == 0
     assert Context.treatment(ctx, "exp_fractional_id") == @normal_variant
+
+    # The float iteration is the same epoch: a refresh to the integer one does
+    # not re-expose.
+    refresh(
+      ctx,
+      data([holdout(11, "holdout_a", @holdout_a)], [
+        covered(1, "exp_float_ids", [11]),
+        covered(2, "exp_fractional_id", [11.5])
+      ])
+    )
+
+    assert Context.treatment(ctx, "exp_float_ids") == 0
 
     assert published(ctx, ep) == [
              holdout_exposure(11, "holdout_a", 0),
