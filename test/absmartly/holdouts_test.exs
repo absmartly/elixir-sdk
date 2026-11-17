@@ -555,6 +555,27 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.peek_variable_value(ctx, "key", "default") == "default"
   end
 
+  # H7 (cross-sdk-tests holdout conformance): a strict audience mismatch on a
+  # covered experiment the holdout does not hold out still fires the holdout.
+  test "a strict audience mismatch on a covered, not-held-out experiment fires the holdout" do
+    experiment =
+      covered(1, "exp_h7", [11],
+        audience_strict: true,
+        audience: ~s({"filter":[{"gte":[{"var":"age"},{"value":20}]}]})
+      )
+
+    {ctx, ep} =
+      start(data([holdout(11, "holdout_a", @holdout_a)], experiment), uid: @uid_not_held_out)
+
+    :ok = Context.set_attribute(ctx, "age", 5)
+    assert Context.treatment(ctx, "exp_h7") == 0
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_h7", 0, assigned: false, audience_mismatch: true),
+             holdout_exposure(11, "holdout_a", 1)
+           ]
+  end
+
   # --- missing units and malformed payloads ----------------------------------
 
   # unconfiguredUnitTypeGetsControlValuesAndEmitsNoExposureAtAll
