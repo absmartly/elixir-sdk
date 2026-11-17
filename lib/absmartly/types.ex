@@ -108,9 +108,10 @@ defmodule ABSmartly.Types do
 
     # The ids of the holdouts covering this experiment. Like an unknown field,
     # a value that is not a list of integers never fails the context: anything
-    # else in it is ignored.
+    # else in it is ignored. An integral float (`11.0`) is the integer, as in
+    # the JavaScript SDK.
     defp holdout_ids(ids) when is_list(ids) do
-      case Enum.filter(ids, &is_integer/1) do
+      case for(id <- ids, id = ABSmartly.Types.HoldoutData.integer_id(id), do: id) do
         [] -> nil
         ids -> ids
       end
@@ -220,7 +221,16 @@ defmodule ABSmartly.Types do
     Other fields with an unexpected type get their default, and unknown fields
     are ignored, so a malformed holdout never fails the context.
     """
-    def from_map(%{"id" => id} = map) when is_integer(id) do
+    def from_map(%{"id" => id} = map) do
+      case integer_id(id) do
+        nil -> nil
+        id -> from_map(map, id)
+      end
+    end
+
+    def from_map(_), do: nil
+
+    defp from_map(map, id) do
       split = map["split"]
 
       %__MODULE__{
@@ -235,7 +245,12 @@ defmodule ABSmartly.Types do
       }
     end
 
-    def from_map(_), do: nil
+    # An id is an integer or an integral float, as in the JavaScript SDK where
+    # `11.0` and `11` are the same key.
+    @doc false
+    def integer_id(id) when is_integer(id), do: id
+    def integer_id(id) when is_float(id) and id == trunc(id), do: trunc(id)
+    def integer_id(_id), do: nil
 
     defp integer_or(value, _default) when is_integer(value), do: value
     defp integer_or(_value, default), do: default

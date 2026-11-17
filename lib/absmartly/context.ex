@@ -1471,6 +1471,10 @@ defmodule ABSmartly.Context do
     override = Map.get(state.overrides, name)
 
     if override != nil do
+      # Resolved for overrides too, as in the JavaScript SDK's `_assign`: the
+      # holdouts still expose, from the arms fixed at this read.
+      {holdout_arms, state} = holdout_arms(state, experiment)
+
       assignment = %Types.Assignment{
         id: experiment.id,
         iteration: experiment.iteration,
@@ -1483,7 +1487,8 @@ defmodule ABSmartly.Context do
         full_on: false,
         custom: false,
         audience_mismatch: false,
-        rule_override: false
+        rule_override: false,
+        holdout_arms: holdout_arms
       }
 
       {assignment, state}
@@ -1720,15 +1725,7 @@ defmodule ABSmartly.Context do
     do: Enum.any?(arms, fn {_name, arm} -> arm == nil end)
 
   # Queues the exposure of each holdout covering the experiment that was not
-  # exposed yet. An overridden experiment has no pinned arms (it is never
-  # suppressed), so its arms are resolved now.
-  defp expose_holdouts(state, experiment, %{overridden: true}) do
-    case holdout_arms(state, experiment) do
-      {nil, state} -> state
-      {arms, state} -> queue_holdout_exposures(state, arms)
-    end
-  end
-
+  # exposed yet, from the arms pinned in its assignment.
   defp expose_holdouts(state, _experiment, %{holdout_arms: nil}), do: state
 
   defp expose_holdouts(state, _experiment, %{holdout_arms: arms}),

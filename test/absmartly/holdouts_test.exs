@@ -576,6 +576,60 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
+  # Not in ContextHoldoutTest: like the JavaScript SDK, reading an overridden
+  # experiment (peek included) fixes the unit's arm, so a same-iteration seed
+  # edit before the first exposure cannot move it.
+  test "peeking an overridden experiment fixes the holdout arm" do
+    {ctx, ep} =
+      start(
+        data([holdout(11, "holdout_a", @holdout_a)], [
+          covered(1, "exp_overridden", [11]),
+          covered(2, "exp_sibling", [11])
+        ]),
+        overrides: %{"exp_overridden" => 1}
+      )
+
+    assert Context.peek(ctx, "exp_overridden") == 1
+
+    refresh(
+      ctx,
+      data([holdout(11, "holdout_a", @holdout_b)], [
+        covered(1, "exp_overridden", [11]),
+        covered(2, "exp_sibling", [11])
+      ])
+    )
+
+    assert Context.treatment(ctx, "exp_sibling") == 0
+    assert Context.treatment(ctx, "exp_overridden") == 1
+
+    assert published(ctx, ep) == [
+             holdout_exposure(11, "holdout_a", 0),
+             exposure(1, "exp_overridden", 1, assigned: false, overridden: true)
+           ]
+  end
+
+  # Not in ContextHoldoutTest: integral float ids are the integer ids, as in
+  # the JavaScript SDK (`11.0` and `11` are the same key); 1.5 is no id.
+  test "integral float holdout ids match integer ids" do
+    holdout = holdout(11, "holdout_a", @holdout_a) |> Map.put("id", 11.0)
+
+    {ctx, ep} =
+      start(
+        data([holdout], [
+          covered(1, "exp_float_ids", [11.0]),
+          covered(2, "exp_fractional_id", [11.5])
+        ])
+      )
+
+    assert Context.treatment(ctx, "exp_float_ids") == 0
+    assert Context.treatment(ctx, "exp_fractional_id") == @normal_variant
+
+    assert published(ctx, ep) == [
+             holdout_exposure(11, "holdout_a", 0),
+             exposure(2, "exp_fractional_id", @normal_variant)
+           ]
+  end
+
   # --- missing units and malformed payloads ----------------------------------
 
   # unconfiguredUnitTypeGetsControlValuesAndEmitsNoExposureAtAll

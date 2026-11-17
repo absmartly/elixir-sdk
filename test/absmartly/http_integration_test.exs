@@ -19,7 +19,7 @@ defmodule ABSmartly.HTTPIntegrationTest do
   """
   use ExUnit.Case, async: false
 
-  alias ABSmartly.{Context, SDK}
+  alias ABSmartly.{Context, SDK, Types}
 
   @get_body Jason.encode!(%{
               "experiments" => [
@@ -64,8 +64,8 @@ defmodule ABSmartly.HTTPIntegrationTest do
                        )}
                     )
 
-  setup do
-    {:ok, server} = start_server()
+  setup context do
+    {:ok, server} = start_server(Map.get(context, :get_body, @get_body))
     on_exit(fn -> stop_server(server) end)
     {:ok, server: server}
   end
@@ -134,11 +134,73 @@ defmodule ABSmartly.HTTPIntegrationTest do
     assert hd(body["goals"])["name"] == "payment"
   end
 
+  # A holdout whose split holds every unit out, covering exp_test_ab, served
+  # by GET /context: each data-fetching path must install the holdouts.
+  @holdout_get_body @get_body
+                    |> Jason.decode!()
+                    |> update_in(["experiments", Access.at(0)], &Map.put(&1, "holdoutIds", [11]))
+                    |> Map.put("holdouts", [
+                      %{
+                        "id" => 11,
+                        "name" => "holdout_all",
+                        "iteration" => 1,
+                        "unitType" => "session_id",
+                        "seedHi" => 13,
+                        "seedLo" => 111,
+                        "split" => [1.0, 0.0],
+                        "futureField" => %{"x" => [1]}
+                      }
+                    ])
+                    |> Jason.encode!()
+
+  @units %{"session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}
+
+  defp holdout_sdk(server) do
+    SDK.new(
+      endpoint: "http://127.0.0.1:#{server.port}",
+      api_key: "test-api-key",
+      application: "website",
+      environment: "test",
+      retries: 0
+    )
+  end
+
+  defp assert_held_out(ctx) do
+    assert Context.treatment(ctx, "exp_test_ab") == 0
+    assert Context.pending(ctx) == 1
+
+    assert [%{id: 11, name: "holdout_all", variant: 0, unit: "session_id"}] =
+             :sys.get_state(ctx).exposures
+  end
+
+  @tag get_body: @holdout_get_body
+  test "create_context installs the fetched holdouts", %{server: server} do
+    {:ok, ctx} = SDK.create_context(holdout_sdk(server), @units)
+    assert_held_out(ctx)
+  end
+
+  @tag get_body: @holdout_get_body
+  test "create_context_async installs the fetched holdouts", %{server: server} do
+    {:ok, ctx} = SDK.create_context_async(holdout_sdk(server), @units)
+    assert :ok = Context.wait_until_ready(ctx)
+    assert_held_out(ctx)
+  end
+
+  @tag get_body: @holdout_get_body
+  test "refresh/1 installs the fetched holdouts", %{server: server} do
+    data = Types.ContextData.from_map(Jason.decode!(@get_body))
+    {:ok, ctx} = SDK.create_context_with(holdout_sdk(server), @units, data)
+
+    assert Context.peek(ctx, "exp_test_ab") == 1
+    assert :ok = Context.refresh(ctx)
+    assert_held_out(ctx)
+  end
+
   # ---------------------------------------------------------------------------
   # Tiny hermetic HTTP/1.1 server over :gen_tcp.
   # ---------------------------------------------------------------------------
 
-  defp start_server do
+  defp start_server(get_body) do
     test_pid = self()
 
     {:ok, listen} =
@@ -153,7 +215,7 @@ defmodule ABSmartly.HTTPIntegrationTest do
     {:ok, port} = :inet.port(listen)
 
     acceptor =
-      spawn_link(fn -> accept_loop(listen, test_pid) end)
+      spawn_link(fn -> accept_loop(listen, test_pid, get_body) end)
 
     {:ok, %{listen: listen, port: port, acceptor: acceptor}}
   end
@@ -162,11 +224,11 @@ defmodule ABSmartly.HTTPIntegrationTest do
     :gen_tcp.close(listen)
   end
 
-  defp accept_loop(listen, test_pid) do
+  defp accept_loop(listen, test_pid, get_body) do
     case :gen_tcp.accept(listen) do
       {:ok, socket} ->
-        handle_connection(socket, test_pid)
-        accept_loop(listen, test_pid)
+        handle_connection(socket, test_pid, get_body)
+        accept_loop(listen, test_pid, get_body)
 
       {:error, :closed} ->
         :ok
@@ -176,13 +238,13 @@ defmodule ABSmartly.HTTPIntegrationTest do
     end
   end
 
-  defp handle_connection(socket, test_pid) do
+  defp handle_connection(socket, test_pid, get_body) do
     request = read_request(socket, "")
     send(test_pid, {:request, request})
 
     body =
       case request.method do
-        "GET" -> @get_body
+        "GET" -> get_body
         _ -> "{}"
       end
 
