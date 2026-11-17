@@ -513,10 +513,10 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.pending(ctx) == 2
   end
 
-  # Not in ContextHoldoutTest: set_unit only drops assignments whose holdout
-  # arm was missing that unit, never a fully resolved unexposed one (which a
-  # same-iteration split edit would otherwise move).
-  test "set_unit of the experiment's unit type keeps a fully resolved assignment" do
+  # Not in ContextHoldoutTest: setting another unit type never drops a
+  # fully resolved, unexposed covered assignment (which a same-iteration split
+  # edit would otherwise move).
+  test "set_units adding another unit type keeps a fully resolved assignment" do
     {ctx, _} =
       start(
         data(
