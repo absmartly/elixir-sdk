@@ -17,8 +17,6 @@ defmodule ABSmartly.HoldoutsTest do
 
   use ExUnit.Case, async: true
 
-  import ExUnit.CaptureLog
-
   alias ABSmartly.{Context, Types}
 
   @unit_type "session_id"
@@ -1769,7 +1767,7 @@ defmodule ABSmartly.HoldoutsTest do
         event_handler: handler
       )
 
-    capture_log(fn -> Context.treatment(ctx, "exp_multi_holdout_throwing_logger") end)
+    Context.treatment(ctx, "exp_multi_holdout_throwing_logger")
     assert Context.pending(ctx) == 2
   end
 
@@ -1783,7 +1781,7 @@ defmodule ABSmartly.HoldoutsTest do
         event_handler: handler
       )
 
-    capture_log(fn -> Context.treatment(ctx, "exp_terminal") end)
+    Context.treatment(ctx, "exp_terminal")
     assert Context.treatment(ctx, "exp_terminal") == @normal_variant
 
     assert published(ctx, ep) == [
@@ -1801,7 +1799,7 @@ defmodule ABSmartly.HoldoutsTest do
         event_handler: handler
       )
 
-    capture_log(fn -> Context.treatment(ctx, "exp_stranded_flush") end)
+    Context.treatment(ctx, "exp_stranded_flush")
     assert Context.pending(ctx) == 1
     assert published(ctx, ep) == [holdout_exposure(11, "holdout_a", 0)]
   end

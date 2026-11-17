@@ -195,8 +195,9 @@ defmodule ABSmartly.ForwardCompatTest do
   end
 
   # Runs `fun` (which returns the context) with a logger handler that keeps
-  # the warning-or-above events of this process and of that context only.
-  # Returns a function reading them, and the context.
+  # the warning-or-above events of this process and of the processes it
+  # starts (the context, from its init on). Returns a function reading them,
+  # which also removes the handler, and the context.
   defp log_events_of_self_and_context(fun) do
     test_pid = self()
     {:ok, events} = Agent.start_link(fn -> [] end)
@@ -213,22 +214,23 @@ defmodule ABSmartly.ForwardCompatTest do
     on_exit(fn -> :logger.remove_handler(id) end)
 
     ctx = fun.()
-    :ets.insert(pids, {ctx})
 
     {fn ->
        # A synchronous call, so the context's earlier logging has run.
        :sys.get_state(ctx)
+       :logger.remove_handler(id)
        Agent.get(events, &Enum.reverse/1)
      end, ctx}
   end
 
   defmodule LogSink do
     @moduledoc false
-    def log(%{meta: meta, level: level, msg: msg}, %{config: %{events: events, pids: pids}}) do
-      pid = Map.get(meta, :pid)
-
-      if pid && :ets.member(pids, pid),
-        do: Agent.update(events, &[{level, msg} | &1])
+    # Runs in the logging process: an event counts when that process, or the
+    # process that started it, is the test's.
+    def log(%{level: level, msg: msg}, %{config: %{events: events, pids: pids}}) do
+      if :ets.info(pids) != :undefined and
+           Enum.any?([self() | Process.get(:"$ancestors", [])], &:ets.member(pids, &1)),
+         do: Agent.update(events, &[{level, msg} | &1])
     end
   end
 
