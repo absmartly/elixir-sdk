@@ -84,7 +84,12 @@ defmodule ABSmartly.Types do
     control and records no exposure.
     """
     def from_map(map) when is_map(map) do
-      required_fields = ["id", "name", "unitType", "split"]
+      # A switchback is served by its cluster map; its unitType is optional.
+      required_fields =
+        if map["randomizationType"] == "switchback",
+          do: ["id", "name", "split"],
+          else: ["id", "name", "unitType", "split"]
+
       missing = Enum.filter(required_fields, &is_nil(map[&1]))
 
       if missing != [] do
@@ -218,7 +223,13 @@ defmodule ABSmartly.Types do
     # collector payloads are rejected up front instead of crashing evaluation.
     def validate!(map, split) do
       check!(is_binary(map["name"]), "name must be a string")
-      check!(is_binary(map["unitType"]), "unitType must be a string")
+
+      check!(
+        is_binary(map["unitType"]) or
+          (is_nil(map["unitType"]) and map["randomizationType"] == "switchback"),
+        "unitType must be a string"
+      )
+
       check!(number_list?(split), "split must be a list of numbers")
 
       traffic = map["trafficSplit"]

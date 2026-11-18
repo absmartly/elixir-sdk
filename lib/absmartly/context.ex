@@ -2351,7 +2351,6 @@ defmodule ABSmartly.Context do
 
       _stale ->
         slot = resolve_switchback(state, experiment, info, cached, override, custom, now)
-        slot = keep_exposed_rule_slot(cached, slot)
         epoch = retain_switchback_slot(epoch, period, slot)
         {slot, period, put_switchback_epoch(state, name, epoch)}
     end
@@ -2410,19 +2409,6 @@ defmodule ABSmartly.Context do
         end
     end
   end
-
-  # A rebuilt rule win with the variant an exposed slot already published is
-  # not exposed again (the Java SDK's reuseExposedRuleAssignment).
-  defp keep_exposed_rule_slot(%{exposed: true, assignment: old}, slot)
-       when old.rule_override and not old.overridden do
-    a = slot.assignment
-
-    if a.rule_override and a.variant == old.variant,
-      do: %{slot | exposed: true},
-      else: slot
-  end
-
-  defp keep_exposed_rule_slot(_cached, slot), do: slot
 
   # The Collector's switchback branch (R33): the serving resolution decides
   # whether the experiment applies and under which unit; for an eligible
@@ -2539,7 +2525,7 @@ defmodule ABSmartly.Context do
   defp latest_attribute(attributes, name, now) do
     Enum.reduce(attributes, nil, fn attribute, selected ->
       if attribute.set_at <= now and is_binary(attribute.name) and
-           String.trim(attribute.name) == name and
+           java_trim(attribute.name) == name and
            (selected == nil or attribute.set_at >= selected.set_at),
          do: attribute,
          else: selected
@@ -2628,6 +2614,19 @@ defmodule ABSmartly.Context do
 
     %{state | switchback_slots: slots}
   end
+
+  # Java's String.trim, as the Collector trims attribute names: code points
+  # up to U+0020 at either end, not Unicode whitespace.
+  defp java_trim(name) do
+    name
+    |> trim_leading_controls()
+    |> String.reverse()
+    |> trim_leading_controls()
+    |> String.reverse()
+  end
+
+  defp trim_leading_controls(<<c, rest::binary>>) when c <= 0x20, do: trim_leading_controls(rest)
+  defp trim_leading_controls(name), do: name
 
   defp now_millis(state), do: read_clock(state.clock)
 

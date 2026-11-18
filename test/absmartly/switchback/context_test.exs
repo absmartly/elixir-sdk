@@ -1302,6 +1302,95 @@ defmodule ABSmartly.Switchback.ContextTest do
     end
   end
 
+  @assign_1_to_us ~s({"rules":[{"type":"assign","environments":[],"conditions":{"and":[{"eq":[{"var":"country"},{"value":"US"}]}]},"variant":1}]})
+
+  # staleRuleTransitionEvaluatesTheRulesTwice, plus the same on a switchback:
+  # a changed rule outcome evaluates the rules for the stale slot and its
+  # rebuild, and once validated the next reads evaluate nothing.
+  test "a stale rule transition evaluates the rules, then the stamps hold", %{clock: clock} do
+    for type <- ["unit", "switchback"] do
+      experiment =
+        sb(2, @hour, %{"randomizationType" => type, "assignmentRules" => @assign_1_to_us})
+
+      {ctx, _} = create(clock, data(experiment))
+      assert count_rule_evaluations(ctx, fn -> Context.peek(ctx, "exp_sb") end) == 1
+
+      :ok = Context.set_attribute(ctx, "country", "US")
+      calls = count_rule_evaluations(ctx, fn -> assert Context.peek(ctx, "exp_sb") == 1 end)
+      assert calls in 1..2, type
+
+      # Current again, also after an unrelated attribute and a same-outcome
+      # validation: at most one evaluation, then none.
+      assert count_rule_evaluations(ctx, fn -> Context.peek(ctx, "exp_sb") end) == 0, type
+      :ok = Context.set_attribute(ctx, "x", 1)
+      assert count_rule_evaluations(ctx, fn -> Context.peek(ctx, "exp_sb") end) == 1, type
+
+      assert count_rule_evaluations(ctx, fn ->
+               for _ <- 1..5, do: Context.peek(ctx, "exp_sb")
+             end) == 0,
+             type
+    end
+  end
+
+  test "a warmed switchback read leaves the context state unchanged", %{clock: clock} do
+    {ctx, _} = create(clock, data(sb(2, @hour, %{"assignmentRules" => @assign_1_to_us})))
+    Context.treatment(ctx, "exp_sb")
+    before = :sys.get_state(ctx)
+    assert Context.peek(ctx, "exp_sb") == e2(0)
+    assert Context.treatment(ctx, "exp_sb") == e2(0)
+    assert :sys.get_state(ctx) == before
+
+    # No write-back either: a cache hit puts no slot.
+    :erlang.trace(ctx, true, [:call, {:tracer, self()}])
+    :erlang.trace_pattern({Context, :put_switchback_epoch, 3}, true, [:local])
+
+    try do
+      for _ <- 1..3, do: Context.peek(ctx, "exp_sb")
+    after
+      :erlang.trace(ctx, false, [:call])
+    end
+
+    refute_receive {:trace, _, :call, {Context, :put_switchback_epoch, _}}, 50
+  end
+
+  # As in the Java SDK, a refresh that changes trafficSplit or fullOnVariant
+  # re-resolves a rule-won slot, and the rebuilt slot is exposed again.
+  test "a traffic or full-on refresh re-exposes a rule-won switchback", %{clock: clock} do
+    for change <- [%{"trafficSplit" => [0.5, 0.5]}, %{"fullOnVariant" => 1}] do
+      set(clock, @anchor)
+      {ctx, events} = create(clock, data(sb(2, @hour, %{"assignmentRules" => @assign_1})))
+      set(clock, @anchor + 5)
+      assert Context.treatment(ctx, "exp_sb") == 1
+      refresh(ctx, [sb(2, @hour, Map.put(change, "assignmentRules", @assign_1))])
+      set(clock, @anchor + 6)
+      assert Context.treatment(ctx, "exp_sb") == 1
+
+      assert publish_exposures(ctx, events) == [
+               rule_exposure("exp_sb", 1, @anchor + 5),
+               rule_exposure("exp_sb", 1, @anchor + 6)
+             ],
+             inspect(change)
+    end
+  end
+
+  test "a switchback without unitType is served, and other experiments keep working", %{
+    clock: clock
+  } do
+    payload =
+      data([
+        Map.delete(sb(2, @hour), "unitType"),
+        switchback(2, "exp_unit", 2, @hour, %{"randomizationType" => nil})
+      ])
+
+    {ctx, events} = create(clock, payload)
+    assert Context.treatment(ctx, "exp_sb") == e2(0)
+    unit = Context.treatment(ctx, "exp_unit")
+
+    [sb_exposure, unit_exposure] = publish_exposures(ctx, events)
+    assert sb_exposure == exposure(1, "exp_sb", e2(0), @anchor, true, true)
+    assert {unit_exposure["name"], unit_exposure["variant"]} == {"exp_unit", unit}
+  end
+
   # inPeriodRuleRefreshKeepsTheVariantAndExposesOnce
   test "an in-period rule refresh keeps the variant and exposes once", %{clock: clock} do
     {ctx, events} = create(clock, data(sb(2, @hour, %{"assignmentRules" => @assign_1})))

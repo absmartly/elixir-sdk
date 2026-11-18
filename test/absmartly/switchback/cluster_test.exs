@@ -1387,6 +1387,23 @@ defmodule ABSmartly.Switchback.ClusterTest do
       assert eligible == 3
     end
 
+    test "attribute names are trimmed of control characters only, as Java's trim", %{clock: clock} do
+      exp = parity_experiment([{@store, "cluster"}])
+
+      assert_eligible(
+        serve(clock, exp, %{@store => "s1"}, %{"\t cluster\n" => "Porto"}),
+        @store,
+        "Porto",
+        "controls"
+      )
+
+      # U+00A0 is not trimmed, so the name does not match.
+      assert_silent_control(
+        serve(clock, exp, %{@store => "s1"}, %{"\u00A0cluster" => "Porto"}),
+        "nbsp"
+      )
+    end
+
     # repeatedAttributeNamesResolveToTheLatest
     test "repeated attribute names resolve to the latest, names trimmed", %{clock: clock} do
       assert_eligible(
