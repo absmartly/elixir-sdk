@@ -284,12 +284,12 @@ defmodule ABSmartly.AssignmentRulesTest do
         start_context(experiment(rules), attributes: [%{"name" => "country", "value" => "US"}])
 
       log =
-        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+        ExUnit.CaptureLog.capture_log([level: :warning, format: "[$level] $message"], fn ->
           assert Context.treatment(ctx, "exp_test_abc") == 1
         end)
 
       assert log =~
-               ~s(Failed to evaluate assignment rule conditions for rule "huge": ) <>
+               ~s([warning] Failed to evaluate assignment rule conditions for rule "huge": ) <>
                  "bad argument in arithmetic expression"
 
       assert Process.alive?(ctx)
