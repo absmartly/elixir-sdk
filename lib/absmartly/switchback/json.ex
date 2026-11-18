@@ -19,21 +19,57 @@ defmodule ABSmartly.Switchback.Json do
   Like `Jason.decode/1`, but keeps every `switchbackClusters` object ordered.
   """
   def decode(body) when is_binary(body) do
-    with {:ok, decoded} <- Jason.decode(body) do
-      # The key may be written with escapes, so only a body with neither
-      # the key nor an escape skips the walk.
-      if :binary.match(body, ["switchbackClusters", "\\u"]) != :nomatch and
-           ordered_clusters_needed?(decoded) do
+    with {:ok, decoded} <- decode_plain(body) do
+      if ordered_clusters_needed?(decoded) do
         with {:ok, ordered} <- Jason.decode(body, objects: :ordered_objects),
              do: {:ok, normalize(ordered)}
       else
-        {:ok, decoded}
+        {:ok, plain(decoded)}
       end
+    end
+  end
+
+  defp plain({:plain, decoded}), do: decoded
+  defp plain(decoded), do: decoded
+
+  # Tags the result {:plain, decoded} when the body has no switchbackClusters
+  # key, so the walk is skipped. A body with an escape may spell the key with
+  # escapes, so its keys are checked as they are decoded, in the same pass.
+  defp decode_plain(body) do
+    cond do
+      :binary.match(body, "switchbackClusters") != :nomatch ->
+        Jason.decode(body)
+
+      :binary.match(body, "\\u") == :nomatch ->
+        with {:ok, decoded} <- Jason.decode(body), do: {:ok, {:plain, decoded}}
+
+      true ->
+        key = {__MODULE__, :seen}
+        Process.delete(key)
+
+        result =
+          Jason.decode(body,
+            keys: fn
+              "switchbackClusters" = k ->
+                Process.put(key, true)
+                k
+
+              k ->
+                k
+            end
+          )
+
+        seen = Process.delete(key)
+
+        with {:ok, decoded} <- result,
+             do: {:ok, if(seen, do: decoded, else: {:plain, decoded})}
     end
   end
 
   # Only a `switchbackClusters` object with two or more entries has an order
   # to keep, so a body without one is decoded once, as before.
+  defp ordered_clusters_needed?({:plain, _decoded}), do: false
+
   defp ordered_clusters_needed?(%{"switchbackClusters" => %{} = clusters})
        when map_size(clusters) > 1,
        do: true

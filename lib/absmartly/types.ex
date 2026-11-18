@@ -172,15 +172,18 @@ defmodule ABSmartly.Types do
       end
     end
 
-    # The allow-list. An integer is its base-10 text, as Jackson reads it into
-    # the Java SDK's String[]; other non-strings never match a cluster key but
-    # keep the list non-empty, so they never widen it to every value. A value
-    # that is not a list is kept as is: the context treats the cluster
+    # The allow-list. An integer or a boolean is its text, as Jackson reads
+    # it into the Java SDK's String[]; other non-strings never match a cluster
+    # key but keep the list non-empty, so they never widen it to every value.
+    # A value that is not a list is kept as is: the context treats the cluster
     # configuration as unreadable rather than admitting every value.
     defp switchback_cluster_values(values) when is_list(values),
-      do: Enum.map(values, &if(is_integer(&1), do: Integer.to_string(&1), else: &1))
+      do: Enum.map(values, &allowed_value/1)
 
     defp switchback_cluster_values(values), do: values
+
+    defp allowed_value(value) when is_integer(value) or is_boolean(value), do: to_string(value)
+    defp allowed_value(value), do: value
 
     # The ids of the holdouts covering this experiment. Like an unknown field,
     # a value that is not a list of integers never fails the context: anything

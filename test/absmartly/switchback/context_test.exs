@@ -925,6 +925,103 @@ defmodule ABSmartly.Switchback.ContextTest do
     assert Context.custom_field_value(ctx, "exp_sb", "missing") == nil
   end
 
+  # Seed and split are not switchback identity: a same-period refresh that
+  # edits them keeps the slot and exposes nothing more.
+  test "a seed or split refresh neither re-resolves nor re-exposes the period", %{clock: clock} do
+    for change <- [%{"seedHi" => 99}, %{"seedLo" => 99}, %{"split" => [0.9, 0.1]}] do
+      set(clock, @anchor + 5)
+      {ctx, events} = create(clock, data(sb(2, @hour)))
+      assert Context.treatment(ctx, "exp_sb") == e2(0)
+      refresh(ctx, [sb(2, @hour, change)])
+      assert Context.treatment(ctx, "exp_sb") == e2(0), inspect(change)
+
+      assert publish_exposures(ctx, events) == [
+               exposure(1, "exp_sb", e2(0), @anchor + 5, true, true)
+             ]
+    end
+  end
+
+  test "a custom assignment set mid-period applies within the period", %{clock: clock} do
+    {ctx, events} = create(clock, data(sb(2, @hour)))
+    set(clock, @anchor + 5)
+    v = Context.peek(ctx, "exp_sb")
+    :ok = Context.set_custom_assignment(ctx, "exp_sb", 1 - v)
+    assert Context.peek(ctx, "exp_sb") == 1 - v
+    assert Context.treatment(ctx, "exp_sb") == 1 - v
+
+    assert publish_exposures(ctx, events) == [
+             exposure(1, "exp_sb", 1 - v, @anchor + 5, true, true, %{"custom" => true})
+           ]
+  end
+
+  # An exposed override recorded before any linked unit was set has already
+  # published, so setting the unit keeps it rather than exposing it again.
+  test "an exposed override without a linked unit is not re-exposed after set_unit", %{
+    clock: clock
+  } do
+    {ctx, events} = create(clock, data(sb(2, @hour)), %{"user_id" => "u1"})
+    :ok = Context.set_override(ctx, "exp_sb", 1)
+    set(clock, @anchor + 5)
+    assert Context.treatment(ctx, "exp_sb") == 1
+    :ok = Context.set_unit(ctx, @unit_type, @uid)
+    assert Context.treatment(ctx, "exp_sb") == 1
+
+    assert publish_exposures(ctx, events) == [
+             exposure(1, "exp_sb", 1, @anchor + 5, false, true, %{"overridden" => true})
+           ]
+  end
+
+  # A plain map of two or more entries has no declared order, so the
+  # experiment is not served rather than served by a guessed unit.
+  test "an unordered multi-entry cluster map is not served", %{clock: clock} do
+    plain = %{@unit_type => @cluster_path, "user_id" => @cluster_path}
+
+    data =
+      ABSmartly.Types.ContextData.from_map(%{
+        "experiments" => [sb(2, @hour, %{"switchbackClusters" => plain})]
+      })
+
+    assert hd(data.experiments).switchback_clusters == nil
+
+    {:ok, events} = Agent.start_link(fn -> [] end)
+
+    {:ok, ctx} =
+      Context.start_link(
+        %ABSmartly.Types.SDKConfig{
+          endpoint: "e",
+          api_key: "k",
+          application: "website",
+          environment: "production",
+          publisher: ABSmartly.Test.OkPublisher
+        },
+        data,
+        %ABSmartly.Types.ContextConfig{
+          units: %{@unit_type => @uid, "user_id" => "u1"},
+          attributes: %{@cluster_path => @cluster_key},
+          event_handler: fn type, payload -> Agent.update(events, &[{type, payload} | &1]) end
+        },
+        clock: fn -> read(clock) end
+      )
+
+    assert Context.treatment(ctx, "exp_sb") == 0
+    assert Context.pending(ctx) == 0
+  end
+
+  test "integer and boolean allow-list entries match their text", %{clock: clock} do
+    for {value, allowed} <- [{42, [42]}, {"true", [true]}] do
+      {ctx, events} =
+        start(
+          clock,
+          %{@unit_type => @uid},
+          data(sb(2, @hour, %{"switchbackClusterValues" => allowed})),
+          attributes: %{@cluster_path => value}
+        )
+
+      Context.treatment(ctx, "exp_sb")
+      assert [%{"eligible" => true}] = publish_exposures(ctx, events), inspect(allowed)
+    end
+  end
+
   # perPeriodCacheIsBounded
   test "the per-period cache is bounded", %{clock: clock} do
     {ctx, _} = create(clock, data(sb(2, @hour)))
