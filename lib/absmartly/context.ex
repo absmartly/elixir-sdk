@@ -2245,10 +2245,17 @@ defmodule ABSmartly.Context do
   defp build_switchback_index(experiments, previous, generation) do
     Enum.reduce(experiments, {%{}, generation}, fn experiment, {index, generation} ->
       if switchback?(experiment) do
+        # An allow-list that is not a list makes the configuration
+        # unreadable, like an unreadable cluster map.
         sources =
           case experiment.switchback_clusters do
-            %Jason.OrderedObject{values: values} -> Switchback.Serving.sources(values)
-            _ -> nil
+            %Jason.OrderedObject{values: values}
+            when is_list(experiment.switchback_cluster_values) or
+                   is_nil(experiment.switchback_cluster_values) ->
+              Switchback.Serving.sources(values)
+
+            _ ->
+              nil
           end
 
         info = %{sources: sources, identity: switchback_identity(experiment, sources)}

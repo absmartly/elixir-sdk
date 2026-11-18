@@ -155,6 +155,52 @@ defmodule ABSmartly.HTTPIntegrationTest do
 
   @units %{"session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}
 
+  # A switchback whose switchbackClusters lists user_id before session_id
+  # (not the alphabetical order a map would give). Both units read the same
+  # cluster value, so the first declared one, user_id, serves. Its 400,000-
+  # hour period from 1978-05-15T08:00Z keeps "now" in period 1 until 2069.
+  @switchback_get_body ~s({"experiments":[{"id":7,"name":"exp_sb","iteration":1,"unitType":"session_id",) <>
+                         ~s("seedHi":-5,"seedLo":-7,"split":[0.34,0.33,0.33],"trafficSeedHi":1,"trafficSeedLo":2,) <>
+                         ~s("trafficSplit":[0,1],"fullOnVariant":0,"applications":[{"name":"website"}],) <>
+                         ~s("variants":[{"name":"A","config":null},{"name":"B","config":null},{"name":"C","config":null}],) <>
+                         ~s("randomizationType":"switchback","switchbackClusters":{"user_id":"profile/city",) <>
+                         ~s("session_id":"city"},"switchbackStartAt":263980800000,"switchbackPeriodMs":1440000000000}]})
+
+  defp assert_switchback_served_in_declared_order(ctx) do
+    seed = Bitwise.bor(Bitwise.bsl(-5, 32), Bitwise.band(-7, 0xFFFFFFFF))
+    :ok = Context.set_attribute(ctx, "city", "Lisboa")
+    :ok = Context.set_attribute(ctx, "profile", %{"city" => "Lisboa"})
+
+    assert Context.treatment(ctx, "exp_sb") ==
+             ABSmartly.Switchback.Assigner.assign("Lisboa", 1, seed, 3)
+
+    assert [%{name: "exp_sb", unit: "user_id", eligible: true}] = :sys.get_state(ctx).exposures
+  end
+
+  @switchback_units %{"session_id" => "s-1", "user_id" => "u-1"}
+
+  @tag get_body: @switchback_get_body
+  test "create_context keeps the fetched switchbackClusters order", %{server: server} do
+    {:ok, ctx} = SDK.create_context(holdout_sdk(server), @switchback_units)
+    assert_switchback_served_in_declared_order(ctx)
+  end
+
+  @tag get_body: @switchback_get_body
+  test "create_context_async keeps the fetched switchbackClusters order", %{server: server} do
+    {:ok, ctx} = SDK.create_context_async(holdout_sdk(server), @switchback_units)
+    assert :ok = Context.wait_until_ready(ctx)
+    assert_switchback_served_in_declared_order(ctx)
+  end
+
+  @tag get_body: @switchback_get_body
+  test "refresh/1 keeps the fetched switchbackClusters order", %{server: server} do
+    {:ok, ctx} =
+      SDK.create_context_with(holdout_sdk(server), @switchback_units, %Types.ContextData{})
+
+    assert :ok = Context.refresh(ctx)
+    assert_switchback_served_in_declared_order(ctx)
+  end
+
   defp holdout_sdk(server) do
     SDK.new(
       endpoint: "http://127.0.0.1:#{server.port}",
