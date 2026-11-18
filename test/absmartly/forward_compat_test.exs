@@ -190,7 +190,6 @@ defmodule ABSmartly.ForwardCompatTest do
     assert Enum.find(data.holdouts, &(&1.id == 14)).split == []
     assert %{seed_hi: 0, seed_lo: 0, iteration: 0} = Enum.find(data.holdouts, &(&1.id == 15))
 
-    # Reading everything above logged nothing at warning level or above.
     assert log.() == []
   end
 

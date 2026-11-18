@@ -169,7 +169,6 @@ defmodule ABSmartly.HoldoutsTest do
   defp holdout_exposure(id, name, variant, unit \\ @unit_type),
     do: exposure(id, name, variant, unit: unit)
 
-  # Publishes and returns the published exposures without their timestamps.
   defp published(ctx, endpoint) do
     :ok = Context.publish(ctx)
 
@@ -462,7 +461,6 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.treatment(ctx, "exp_dup") == 0
     assert Context.pending(ctx) == 2
 
-    # Dropping the duplicates is not a coverage change: nothing re-resolves.
     refresh(ctx, data([holdout(11, "holdout_a", @holdout_b)], covered(1, "exp_dup", [11])))
     assert Context.treatment(ctx, "exp_dup") == 0
     assert Context.pending(ctx) == 2

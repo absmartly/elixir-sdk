@@ -61,7 +61,6 @@ defmodule ABSmartly.CrossSDKScenariosTest do
                Enum.to_list(230..253) ++ Enum.to_list(300..332) ++ [421]
   end
 
-  # Guards the gate: every holdout scenario runs here, none is skipped.
   test "every holdout scenario runs" do
     holdout_scenarios =
       Enum.filter(@scenarios, &Enum.any?(&1["requires"] || [], fn r -> r =~ "holdout" end))

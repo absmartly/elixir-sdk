@@ -51,7 +51,6 @@ defmodule ABSmartly.Context do
     # A unit's arm in a holdout, by {holdout id, unit type}, valid while the
     # holdout's iteration is unchanged.
     holdout_assignments: %{},
-    # The refs of the holdout arms whose exposure was queued.
     holdout_exposed: MapSet.new()
   ]
 
@@ -982,7 +981,7 @@ defmodule ABSmartly.Context do
           do: state,
           else: enqueue_exposure(state, create_exposure(experiment, assignment))
 
-      expose_holdouts(state, experiment, assignment)
+      queue_holdout_exposures(state, assignment.holdout_arms)
     end
   end
 
@@ -1588,7 +1587,6 @@ defmodule ABSmartly.Context do
   end
 
   defp recheck_audience(%{rule_override: true}, _state, _experiment), do: :ok
-  # A suppressed assignment never evaluated its audience.
   defp recheck_audience(%{suppressed: true}, _state, _experiment), do: :ok
 
   defp recheck_audience(cached, state, experiment) do
@@ -1701,8 +1699,6 @@ defmodule ABSmartly.Context do
     end
   end
 
-  # The union of the covering holdouts: any one holding the unit out
-  # suppresses the experiment.
   defp held_out?(nil, _experiment), do: false
 
   defp held_out?(holdout_arms, experiment) do
@@ -1725,12 +1721,7 @@ defmodule ABSmartly.Context do
   defp holdout_unit_missing?(%{holdout_arms: arms}),
     do: Enum.any?(arms, fn {_name, arm} -> arm == nil end)
 
-  # Queues the exposure of each holdout covering the experiment that was not
-  # exposed yet, from the arms pinned in its assignment.
-  defp expose_holdouts(state, _experiment, %{holdout_arms: nil}), do: state
-
-  defp expose_holdouts(state, _experiment, %{holdout_arms: arms}),
-    do: queue_holdout_exposures(state, arms)
+  defp queue_holdout_exposures(state, nil), do: state
 
   defp queue_holdout_exposures(state, arms) do
     Enum.reduce(arms, state, fn
