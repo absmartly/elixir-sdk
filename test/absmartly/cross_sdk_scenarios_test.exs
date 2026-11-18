@@ -3,9 +3,9 @@ defmodule ABSmartly.CrossSDKScenariosTest do
   Replays the cross-SDK conformance scenarios for holdouts (203-227), custom
   assignment rules (230-239, 300-314, 324-330), the semver operators (240-245,
   315-319, 331-332), audience re-evaluation (246-247), system attributes
-  (248-253), blank client applications (322-323) and switchback inertness
-  (421, ungated: switchback fields in a payload leave unit experiments alone)
-  against the real `ABSmartly.Context` API.
+  (248-253), blank client applications (322-323) and switchbacks (400-425:
+  the golden vectors, cluster serving, precedence and exposures; 421 is the
+  ungated inertness baseline) against the real `ABSmartly.Context` API.
 
   A scenario runs unless it `requires` a capability this SDK does not have
   (see `@unsupported`), as in the cross-SDK harness.
@@ -32,7 +32,13 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
   @fixture Path.expand("../fixtures/cross_sdk_scenarios.json", __DIR__)
   @external_resource @fixture
-  @scenarios @fixture |> File.read!() |> Jason.decode!() |> Map.fetch!("scenarios")
+  # Decoded like the SDK's own fetch, so each switchbackClusters keeps its
+  # declared order.
+  @scenarios @fixture
+             |> File.read!()
+             |> ABSmartly.Switchback.Json.decode()
+             |> elem(1)
+             |> Map.fetch!("scenarios")
 
   # Capabilities a scenario can require that this SDK does not have, or that
   # this in-process replay cannot drive:
@@ -52,13 +58,13 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
   # Guards the vendored set: every scenario of the pinned ranges is present,
   # so dropping one while updating the fixture fails here.
-  test "the fixture has every scenario of 203-227, 230-253, 300-332 and 421" do
+  test "the fixture has every scenario of 203-227, 230-253, 300-332 and 400-425" do
     numbers =
       Enum.map(@scenarios, &(&1["name"] |> String.split(" ") |> hd() |> String.to_integer()))
 
     assert Enum.sort(numbers) ==
              Enum.to_list(203..227) ++
-               Enum.to_list(230..253) ++ Enum.to_list(300..332) ++ [421]
+               Enum.to_list(230..253) ++ Enum.to_list(300..332) ++ Enum.to_list(400..425)
   end
 
   test "every holdout scenario runs" do
@@ -67,6 +73,18 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
     assert length(holdout_scenarios) == 25
     refute Enum.any?(holdout_scenarios, &Enum.any?(&1["requires"], fn r -> r in @unsupported end))
+  end
+
+  test "every switchback scenario runs" do
+    switchback_scenarios =
+      Enum.filter(@scenarios, &(&1["name"] =~ " - Switchback - "))
+
+    assert length(switchback_scenarios) == 26
+
+    refute Enum.any?(
+             switchback_scenarios,
+             &Enum.any?(&1["requires"] || [], fn r -> r in @unsupported end)
+           )
   end
 
   defp run_scenario(scenario) do
@@ -92,13 +110,25 @@ defmodule ABSmartly.CrossSDKScenariosTest do
       |> Enum.with_index()
       |> Enum.each(fn {{{type, data}, expected}, i} ->
         assert type == expected["type"]
-        if expected["data"], do: assert_subset(expected["data"], data, type)
+        if expected["data"], do: assert_subset(unordered_units(expected, data), data, type)
         if ref = expected["sameShapeAs"], do: assert_same_shape(earlier, ref, i, data, type)
       end)
 
       {ctx, Map.put(earlier, index, Enum.map(emitted, fn {_type, data} -> normalize(data) end))}
     end)
   end
+
+  # The harness's unorderedUnits: a publish event's units match one-to-one in
+  # any order, so the expected units are put in the published order first.
+  defp unordered_units(%{"unorderedUnits" => true, "data" => %{"units" => units} = data}, actual) do
+    published = normalize(actual)["units"]
+
+    if Enum.sort(units) == Enum.sort(published),
+      do: Map.put(data, "units", published),
+      else: data
+  end
+
+  defp unordered_units(expected, _actual), do: expected["data"]
 
   # The harness's sameShapeAs: the event has the same keys (at every depth)
   # and list lengths as event `i` of the earlier step `ref`; values are
@@ -141,6 +171,32 @@ defmodule ABSmartly.CrossSDKScenariosTest do
     data = Types.ContextData.from_map(scenario["contextData"])
     {:ok, ctx} = Context.start_link(sdk_config, data, context_config)
     {%{"ready" => true, "failed" => false, "finalized" => false}, ctx}
+  end
+
+  # The pure-function switchback endpoints: 64-bit values travel as decimal
+  # strings.
+  defp run_step(%{"action" => "switchbackAssign", "params" => p}, ctx, _scenario, _events) do
+    result =
+      ABSmartly.Switchback.Assigner.assign(
+        p["clusterUnit"],
+        String.to_integer(p["periodIndex"]),
+        String.to_integer(p["seed"]),
+        p["armCount"]
+      )
+
+    {result, ctx}
+  end
+
+  defp run_step(%{"action" => "switchbackPermutation", "params" => p}, ctx, _scenario, _events) do
+    base =
+      ABSmartly.Switchback.Assigner.base_hash(
+        p["clusterUnit"],
+        String.to_integer(p["cycleIndex"]),
+        String.to_integer(p["seed"])
+      )
+
+    {Tuple.to_list(ABSmartly.Switchback.Assigner.fisher_yates_permutation(p["armCount"], base)),
+     ctx}
   end
 
   defp run_step(%{"action" => action, "params" => params}, ctx, _scenario, _events) do

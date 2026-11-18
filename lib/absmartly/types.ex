@@ -60,11 +60,28 @@ defmodule ABSmartly.Types do
       :assignment_rules,
       :custom_field_values,
       :holdout_ids,
-      :holdout_type
+      :holdout_type,
+      :randomization_type,
+      :switchback_clusters,
+      :switchback_cluster_values,
+      :switchback_start_at,
+      :switchback_period_ms,
+      :switchback_carryover_duration_ms,
+      :switchback_burn_in_duration_ms,
+      :switchback_burn_out_duration_ms,
+      :switchback_design_type,
+      :switchback_estimand
     ]
 
     @doc """
     Create ExperimentData from API JSON.
+
+    `switchbackClusters` is an ordered object, and its order decides which
+    unit serves a switchback experiment. It is kept as a `Jason.OrderedObject`
+    when it is one (as `ABSmartly.HTTP.Client.fetch_context/6` decodes it) or
+    a list of `{unit_type, path}` pairs. A plain map has no order, so one with
+    more than one entry cannot be served: the experiment is an ineligible
+    control and records no exposure.
     """
     def from_map(map) when is_map(map) do
       required_fields = ["id", "name", "unitType", "split"]
@@ -102,9 +119,61 @@ defmodule ABSmartly.Types do
         assignment_rules: assignment_rules(map),
         custom_field_values: map["customFieldValues"],
         holdout_ids: holdout_ids(map["holdoutIds"]),
-        holdout_type: if(is_binary(map["holdoutType"]), do: map["holdoutType"])
+        holdout_type: if(is_binary(map["holdoutType"]), do: map["holdoutType"]),
+        randomization_type: string_or_nil(map["randomizationType"]),
+        switchback_clusters: switchback_clusters(map),
+        switchback_cluster_values: switchback_cluster_values(map["switchbackClusterValues"]),
+        switchback_start_at: integer_or_nil(map["switchbackStartAt"]),
+        switchback_period_ms: integer_or_nil(map["switchbackPeriodMs"]),
+        switchback_carryover_duration_ms: integer_or_nil(map["switchbackCarryoverDurationMs"]),
+        switchback_burn_in_duration_ms: integer_or_nil(map["switchbackBurnInDurationMs"]),
+        switchback_burn_out_duration_ms: integer_or_nil(map["switchbackBurnOutDurationMs"]),
+        switchback_design_type: string_or_nil(map["switchbackDesignType"]),
+        switchback_estimand: string_or_nil(map["switchbackEstimand"])
       }
     end
+
+    # Like an unknown field, a switchback field of an unexpected type never
+    # fails the context: it is nil, which makes a switchback unservable.
+    defp string_or_nil(value) when is_binary(value), do: value
+    defp string_or_nil(_value), do: nil
+
+    defp integer_or_nil(value), do: ABSmartly.Types.HoldoutData.integer_id(value)
+
+    defp switchback_clusters(map) do
+      case map["switchbackClusters"] do
+        nil ->
+          nil
+
+        %Jason.OrderedObject{} = clusters ->
+          clusters
+
+        pairs when is_list(pairs) ->
+          if Enum.all?(pairs, &match?({_, _}, &1)), do: %Jason.OrderedObject{values: pairs}
+
+        %{} = clusters when map_size(clusters) <= 1 and not is_struct(clusters) ->
+          %Jason.OrderedObject{values: Map.to_list(clusters)}
+
+        %{} = clusters when not is_struct(clusters) ->
+          Logger.warning(
+            "Ignoring switchbackClusters for experiment #{inspect(map["name"])}: " <>
+              "an unordered map of #{map_size(clusters)} entries has no declared order"
+          )
+
+          nil
+
+        _other ->
+          nil
+      end
+    end
+
+    # The allow-list. An integer is its base-10 text, as Jackson reads it into
+    # the Java SDK's String[]; other non-strings never match a cluster key but
+    # keep the list non-empty, so they never widen it to every value.
+    defp switchback_cluster_values(values) when is_list(values),
+      do: Enum.map(values, &if(is_integer(&1), do: Integer.to_string(&1), else: &1))
+
+    defp switchback_cluster_values(_values), do: nil
 
     # The ids of the holdouts covering this experiment. Like an unknown field,
     # a value that is not a list of integers never fails the context: anything
