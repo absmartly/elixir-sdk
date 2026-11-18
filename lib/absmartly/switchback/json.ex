@@ -18,7 +18,7 @@ defmodule ABSmartly.Switchback.Json do
   Like `Jason.decode/1`, but keeps every `switchbackClusters` object ordered.
   """
   def decode(body) when is_binary(body) do
-    if :binary.match(body, "switchbackClusters") == :nomatch do
+    if :binary.match(body, ["switchbackClusters", "\\u"]) == :nomatch do
       Jason.decode(body)
     else
       with {:ok, decoded} <- Jason.decode(body, objects: :ordered_objects),

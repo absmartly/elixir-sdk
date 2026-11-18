@@ -372,6 +372,27 @@ defmodule ABSmartly.Switchback.ContextTest do
            ]
   end
 
+  test "burn-in, burn-out and carryover never change serving or exposures", %{clock: clock} do
+    windows = %{
+      "switchbackBurnInDurationMs" => 900_000,
+      "switchbackBurnOutDurationMs" => 900_000,
+      "switchbackCarryoverDurationMs" => 1_800_000
+    }
+
+    {ctx, events} = create(clock, data(sb(3, @hour, windows)))
+
+    for {i, offset} <- [{0, 0}, {1, 1}, {2, @hour - 1}, {3, 450_000}] do
+      set(clock, @anchor + i * @hour + offset)
+      assert Context.treatment(ctx, "exp_sb") == e3(i)
+    end
+
+    assert publish_exposures(ctx, events) ==
+             for(
+               {i, offset} <- [{0, 0}, {1, 1}, {2, @hour - 1}, {3, 450_000}],
+               do: exposure(1, "exp_sb", e3(i), @anchor + i * @hour + offset, true, true)
+             )
+  end
+
   # fullOnServesTheFullOnVariantInEveryPeriod
   test "full-on serves the full-on variant in every period", %{clock: clock} do
     {ctx, events} = create(clock, data(sb(3, @hour, %{"fullOnVariant" => 2})))

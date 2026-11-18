@@ -2340,11 +2340,14 @@ defmodule ABSmartly.Context do
 
     case cached && switchback_slot_current(state, experiment, cached, override, custom) do
       :current ->
-        # Validated against the current rules and attributes: stamped so
-        # the next read does not evaluate them again.
-        slot = %{cached | rule_key: experiment.assignment_rules, attrs_seq: state.attrs_seq}
-        epoch = %{epoch | slots: Map.put(epoch.slots, period, slot)}
-        {slot, period, put_switchback_epoch(state, name, epoch)}
+        if cached.rule_key == experiment.assignment_rules and cached.attrs_seq == state.attrs_seq do
+          {cached, period, state}
+        else
+          # Same outcome after validation: advance the stamps once.
+          slot = %{cached | rule_key: experiment.assignment_rules, attrs_seq: state.attrs_seq}
+          epoch = %{epoch | slots: Map.put(epoch.slots, period, slot)}
+          {slot, period, put_switchback_epoch(state, name, epoch)}
+        end
 
       _stale ->
         slot = resolve_switchback(state, experiment, info, cached, override, custom, now)
