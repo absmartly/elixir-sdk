@@ -40,9 +40,6 @@ defmodule ABSmartly.Switchback.Json do
       :binary.match(body, "switchbackClusters") != :nomatch ->
         Jason.decode(body)
 
-      :binary.match(body, "\\u") == :nomatch ->
-        with {:ok, decoded} <- Jason.decode(body), do: {:ok, {:plain, decoded}}
-
       true ->
         key = {__MODULE__, :seen}
         Process.delete(key)
