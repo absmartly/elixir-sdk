@@ -1397,6 +1397,16 @@ defmodule ABSmartly.Switchback.ClusterTest do
         "controls"
       )
 
+      # A leading combining mark is part of the name, not trimmed with it.
+      combining = parity_experiment([{@store, "\u0301city"}])
+
+      assert_eligible(
+        serve(clock, combining, %{@store => "s1"}, %{" \u0301city" => "Porto"}),
+        @store,
+        "Porto",
+        "mark"
+      )
+
       # U+00A0 is not trimmed, so the name does not match.
       assert_silent_control(
         serve(clock, exp, %{@store => "s1"}, %{"\u00A0cluster" => "Porto"}),

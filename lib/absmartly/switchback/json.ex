@@ -20,7 +20,10 @@ defmodule ABSmartly.Switchback.Json do
   """
   def decode(body) when is_binary(body) do
     with {:ok, decoded} <- Jason.decode(body) do
-      if ordered_clusters_needed?(decoded) do
+      # The key may be written with escapes, so only a body with neither
+      # the key nor an escape skips the walk.
+      if :binary.match(body, ["switchbackClusters", "\\u"]) != :nomatch and
+           ordered_clusters_needed?(decoded) do
         with {:ok, ordered} <- Jason.decode(body, objects: :ordered_objects),
              do: {:ok, normalize(ordered)}
       else
@@ -36,7 +39,7 @@ defmodule ABSmartly.Switchback.Json do
        do: true
 
   defp ordered_clusters_needed?(%{} = map),
-    do: Enum.any?(Map.values(map), &ordered_clusters_needed?/1)
+    do: Enum.any?(map, fn {_key, value} -> ordered_clusters_needed?(value) end)
 
   defp ordered_clusters_needed?(list) when is_list(list),
     do: Enum.any?(list, &ordered_clusters_needed?/1)

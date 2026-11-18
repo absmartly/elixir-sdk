@@ -2617,16 +2617,20 @@ defmodule ABSmartly.Context do
 
   # Java's String.trim, as the Collector trims attribute names: code points
   # up to U+0020 at either end, not Unicode whitespace.
-  defp java_trim(name) do
-    name
-    |> trim_leading_controls()
-    |> String.reverse()
-    |> trim_leading_controls()
-    |> String.reverse()
-  end
+  defp java_trim(name), do: name |> trim_leading_controls() |> trim_trailing_controls()
 
   defp trim_leading_controls(<<c, rest::binary>>) when c <= 0x20, do: trim_leading_controls(rest)
   defp trim_leading_controls(name), do: name
+
+  # Bytes up to 0x20 are single-byte code points in UTF-8, so the name can
+  # be trimmed byte by byte without splitting a character.
+  defp trim_trailing_controls(name) do
+    size = byte_size(name)
+
+    if size > 0 and :binary.last(name) <= 0x20,
+      do: trim_trailing_controls(binary_part(name, 0, size - 1)),
+      else: name
+  end
 
   defp now_millis(state), do: read_clock(state.clock)
 

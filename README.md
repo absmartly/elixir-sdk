@@ -577,7 +577,7 @@ end
 
 #### Changed
 
-- **Switchback experiments change assignment.** Earlier versions served a switchback experiment like a unit experiment (a sticky variant for its `unitType`, or nothing without one), so their exposures did not follow the schedule. Units in running switchback experiments now move to the scheduled variant of their cluster, change variant at each period, and get one exposure per period; units without a cluster value get variant 0 and no exposure. Unit experiments are unchanged.
+- **Switchback experiments change assignment.** Earlier versions served a switchback experiment like a unit experiment (a sticky variant for its `unitType`), so their exposures did not follow the schedule, and a payload with a switchback that has no `unitType` failed the whole context (`Missing required experiment fields`), so every experiment served control. Units in running switchback experiments now move to the scheduled variant of their cluster, change variant at each period, and get one exposure per period; units without a cluster value get variant 0 and no exposure. Unit experiments are unchanged.
 - The SDK only uses the integer part of the platform's float handling for the cluster value: an integer attribute such as `3` is the cluster `"3"`, while `3.0` is not a cluster value. JSON payloads keep that difference, since Jason decodes `3.0` as a float.
 
 ### Holdouts are applied

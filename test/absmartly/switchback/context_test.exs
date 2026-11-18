@@ -874,6 +874,8 @@ defmodule ABSmartly.Switchback.ContextTest do
     @branch branch
     @flags flags
     @variant variant
+    # The unit experiment randomizes over the unit where the switchback draws.
+    @unit_variant_fixed branch not in [:draw, :non_strict_mismatch]
     test "exposure flags match a unit experiment: #{branch}", %{clock: clock} do
       set(clock, @anchor + 2 * @hour + 3)
       assert e3(2) == 1
@@ -885,8 +887,7 @@ defmodule ABSmartly.Switchback.ContextTest do
       assert Enum.map(@flag_keys, &sb[&1]) == @flags, "switchback #{@branch}"
       assert sb["variant"] == @variant
 
-      unless @branch in [:draw, :non_strict_mismatch],
-        do: assert(unit["variant"] == @variant)
+      if @unit_variant_fixed, do: assert(unit["variant"] == @variant)
 
       assert Map.take(unit, ~w(id name exposedAt unit)) ==
                Map.take(sb, ~w(id name exposedAt unit))
