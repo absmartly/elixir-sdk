@@ -260,6 +260,16 @@ defmodule ABSmartly.FixPlanTest do
       assert Context.variable_value(ctx, "color", "none") == "blue"
       # Listed once, as the JS SDK indexes a key by experiment id.
       assert Context.variable_keys(ctx)["color"] == ["dup_first"]
+
+      # The value path reads the deduplicated key too: with the first of the
+      # two out of traffic, JS returns the default and exposes only it.
+      out_of_traffic =
+        shared.(1, "dup_out", "blue")
+        |> Map.merge(%{"trafficSplit" => [1, 0], "fullOnVariant" => 0})
+
+      ctx = start_context(%{"experiments" => [out_of_traffic, shared.(1, "dup_in", "red")]})
+      assert Context.variable_value(ctx, "color", "none") == "none"
+      assert Context.pending(ctx) == 1
     end
   end
 
