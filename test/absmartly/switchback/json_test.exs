@@ -24,6 +24,18 @@ defmodule ABSmartly.Switchback.JsonTest do
     assert clusters_of(body) == %Jason.OrderedObject{values: [{"b", "3"}, {"a", "2"}]}
   end
 
+  test "a repeated key outside switchbackClusters keeps its first value, as Jason.decode/1 does" do
+    body =
+      ~s({"experiments":[{"name":"exp_unit","fullOnVariant":0,"fullOnVariant":2,"x":{"k":1,"k":3}},) <>
+        ~s({"name":"exp_sb","switchbackClusters":{"a":"p","b":"q"}}]})
+
+    {:ok, plain} = Jason.decode(body)
+    {:ok, decoded} = Json.decode(body)
+    [unit, _sb] = decoded["experiments"]
+    assert {unit["fullOnVariant"], unit["x"]} == {0, %{"k" => 1}}
+    assert unit == hd(plain["experiments"])
+  end
+
   test "everything else decodes exactly as Jason.decode/1" do
     body =
       ~s({"experiments":[{"id":1,"switchbackClusters":{"z":"p","a":"q"},"variants":[{"config":"{}","x":{"k":[1,{"m":2}]}}]}],"holdouts":[{"id":2}],"u":"\\u00e9"})

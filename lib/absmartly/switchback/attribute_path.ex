@@ -96,7 +96,10 @@ defmodule ABSmartly.Switchback.AttributePath do
 
   defp parse(<<quote, rest::binary>>, acc) when quote in [?', ?"] do
     case :binary.split(rest, <<quote>>) do
-      [key, rest] -> parse(rest, [{:key, key} | acc])
+      # A closed quote must end the segment: text after it is malformed.
+      [key, ""] -> parse("", [{:key, key} | acc])
+      [key, "/" <> _ = rest] -> parse(rest, [{:key, key} | acc])
+      [_key, _trailing] -> :error
       [_unterminated] -> :error
     end
   end

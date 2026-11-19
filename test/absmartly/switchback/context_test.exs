@@ -1022,6 +1022,26 @@ defmodule ABSmartly.Switchback.ContextTest do
     end
   end
 
+  # A long-lived context that refreshes through many switchback names keeps
+  # slots only for the switchbacks it currently has.
+  test "a refresh releases the slots of experiments that are no longer switchbacks", %{
+    clock: clock
+  } do
+    {ctx, _} = create(clock, data([]))
+
+    for i <- 1..50 do
+      refresh(ctx, [switchback(i, "sb_#{i}", 2, @hour)])
+      Context.treatment(ctx, "sb_#{i}")
+    end
+
+    assert Map.keys(:sys.get_state(ctx).switchback_slots) == ["sb_50"]
+
+    refresh(ctx, [switchback(1, "sb_50", 2, @hour, %{"randomizationType" => "unit"})])
+    assert :sys.get_state(ctx).switchback_slots == %{}
+    refresh(ctx, [])
+    assert :sys.get_state(ctx).switchback_slots == %{}
+  end
+
   # perPeriodCacheIsBounded
   test "the per-period cache is bounded", %{clock: clock} do
     {ctx, _} = create(clock, data(sb(2, @hour)))

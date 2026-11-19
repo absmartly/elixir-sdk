@@ -133,17 +133,8 @@ defmodule ABSmartly.SwitchbackTestSupport do
   end
 
   @doc "Publishes and returns the published exposures as wire maps."
-  def publish_exposures(ctx, events) do
-    Agent.update(events, fn _ -> [] end)
-    :ok = Context.publish(ctx)
-
-    events
-    |> Agent.get(&Enum.reverse/1)
-    |> Enum.flat_map(fn
-      {:publish, event} -> event["exposures"]
-      _ -> []
-    end)
-  end
+  def publish_exposures(ctx, events),
+    do: ctx |> publish_events(events) |> Enum.flat_map(& &1["exposures"])
 
   @doc "Publishes and returns the published event maps."
   def publish_events(ctx, events) do

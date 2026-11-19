@@ -68,6 +68,18 @@ defmodule ABSmartly.Switchback.AttributePathTest do
     end
   end
 
+  # Text after a closed quote is not a segment boundary: the path is
+  # malformed, so it never resolves a value (the experiment is unservable).
+  test "rejects text after a closed quoted segment" do
+    for path <- [~s(geo/"city"junk), "geo/'city'junk", "'geo'x/city", ~s(geo/"a"'b')] do
+      assert AttributePath.parse_supported(path) == nil, path
+    end
+
+    attributes = %{"geo" => %{"city" => %{"junk" => "cluster-a"}}}
+    assert resolve(~s(geo/"city"/junk), attributes) == "cluster-a"
+    assert resolve(~s(geo/"city"), attributes) == %{"junk" => "cluster-a"}
+  end
+
   # separatorsAreCollapsed
   test "separators are collapsed" do
     attributes = %{"geo" => %{"city" => "Porto"}}

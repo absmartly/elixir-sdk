@@ -1532,6 +1532,10 @@ defmodule ABSmartly.Context do
         exposed_experiments: exposed_experiments,
         experiment_holdouts: experiment_holdouts,
         switchbacks: switchbacks,
+        # Slots of experiments that are no longer switchbacks are released;
+        # a switchback that returns gets a new generation, so none of them
+        # could be served again.
+        switchback_slots: Map.take(state.switchback_slots, Map.keys(switchbacks)),
         switchback_generation: generation
     }
 
@@ -2031,15 +2035,17 @@ defmodule ABSmartly.Context do
   defp parse_audience(audience) when is_map(audience), do: audience
   defp parse_audience(_), do: nil
 
-  defp create_exposure(state, experiment, assignment) do
-    unit_type = unit_type(experiment)
+  # A switchback passes its serving unit and the clock reading that chose
+  # its period; a unit experiment is exposed under its unit type, now.
+  defp create_exposure(state, experiment, assignment, unit_and_time \\ nil) do
+    {unit_type, exposed_at} = unit_and_time || {unit_type(experiment), now_millis(state)}
 
     %Types.Exposure{
       id: experiment.id,
       name: experiment.name,
       unit: unit_type,
       variant: assignment.variant,
-      exposed_at: now_millis(state),
+      exposed_at: exposed_at,
       assigned: assignment.assigned,
       eligible: assignment.eligible,
       overridden: assignment.overridden,
@@ -2350,7 +2356,9 @@ defmodule ABSmartly.Context do
         end
 
       _stale ->
-        slot = resolve_switchback(state, experiment, info, cached, override, custom, now)
+        slot =
+          resolve_switchback(state, experiment, info, cached, {override, custom}, period, now)
+
         epoch = retain_switchback_slot(epoch, period, slot)
         {slot, period, put_switchback_epoch(state, name, epoch)}
     end
@@ -2416,7 +2424,7 @@ defmodule ABSmartly.Context do
   # unit), strict audience, full-on, the anchor and schedule, traffic (the
   # serving unit's hash), custom assignment, then the draw over the raw
   # cluster key. Holdouts never apply to a switchback.
-  defp resolve_switchback(state, experiment, info, cached, override, custom, now) do
+  defp resolve_switchback(state, experiment, info, cached, {override, custom}, period, now) do
     # Within one slot the serving unit and cluster key are read once, unless
     # no linked unit was set then.
     serving =
@@ -2434,7 +2442,6 @@ defmodule ABSmartly.Context do
     }
 
     unit_type = unit_type || switchback_fallback_unit_type(experiment, info)
-    period = switchback_period(experiment, info, now)
 
     {assignment, silent} =
       cond do
@@ -2571,26 +2578,14 @@ defmodule ABSmartly.Context do
     else
       epoch = %{epoch | slots: Map.put(epoch.slots, period, %{slot | exposed: true})}
       state = put_switchback_epoch(state, name, epoch)
-      a = slot.assignment
 
-      if slot.silent do
-        state
-      else
-        enqueue_exposure(state, %Types.Exposure{
-          id: experiment.id,
-          name: name,
-          unit: slot.unit_type,
-          variant: a.variant,
-          exposed_at: now,
-          assigned: a.assigned,
-          eligible: a.eligible,
-          overridden: a.overridden,
-          full_on: a.full_on,
-          custom: a.custom,
-          audience_mismatch: a.audience_mismatch,
-          rule_override: a.rule_override
-        })
-      end
+      if slot.silent,
+        do: state,
+        else:
+          enqueue_exposure(
+            state,
+            create_exposure(state, experiment, slot.assignment, {slot.unit_type, now})
+          )
     end
   end
 

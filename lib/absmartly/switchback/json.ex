@@ -82,10 +82,15 @@ defmodule ABSmartly.Switchback.Json do
   @doc """
   Turns every `Jason.OrderedObject` in a value decoded with
   `objects: :ordered_objects` into a map, except the value of each
-  `switchbackClusters` key.
+  `switchbackClusters` key. A repeated key keeps its first value, as
+  `Jason.decode/1` does, except inside `switchbackClusters` (see `decode/1`).
   """
   def normalize(%Jason.OrderedObject{values: values}) do
-    Map.new(values, fn
+    # Reversed so that, as in `Jason.decode/1`, the first of a repeated key
+    # wins (Map.new/2 keeps the last).
+    values
+    |> Enum.reverse()
+    |> Map.new(fn
       {"switchbackClusters", %Jason.OrderedObject{values: clusters}} ->
         {"switchbackClusters", %Jason.OrderedObject{values: dedup(clusters)}}
 
