@@ -270,4 +270,21 @@ defmodule ABSmartly.EvaluationWorkTest do
     assert forty_with_switchback - forty <= 20,
            "#{forty} vs #{forty_with_switchback} reductions per read"
   end
+
+  # Installing data without switchbacks never scans the variable index for
+  # switchback keys.
+  test "installing data without switchbacks does no switchback key work" do
+    config = [%{"name" => "A", "config" => ~s({"color":"red","size":1})}]
+    experiments = for i <- 1..20, do: experiment("plain_#{i}") |> Map.put("variants", config)
+    ctx = start_context(experiments, [])
+    scan = {Enum, :any?, 2}
+
+    counts =
+      count_calls(ctx, [scan], fn ->
+        :ok = Context.set_data(ctx, %{"experiments" => experiments})
+      end)
+
+    assert counts == %{scan => 0}
+    assert :sys.get_state(ctx).switchback_variable_index == %{}
+  end
 end

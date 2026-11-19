@@ -2296,12 +2296,8 @@ defmodule ABSmartly.Context do
   defp switchback?(%{randomization_type: "switchback"}), do: true
   defp switchback?(_experiment), do: false
 
-  # The switchbacks of the installed data, by name. Each keeps the previous
-  # generation while its identity is unchanged, and gets a fresh one
-  # otherwise; slots resolved under another generation are dropped on the
-  # experiment's next resolution. An identity ends when the experiment is
-  # removed or becomes a unit experiment, so returning to an identical
-  # definition later starts a new generation too.
+  # The variable keys a switchback sets, each with its experiments in
+  # ascending id order. Without switchbacks there is nothing to scan.
   defp switchback_variable_index(_var_index, switchbacks) when switchbacks == %{}, do: %{}
 
   defp switchback_variable_index(var_index, switchbacks) do
@@ -2311,6 +2307,12 @@ defmodule ABSmartly.Context do
         do: {key, Enum.sort_by(experiments, & &1.id)}
   end
 
+  # The switchbacks of the installed data, by name. Each keeps the previous
+  # generation while its identity is unchanged, and gets a fresh one
+  # otherwise; slots resolved under another generation are dropped on the
+  # experiment's next resolution. An identity ends when the experiment is
+  # removed or becomes a unit experiment, so returning to an identical
+  # definition later starts a new generation too.
   defp build_switchback_index(experiments, previous, generation) do
     Enum.reduce(experiments, {%{}, generation}, fn experiment, {index, generation} ->
       if switchback?(experiment) do
