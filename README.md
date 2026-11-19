@@ -579,7 +579,8 @@ end
 #### Changed
 
 - **Switchback experiments change assignment.** Earlier versions served a switchback experiment like a unit experiment (a sticky variant for its `unitType`), so their exposures did not follow the schedule, and a payload with a switchback that has no `unitType` failed the whole context (`Missing required experiment fields`), so every experiment served control. Units in running switchback experiments now move to the scheduled variant of their cluster, change variant at each period, and get one exposure per period; units without a cluster value get variant 0 and no exposure. Unit experiments are unchanged.
-- The SDK only uses the integer part of the platform's float handling for the cluster value: an integer attribute such as `3` is the cluster `"3"`, while `3.0` is not a cluster value. JSON payloads keep that difference, since Jason decodes `3.0` as a float.
+- Only an integer attribute is a numeric cluster value: `3` is the cluster `"3"`, while `3.0`, like every float, is not a cluster value. JSON payloads keep that difference, since Jason decodes `3.0` as a float.
+- **A variable key shared by several experiments is won by the lowest experiment id.** `Context.variable_value/3`, `Context.peek_variable_value/3` and `Context.variable_keys/1` read a key's experiments in ascending id order, as the JavaScript and Java SDKs do, instead of the order of the context data. When two experiments a unit is assigned to set the same key, the one with the lower id now supplies the value and is exposed, wherever it sits in the payload. Payloads whose experiments arrive in id order see no change.
 
 ### Holdouts are applied
 
