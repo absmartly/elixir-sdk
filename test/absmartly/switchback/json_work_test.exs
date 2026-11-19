@@ -19,6 +19,37 @@ defmodule ABSmartly.Switchback.JsonWorkTest do
     )
   end
 
+  # A variant config holding an experiments list with switchbackClusters is
+  # customer data, so it never triggers the second, ordered decode.
+  test "clusters inside a variant config do not trigger the ordered decode" do
+    Code.ensure_loaded!(Json)
+
+    body =
+      ~s({"experiments":[{"id":1,"variants":[{"config":) <>
+        ~s({"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]}}]}]})
+
+    parent = self()
+
+    worker =
+      spawn(fn ->
+        receive do
+          {:decode, text} -> send(parent, {:decoded, Json.decode(text)})
+        end
+      end)
+
+    :erlang.trace(worker, true, [:call, {:tracer, self()}])
+    :erlang.trace_pattern({Json, :normalize, 1}, true, [:local])
+
+    try do
+      send(worker, {:decode, body})
+      assert_receive {:decoded, {:ok, _}}
+    after
+      :erlang.trace_pattern({Json, :normalize, 1}, false, [:local])
+    end
+
+    refute_received {:trace, _, :call, {Json, :normalize, _}}
+  end
+
   defp assert_walk_calls(body) do
     parent = self()
 

@@ -1149,6 +1149,72 @@ defmodule ABSmartly.Switchback.ContextTest do
              publish_exposures(ctx, events)
   end
 
+  @gold ~s({"filter":[{"eq":[{"var":"tier"},{"value":"gold"}]}]})
+
+  defp unit_variable(id, name, configs, overrides) do
+    variable_switchback(id, name, configs, overrides)
+    |> Map.drop([
+      "randomizationType",
+      "switchbackClusters",
+      "switchbackStartAt",
+      "switchbackPeriodMs"
+    ])
+  end
+
+  # Java (compiled java-sdk 07807b5): a lower-id candidate that does not win
+  # the key still fires its holdout, before the winner's own exposure.
+  test "a losing candidate on a switchback key fires its holdout before the winner", %{
+    clock: clock
+  } do
+    loses =
+      unit_variable(1, "unit_loses", [~s({"price":"u0"}), ~s({"price":"u1"})], %{
+        "holdoutIds" => [11],
+        "audience" => @gold,
+        "audienceStrict" => true
+      })
+
+    wins = variable_switchback(2, "sb_wins", [~s({"price":"s0"}), ~s({"price":"s1"})], %{})
+
+    set(clock, @anchor + 5)
+    {ctx, events} = create(clock, data([loses, wins], [holdout([0.0, 1.0])]))
+    assert Context.peek_variable_value(ctx, "price", "dflt") == "s0"
+    assert Context.pending(ctx) == 0
+    assert Context.variable_value(ctx, "price", "dflt") == "s0"
+    assert Context.variable_value(ctx, "price", "dflt") == "s0"
+
+    assert Enum.map(publish_exposures(ctx, events), &{&1["name"], &1["variant"]}) == [
+             {"holdout_a", 1},
+             {"sb_wins", 0}
+           ]
+  end
+
+  # Java: when nothing wins a switchback key, a held-out experiment supplies
+  # its control value, and only its holdout is exposed.
+  test "a held-out experiment is the fallback on a switchback key nothing wins", %{
+    clock: clock
+  } do
+    held =
+      unit_variable(1, "unit_held", [~s({"price":"a0"}), ~s({"price":"a1"})], %{
+        "holdoutIds" => [11]
+      })
+
+    strict =
+      variable_switchback(2, "sb_strict", [~s({"price":"b0"}), ~s({"price":"b1"})], %{
+        "audience" => @gold,
+        "audienceStrict" => true
+      })
+
+    set(clock, @anchor + 5)
+    {ctx, events} = create(clock, data([held, strict], [holdout([1.0, 0.0])]))
+    assert Context.peek_variable_value(ctx, "price", "dflt") == "a0"
+    assert Context.variable_value(ctx, "price", "dflt") == "a0"
+    assert Context.variable_value(ctx, "price", "dflt") == "a0"
+
+    assert Enum.map(publish_exposures(ctx, events), &{&1["name"], &1["variant"]}) == [
+             {"holdout_a", 0}
+           ]
+  end
+
   # The winner on a shared key is the lowest experiment id, whatever the
   # payload order.
   test "shared switchback keys are won by the lowest id in either payload order", %{

@@ -65,7 +65,11 @@ defmodule ABSmartly.Context do
     # :pre for a resolution without a period): at most two period slots and
     # one :pre slot per experiment, dropped when its identity changes.
     switchback_slots: %{},
-    switchback_generation: 0
+    switchback_generation: 0,
+    # The variable keys that have a switchback among their experiments, with
+    # those experiments in ascending id order (the Java SDK's key order).
+    # Empty without switchbacks, so ordinary keys skip it.
+    switchback_variable_index: %{}
   ]
 
   def child_spec(opts) do
@@ -478,6 +482,7 @@ defmodule ABSmartly.Context do
         switchbacks: switchbacks,
         switchback_slots: Map.take(state.switchback_slots, Map.keys(switchbacks)),
         switchback_generation: generation,
+        switchback_variable_index: switchback_variable_index(var_index, switchbacks),
         ready: true,
         variable_index: var_index,
         experiment_index: exp_index,
@@ -1103,11 +1108,14 @@ defmodule ABSmartly.Context do
   # a strict-mismatched switchback is not assigned, gives way to the next
   # experiment and records nothing.
   defp do_variable_value(state, key, default_value, queue_exposure) do
-    experiments = Map.get(state.variable_index, key, [])
+    case Map.get(state.switchback_variable_index, key) do
+      nil ->
+        experiments = Map.get(state.variable_index, key, [])
+        unit_variable_value(state, experiments, key, default_value, queue_exposure)
 
-    if Enum.any?(experiments, &is_map_key(state.switchbacks, &1.name)),
-      do: switchback_variable_value(state, experiments, key, default_value, queue_exposure),
-      else: unit_variable_value(state, experiments, key, default_value, queue_exposure)
+      by_id ->
+        switchback_variable_value(state, by_id, key, default_value, queue_exposure)
+    end
   end
 
   defp unit_variable_value(state, experiments, key, default_value, queue_exposure) do
@@ -1160,9 +1168,7 @@ defmodule ABSmartly.Context do
     now = now_millis(state)
 
     {selected, state} =
-      experiments
-      |> Enum.sort_by(& &1.id)
-      |> Enum.reduce_while({nil, state}, fn exp, {fallback, acc_state} ->
+      Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc_state} ->
         {candidate, acc_state} = variable_candidate(acc_state, exp, now)
         a = candidate.assignment
 
@@ -1577,6 +1583,7 @@ defmodule ABSmartly.Context do
         exposed_experiments: exposed_experiments,
         experiment_holdouts: experiment_holdouts,
         switchbacks: switchbacks,
+        switchback_variable_index: switchback_variable_index(var_index, switchbacks),
         # Slots of experiments that are no longer switchbacks are released;
         # a switchback that returns gets a new generation, so none of them
         # could be served again.
@@ -2238,7 +2245,8 @@ defmodule ABSmartly.Context do
         rules_cache: %{},
         experiment_holdouts: %{},
         switchbacks: %{},
-        switchback_slots: %{}
+        switchback_slots: %{},
+        switchback_variable_index: %{}
     }
 
     emit_event(state, :error, reason)
@@ -2294,6 +2302,15 @@ defmodule ABSmartly.Context do
   # experiment's next resolution. An identity ends when the experiment is
   # removed or becomes a unit experiment, so returning to an identical
   # definition later starts a new generation too.
+  defp switchback_variable_index(_var_index, switchbacks) when switchbacks == %{}, do: %{}
+
+  defp switchback_variable_index(var_index, switchbacks) do
+    for {key, experiments} <- var_index,
+        Enum.any?(experiments, &is_map_key(switchbacks, &1.name)),
+        into: %{},
+        do: {key, Enum.sort_by(experiments, & &1.id)}
+  end
+
   defp build_switchback_index(experiments, previous, generation) do
     Enum.reduce(experiments, {%{}, generation}, fn experiment, {index, generation} ->
       if switchback?(experiment) do

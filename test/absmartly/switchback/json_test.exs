@@ -107,6 +107,31 @@ defmodule ABSmartly.Switchback.JsonTest do
            }
   end
 
+  # A root experiments list without clusters does not hide a nested
+  # context payload's experiments, which keep their order.
+  test "a nested experiments list keeps its order next to a root experiments list" do
+    body =
+      ~s({"experiments":[{"id":1}],"data":{"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]}})
+
+    {:ok, %{"data" => %{"experiments" => [experiment]}}} = Json.decode(body)
+
+    assert experiment["switchbackClusters"] == %Jason.OrderedObject{
+             values: [{"z", "1"}, {"a", "2"}]
+           }
+  end
+
+  # A variant config is customer data: an experiments list inside it is not
+  # a context payload, with or without real switchback experiments.
+  test "an experiments list inside a variant config stays a plain map" do
+    nested = ~s({"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]})
+
+    for clusters <- ["", ~s("switchbackClusters":{"u":"p","s":"q"},)] do
+      body = ~s({"experiments":[{#{clusters}"variants":[{"config":#{nested}}]}]})
+      {:ok, %{"experiments" => [experiment]}} = Json.decode(body)
+      assert hd(experiment["variants"])["config"] == Jason.decode!(nested), body
+    end
+  end
+
   test "invalid JSON is an error, as with Jason.decode/1" do
     assert {:error, %Jason.DecodeError{}} = Json.decode("{")
   end

@@ -75,6 +75,7 @@ defmodule ABSmartly.Switchback.Json do
 
   defp clusters_present?(%{"experiments" => experiments} = map) when is_list(experiments) do
     Enum.any?(experiments, &match?(%{"switchbackClusters" => %{}}, &1)) or
+      Enum.any?(experiments, &(match?(%{}, &1) and clusters_present?(Map.delete(&1, "variants")))) or
       Enum.any?(Map.delete(map, "experiments"), fn {_key, value} -> clusters_present?(value) end)
   end
 
@@ -103,14 +104,20 @@ defmodule ABSmartly.Switchback.Json do
       when context == :experiment ->
         {"switchbackClusters", %Jason.OrderedObject{values: dedup(clusters)}}
 
-      {"experiments", experiments} when is_list(experiments) ->
+      {"experiments", experiments} when is_list(experiments) and context != :data ->
         {"experiments", Enum.map(experiments, &normalize(&1, :experiment))}
 
+      # Variant configuration is customer data: decoded as plain maps, like
+      # Jason.decode/1, whatever keys it holds.
+      {"variants", variants} when context == :experiment ->
+        {"variants", normalize(variants, :data)}
+
       {key, value} ->
-        {key, normalize(value, :other)}
+        {key, normalize(value, if(context == :data, do: :data, else: :other))}
     end)
   end
 
+  defp normalize(list, :data) when is_list(list), do: Enum.map(list, &normalize(&1, :data))
   defp normalize(list, _context) when is_list(list), do: Enum.map(list, &normalize(&1, :other))
   defp normalize(other, _context), do: other
 

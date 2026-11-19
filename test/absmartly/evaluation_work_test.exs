@@ -200,4 +200,74 @@ defmodule ABSmartly.EvaluationWorkTest do
     assert counts == %{@audience => 0}
     assert Context.pending(ctx) == 1
   end
+
+  # The switchback key path is chosen at data install, so a variable read
+  # without switchbacks does no per-read switchback work.
+  test "a variable read without switchbacks never takes the switchback path" do
+    experiments =
+      for i <- 1..10 do
+        experiment("plain_#{i}")
+        |> Map.put("variants", [
+          %{"name" => "A", "config" => ~s({"color":"red"})},
+          %{"name" => "B", "config" => ~s({"color":"blue"})}
+        ])
+      end
+
+    ctx = start_context(experiments, [])
+    switchback = {ABSmartly.Context, :switchback_variable_value, 5}
+    candidate = {ABSmartly.Context, :variable_candidate, 3}
+
+    counts =
+      count_calls(ctx, [switchback, candidate], fn ->
+        for _ <- 1..20, do: Context.variable_value(ctx, "color", "none")
+      end)
+
+    assert counts == %{switchback => 0, candidate => 0}
+    assert :sys.get_state(ctx).switchback_variable_index == %{}
+  end
+
+  # The switchback key path is a map lookup chosen at data install. A read
+  # of a key shared by 40 unit experiments, where the first one wins, does
+  # the same work whether or not the payload has a switchback, and that work
+  # does not grow with the key's experiments (a per-read scan of them would
+  # about double it).
+  test "a unit-only variable read does no per-read work for its key's experiments" do
+    config = [
+      %{"name" => "A", "config" => ~s({"color":"red"})},
+      %{"name" => "B", "config" => ~s({"color":"blue"})}
+    ]
+
+    switchback =
+      experiment("sb")
+      |> Map.merge(%{
+        "randomizationType" => "switchback",
+        "switchbackClusters" => %Jason.OrderedObject{values: [{"session_id", "city"}]},
+        "switchbackStartAt" => 0,
+        "switchbackPeriodMs" => 3_600_000,
+        "variants" => [
+          %{"name" => "A", "config" => ~s({"size":1})},
+          %{"name" => "B", "config" => ~s({"size":2})}
+        ]
+      })
+
+    reductions = fn experiments ->
+      ctx = start_context(experiments, [])
+      for _ <- 1..20, do: Context.variable_value(ctx, "color", "none")
+      {:reductions, before} = Process.info(ctx, :reductions)
+      for _ <- 1..200, do: Context.variable_value(ctx, "color", "none")
+      {:reductions, later} = Process.info(ctx, :reductions)
+      div(later - before, 200)
+    end
+
+    units = fn n -> for i <- 1..n, do: experiment("plain_#{i}") |> Map.put("variants", config) end
+
+    one = reductions.(units.(1))
+    forty = reductions.(units.(40))
+    forty_with_switchback = reductions.(units.(40) ++ [switchback])
+
+    assert forty - one <= 20, "1 vs 40 experiments: #{one} vs #{forty} reductions per read"
+
+    assert forty_with_switchback - forty <= 20,
+           "#{forty} vs #{forty_with_switchback} reductions per read"
+  end
 end
