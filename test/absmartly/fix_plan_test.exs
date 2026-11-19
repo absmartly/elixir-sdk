@@ -194,9 +194,9 @@ defmodule ABSmartly.FixPlanTest do
 
   describe "fix #8 - variable index ordering" do
     test "variable index preserves experiment order" do
-      shared = fn name, color ->
+      shared = fn id, name, color ->
         %{
-          "id" => 1,
+          "id" => id,
           "name" => name,
           "unitType" => "session_id",
           "iteration" => 1,
@@ -212,10 +212,43 @@ defmodule ABSmartly.FixPlanTest do
       end
 
       ctx =
-        start_context(%{"experiments" => [shared.("first", "red"), shared.("second", "blue")]})
+        start_context(%{
+          "experiments" => [shared.(1, "first", "red"), shared.(2, "second", "blue")]
+        })
 
       assert Context.variable_keys(ctx)["color"] == ["first", "second"]
       assert Context.variable_value(ctx, "color", "none") == "red"
+    end
+
+    # As in the JavaScript and Java SDKs, a shared key's experiments are
+    # ordered by id, so the lower id wins wherever it sits in the payload.
+    test "the lower experiment id wins a shared key when it comes second in the payload" do
+      shared = fn id, name, color ->
+        %{
+          "id" => id,
+          "name" => name,
+          "unitType" => "session_id",
+          "iteration" => 1,
+          "seedHi" => 1,
+          "seedLo" => 2,
+          "split" => [0, 1],
+          "trafficSeedHi" => 3,
+          "trafficSeedLo" => 4,
+          "trafficSplit" => [0, 1],
+          "fullOnVariant" => 1,
+          "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]
+        }
+      end
+
+      for experiments <- [
+            [shared.(2, "higher", "blue"), shared.(1, "lower", "red")],
+            [shared.(1, "lower", "red"), shared.(2, "higher", "blue")]
+          ] do
+        ctx = start_context(%{"experiments" => experiments})
+        assert Context.variable_keys(ctx)["color"] == ["lower", "higher"]
+        assert Context.peek_variable_value(ctx, "color", "none") == "red"
+        assert Context.variable_value(ctx, "color", "none") == "red"
+      end
     end
   end
 

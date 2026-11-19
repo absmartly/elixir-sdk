@@ -1930,13 +1930,18 @@ defmodule ABSmartly.Context do
   # Without parsed rules there is nothing to resolve, so the evaluation map is
   # not needed.
   defp resolve_rule(state, experiment, pinned_missing) do
+    uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
+    cached_rule(state, experiment, uid)
+  end
+
+  # The experiment's parsed rules resolved for `uid`, the unit a split rule
+  # randomizes over; {nil, false} without rules.
+  defp cached_rule(state, experiment, uid) do
     case Map.get(state.rules_cache, experiment.name) do
       nil ->
         {nil, false}
 
       rules ->
-        uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
-
         AssignmentRules.resolve(
           rules,
           experiment,
@@ -2148,7 +2153,10 @@ defmodule ABSmartly.Context do
         end)
       end)
 
-    reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
+    # Each key's experiments in ascending id order, as the JavaScript and
+    # Java SDKs index them, so the payload order never picks a key's winner.
+    sorted_var_index =
+      Map.new(var_index, fn {key, exps} -> {key, Enum.sort_by(exps, & &1.id)} end)
 
     # Parsed once per installed data, so an experiment's rules are not
     # re-decoded on every assignment.
@@ -2160,7 +2168,7 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    {reversed_var_index, exp_index, aud_cache, rules_cache}
+    {sorted_var_index, exp_index, aud_cache, rules_cache}
   end
 
   # Mirrors the JavaScript SDK's `_init`: only holdouts with a non-empty split
@@ -2305,15 +2313,15 @@ defmodule ABSmartly.Context do
   defp switchback?(%{randomization_type: "switchback"}), do: true
   defp switchback?(_experiment), do: false
 
-  # The variable keys a switchback sets, each with its experiments in
-  # ascending id order. Without switchbacks there is nothing to scan.
+  # The variable keys a switchback sets, with their experiments (already in
+  # ascending id order). Without switchbacks there is nothing to scan.
   defp switchback_variable_index(_var_index, switchbacks) when switchbacks == %{}, do: %{}
 
   defp switchback_variable_index(var_index, switchbacks) do
     for {key, experiments} <- var_index,
         Enum.any?(experiments, &is_map_key(switchbacks, &1.name)),
         into: %{},
-        do: {key, Enum.sort_by(experiments, & &1.id)}
+        do: {key, experiments}
   end
 
   # The switchbacks of the installed data, by name. Each keeps the previous
@@ -2617,22 +2625,8 @@ defmodule ABSmartly.Context do
   # The variant of the first matching rule, randomizing a split over the
   # serving unit; nil when no rule applies or the cluster is not eligible.
   defp switchback_rule(state, experiment, {:eligible, unit_type, _key}) do
-    case Map.get(state.rules_cache, experiment.name) do
-      nil ->
-        nil
-
-      rules ->
-        {variant, _missing_unit} =
-          AssignmentRules.resolve(
-            rules,
-            experiment,
-            rules_environment(state),
-            evaluation_vars(state),
-            Map.get(state.units, unit_type)
-          )
-
-        variant
-    end
+    {variant, _missing_unit} = cached_rule(state, experiment, Map.get(state.units, unit_type))
+    variant
   end
 
   defp switchback_rule(_state, _experiment, _serving), do: nil
