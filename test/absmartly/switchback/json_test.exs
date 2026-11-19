@@ -132,6 +132,18 @@ defmodule ABSmartly.Switchback.JsonTest do
     end
   end
 
+  # An experiments list under an unknown experiment field is still found, so
+  # a context payload nested anywhere outside variant config keeps its order.
+  test "an experiments list under an unknown experiment field keeps its order" do
+    body =
+      ~s({"experiments":[{"id":1,"extra":{"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]}}]})
+
+    {:ok, %{"experiments" => [experiment]}} = Json.decode(body)
+
+    assert hd(experiment["extra"]["experiments"])["switchbackClusters"] ==
+             %Jason.OrderedObject{values: [{"z", "1"}, {"a", "2"}]}
+  end
+
   test "invalid JSON is an error, as with Jason.decode/1" do
     assert {:error, %Jason.DecodeError{}} = Json.decode("{")
   end

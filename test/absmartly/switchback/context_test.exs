@@ -1215,6 +1215,22 @@ defmodule ABSmartly.Switchback.ContextTest do
            ]
   end
 
+  # Only keys a switchback sets take the Java rule. A unit-only key in a
+  # payload that also has a switchback keeps the existing resolution: an
+  # assigned experiment whose arm lacks the key passes to the next one.
+  test "a key no switchback sets keeps its resolution next to a switchback", %{clock: clock} do
+    # uid u3 draws arm 0 in both unit experiments (seeds -5/-7, split 50/50).
+    u_a = unit_variable(1, "u_a", [~s({"other":1}), ~s({"color":"a1"})], %{})
+    u_b = unit_variable(2, "u_b", [~s({"color":"b0"}), ~s({"color":"b1"})], %{})
+    sb = variable_switchback(3, "sb", [~s({"size":1}), ~s({"size":2})], %{})
+
+    set(clock, @anchor + 5)
+    {ctx, events} = create(clock, data([u_a, u_b, sb]), %{@unit_type => "u3"})
+    assert Map.keys(:sys.get_state(ctx).switchback_variable_index) == ["size"]
+    assert Context.variable_value(ctx, "color", "dflt") == "b0"
+    assert Enum.map(publish_exposures(ctx, events), & &1["name"]) == ["u_a", "u_b"]
+  end
+
   # The winner on a shared key is the lowest experiment id, whatever the
   # payload order.
   test "shared switchback keys are won by the lowest id in either payload order", %{
@@ -1244,8 +1260,11 @@ defmodule ABSmartly.Switchback.ContextTest do
     end
 
     assert Map.keys(:sys.get_state(ctx).switchback_slots) == ["sb_10"]
+    assert Map.keys(:sys.get_state(ctx).switchback_variable_index) == ["sb.arm"]
     :ok = Context.set_failed(ctx, "boom")
     assert :sys.get_state(ctx).switchback_slots == %{}
+    assert :sys.get_state(ctx).switchback_variable_index == %{}
+    assert Context.variable_value(ctx, "sb.arm", -1) == -1
   end
 
   # perPeriodCacheIsBounded
