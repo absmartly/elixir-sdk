@@ -1379,6 +1379,45 @@ defmodule ABSmartly.Switchback.ContextTest do
     assert Context.pending(ctx) == 0
   end
 
+  # An ineligible or absent slot never evaluated its audience either, so a
+  # set_attribute does not make the next read evaluate it.
+  test "audiences are not re-evaluated for an ineligible or absent slot", %{clock: clock} do
+    gold = ~s({"filter":[{"eq":[{"var":"tier"},{"value":"gold"}]}]})
+
+    ineligible =
+      switchback(1, "exp_ineligible", 2, @hour, %{
+        "audience" => gold,
+        "switchbackClusterValues" => ["other-store"]
+      })
+
+    absent =
+      switchback(2, "exp_absent", 2, @hour, %{
+        "audience" => gold,
+        "switchbackClusters" => clusters([{"device_id", @cluster_path}])
+      })
+
+    {ctx, _} = create(clock, data([ineligible, absent]))
+    set(clock, @anchor + 10)
+    Context.treatment(ctx, "exp_ineligible")
+    Context.treatment(ctx, "exp_absent")
+
+    :erlang.trace(ctx, true, [:call, {:tracer, self()}])
+    :erlang.trace_pattern({ABSmartly.Matcher, :evaluate, 2}, true, [:local])
+
+    try do
+      for i <- 1..5 do
+        :ok = Context.set_attribute(ctx, "tier", "t#{i}")
+        assert Context.peek(ctx, "exp_ineligible") == 0
+        assert Context.peek(ctx, "exp_absent") == 0
+      end
+    after
+      :erlang.trace(ctx, false, [:call])
+    end
+
+    refute_receive {:trace, _, :call, {ABSmartly.Matcher, :evaluate, _}}, 50
+    assert Context.pending(ctx) == 0
+  end
+
   defp count_rule_evaluations(ctx, fun) do
     :erlang.trace(ctx, true, [:call, {:tracer, self()}])
     :erlang.trace_pattern({ABSmartly.Matcher, :evaluate_rules, 3}, true, [:local])

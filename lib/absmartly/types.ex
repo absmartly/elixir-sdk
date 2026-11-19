@@ -175,6 +175,9 @@ defmodule ABSmartly.Types do
     # The allow-list. An integer or a boolean is its text, as Jackson reads
     # it into the Java SDK's String[]; other non-strings never match a cluster
     # key but keep the list non-empty, so they never widen it to every value.
+    # A float is one of those: Jackson keeps a float's source text ("1e3",
+    # "3.0"), which a decoded float no longer has, and a float is never a
+    # cluster key anyway. The backend only sends strings.
     # A value that is not a list is kept as is: the context treats the cluster
     # configuration as unreadable rather than admitting every value.
     defp switchback_cluster_values(values) when is_list(values),
