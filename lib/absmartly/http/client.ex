@@ -50,7 +50,6 @@ defmodule ABSmartly.HTTP.Client do
 
     case with_retry(request_fn, retries) do
       {:ok, body} ->
-        # Keeps each experiment's switchbackClusters in its JSON order.
         case ABSmartly.Switchback.Json.decode(body) do
           {:ok, data} -> {:ok, data}
           {:error, _} -> {:error, "Invalid JSON response"}

@@ -45,7 +45,6 @@ defmodule ABSmartly.Switchback.Assigner do
     )
   end
 
-  # The permutation of 0..arm_count-1 as a tuple.
   @doc false
   def fisher_yates_permutation(arm_count, base_hash) when is_integer(base_hash) do
     require_valid_arm_count!(arm_count)

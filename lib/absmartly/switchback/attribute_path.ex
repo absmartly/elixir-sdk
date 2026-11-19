@@ -31,7 +31,6 @@ defmodule ABSmartly.Switchback.AttributePath do
 
   def parse_supported(_path), do: nil
 
-  # The attribute name a supported path starts at: always a key segment.
   def root_key([{:key, key} | _]), do: key
 
   # Resolves the path below its root in an attribute value, read as the
@@ -46,7 +45,6 @@ defmodule ABSmartly.Switchback.AttributePath do
     _ -> nil
   end
 
-  # Resolves the whole path in a map of already decoded attributes.
   def resolve(segments, attributes), do: walk(segments, attributes)
 
   defp decoded(value) when is_binary(value) do

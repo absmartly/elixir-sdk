@@ -1206,8 +1206,17 @@ defmodule ABSmartly.Context do
     {%{experiment: experiment, assignment: assignment, period: nil}, state}
   end
 
-  defp expose_candidate(state, %{experiment: exp, period: nil, assignment: a}, _now),
-    do: expose(state, exp.name, exp, a)
+  # The candidate scan already queued the winner's holdouts, before its own
+  # exposure, so only the experiment's exposure is left to queue.
+  defp expose_candidate(state, %{experiment: exp, period: nil, assignment: a}, _now) do
+    if MapSet.member?(state.exposed_experiments, exp.name) or
+         (a.suppressed and not a.overridden and not a.rule_override) do
+      %{state | exposed_experiments: MapSet.put(state.exposed_experiments, exp.name)}
+    else
+      state = %{state | exposed_experiments: MapSet.put(state.exposed_experiments, exp.name)}
+      enqueue_exposure(state, create_exposure(state, exp, a))
+    end
+  end
 
   defp expose_candidate(state, %{experiment: exp, period: period}, now),
     do: expose_switchback(state, exp, period, now)
@@ -2414,7 +2423,6 @@ defmodule ABSmartly.Context do
         if cached.rule_key == experiment.assignment_rules and cached.attrs_seq == state.attrs_seq do
           {cached, period, state}
         else
-          # Same outcome after validation: advance the stamps once.
           slot = %{cached | rule_key: experiment.assignment_rules, attrs_seq: state.attrs_seq}
           epoch = %{epoch | slots: Map.put(epoch.slots, period, slot)}
           {slot, period, put_switchback_epoch(state, name, epoch)}
@@ -2451,7 +2459,6 @@ defmodule ABSmartly.Context do
     %{epoch | slots: Map.drop(slots, evict)}
   end
 
-  # :current when the cached slot still holds; anything else rebuilds it.
   defp switchback_slot_current(state, experiment, slot, override, custom) do
     a = slot.assignment
 

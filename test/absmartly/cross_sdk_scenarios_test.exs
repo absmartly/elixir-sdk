@@ -1,3 +1,39 @@
+defmodule ABSmartly.CrossSDKScenariosTest.Ordered do
+  @moduledoc false
+  # Turns a scenario decoded with ordered objects back into plain JSON maps,
+  # except its context data (`contextData`, a refresh's `newData`), which is
+  # kept as its JSON text: the test decodes it with the SDK's decoder, as the
+  # SDK's fetch would.
+
+  def scenario(%Jason.OrderedObject{values: values}) do
+    Map.new(values, fn
+      {"contextData", data} -> {"contextData", {:context_data, Jason.encode!(data)}}
+      {"steps", steps} -> {"steps", Enum.map(steps, &step/1)}
+      {key, value} -> {key, plain(value)}
+    end)
+  end
+
+  defp step(%Jason.OrderedObject{values: values}) do
+    Map.new(values, fn
+      {"params", %Jason.OrderedObject{values: params}} ->
+        {"params",
+         Map.new(params, fn
+           {"newData", data} -> {"newData", {:context_data, Jason.encode!(data)}}
+           {key, value} -> {key, plain(value)}
+         end)}
+
+      {key, value} ->
+        {key, plain(value)}
+    end)
+  end
+
+  defp plain(%Jason.OrderedObject{values: values}),
+    do: values |> Enum.reverse() |> Map.new(fn {k, v} -> {k, plain(v)} end)
+
+  defp plain(list) when is_list(list), do: Enum.map(list, &plain/1)
+  defp plain(other), do: other
+end
+
 defmodule ABSmartly.CrossSDKScenariosTest do
   @moduledoc """
   Replays the cross-SDK conformance scenarios for holdouts (203-227), custom
@@ -32,13 +68,13 @@ defmodule ABSmartly.CrossSDKScenariosTest do
 
   @fixture Path.expand("../fixtures/cross_sdk_scenarios.json", __DIR__)
   @external_resource @fixture
-  # Decoded like the SDK's own fetch, so each switchbackClusters keeps its
-  # declared order.
+  # Decoded with ordered objects, so each scenario's context data can be
+  # decoded the way the SDK's fetch decodes it (see as_fetched/1).
   @scenarios @fixture
              |> File.read!()
-             |> ABSmartly.Switchback.Json.decode()
-             |> elem(1)
-             |> Map.fetch!("scenarios")
+             |> Jason.decode!(objects: :ordered_objects)
+             |> then(&elem(List.keyfind(&1.values, "scenarios", 0), 1))
+             |> Enum.map(&ABSmartly.CrossSDKScenariosTest.Ordered.scenario/1)
 
   # Capabilities a scenario can require that this SDK does not have, or that
   # this in-process replay cannot drive:
@@ -168,7 +204,7 @@ defmodule ABSmartly.CrossSDKScenariosTest do
       |> Map.put("eventHandler", handler)
       |> Types.ContextConfig.from_options()
 
-    data = Types.ContextData.from_map(scenario["contextData"])
+    data = Types.ContextData.from_map(as_fetched(scenario["contextData"]))
     {:ok, ctx} = Context.start_link(sdk_config, data, context_config)
     {%{"ready" => true, "failed" => false, "finalized" => false}, ctx}
   end
@@ -211,12 +247,20 @@ defmodule ABSmartly.CrossSDKScenariosTest do
         "variableValue" -> Context.variable_value(ctx, params["key"], params["defaultValue"])
         "peekVariableValue" -> peek_variable_value(ctx, params)
         "publish" -> ok(Context.publish(ctx))
-        "refresh" -> ok(Context.refresh(ctx, params["newData"]))
+        "refresh" -> ok(Context.refresh(ctx, as_fetched(params["newData"])))
         "setUnit" -> ok(Context.set_unit(ctx, params["unitType"], params["uid"]))
       end
 
     {result, ctx}
   end
+
+  # A scenario's context data, decoded as the SDK's own fetch decodes it.
+  defp as_fetched({:context_data, json}) do
+    {:ok, data} = ABSmartly.Switchback.Json.decode(json)
+    data
+  end
+
+  defp as_fetched(other), do: other
 
   defp custom_assignment(ctx, params),
     do: ok(Context.set_custom_assignment(ctx, params["experimentName"], params["variant"]))

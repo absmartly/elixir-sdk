@@ -65,8 +65,6 @@ defmodule ABSmartly.Switchback.JsonTest do
     end
   end
 
-  # Q1 on elixir-sdk#6: only an experiment's own switchbackClusters is
-  # ordered; customer configuration keeps Jason's plain maps.
   test "an object-valued variant config named switchbackClusters stays a plain map" do
     body =
       ~s({"experiments":[{"switchbackClusters":{"u":"p","s":"q"},) <>
@@ -107,9 +105,9 @@ defmodule ABSmartly.Switchback.JsonTest do
            }
   end
 
-  # A root experiments list without clusters does not hide a nested
-  # context payload's experiments, which keep their order.
-  test "a nested experiments list keeps its order next to a root experiments list" do
+  # A wrapped payload's data member is the context data, so its experiments
+  # keep their order next to a root experiments list without clusters.
+  test "a wrapped payload keeps its order next to a root experiments list" do
     body =
       ~s({"experiments":[{"id":1}],"data":{"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]}})
 
@@ -120,8 +118,6 @@ defmodule ABSmartly.Switchback.JsonTest do
            }
   end
 
-  # A variant config is customer data: an experiments list inside it is not
-  # a context payload, with or without real switchback experiments.
   test "an experiments list inside a variant config stays a plain map" do
     nested = ~s({"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]})
 
@@ -132,16 +128,21 @@ defmodule ABSmartly.Switchback.JsonTest do
     end
   end
 
-  # An experiments list under an unknown experiment field is still found, so
-  # a context payload nested anywhere outside variant config keeps its order.
-  test "an experiments list under an unknown experiment field keeps its order" do
-    body =
-      ~s({"experiments":[{"id":1,"extra":{"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]}}]})
+  # Only the context data (the body, or its data member) is a context
+  # payload: an experiments list anywhere else in an experiment, such as
+  # application metadata or an unknown field, is customer data.
+  test "an experiments list inside an experiment's other fields stays plain" do
+    nested = ~s({"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]})
 
-    {:ok, %{"experiments" => [experiment]}} = Json.decode(body)
+    for clusters <- ["", ~s("switchbackClusters":{"u":"p","s":"q"},)] do
+      body =
+        ~s({"experiments":[{#{clusters}"id":1,"extra":#{nested},) <>
+          ~s("applications":[{"name":"web","metadata":#{nested}}]}]})
 
-    assert hd(experiment["extra"]["experiments"])["switchbackClusters"] ==
-             %Jason.OrderedObject{values: [{"z", "1"}, {"a", "2"}]}
+      {:ok, %{"experiments" => [experiment]}} = Json.decode(body)
+      assert experiment["extra"] == Jason.decode!(nested), body
+      assert hd(experiment["applications"])["metadata"] == Jason.decode!(nested), body
+    end
   end
 
   test "invalid JSON is an error, as with Jason.decode/1" do

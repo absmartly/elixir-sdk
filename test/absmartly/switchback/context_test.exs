@@ -43,7 +43,6 @@ defmodule ABSmartly.Switchback.ContextTest do
   defp e2(i), do: Enum.at(@expected_2, i)
   defp e3(i), do: Enum.at(@expected_3, i)
 
-  # The default switchback: id 1, "exp_sb".
   def sb(arms, period_ms, overrides \\ %{}),
     do: switchback(1, "exp_sb", arms, period_ms, overrides)
 
