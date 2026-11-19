@@ -68,16 +68,25 @@ defmodule ABSmartly.Switchback.AttributePathTest do
     end
   end
 
-  # Text after a closed quote is not a segment boundary: the path is
-  # malformed, so it never resolves a value (the experiment is unservable).
-  test "rejects text after a closed quoted segment" do
-    for path <- [~s(geo/"city"junk), "geo/'city'junk", "'geo'x/city", ~s(geo/"a"'b')] do
-      assert AttributePath.parse_supported(path) == nil, path
-    end
+  # Text after a closed quote starts the next segment, as in the Collector's
+  # SwitchbackAttributePath and java-sdk#15 (vectors from the compiled Java
+  # reference at java-sdk 07807b5).
+  test "text after a closed quoted segment is the next segment, as in Java" do
+    attributes = %{
+      "geo" => %{"city" => %{"junk" => "cluster-a", "x" => "cx"}, "a" => "A", "b" => "B"}
+    }
 
-    attributes = %{"geo" => %{"city" => %{"junk" => "cluster-a"}}}
-    assert resolve(~s(geo/"city"/junk), attributes) == "cluster-a"
-    assert resolve(~s(geo/"city"), attributes) == %{"junk" => "cluster-a"}
+    for {path, value} <- [
+          {~s(geo/"city"junk), "cluster-a"},
+          {"geo/'city'junk", "cluster-a"},
+          {"'geo'x/city", nil},
+          {~s(geo/"a"'b'), nil},
+          {~s(geo/"city"/junk), "cluster-a"}
+        ] do
+      parsed = AttributePath.parse_supported(path)
+      assert parsed != nil, path
+      assert AttributePath.resolve(parsed, attributes) == value, path
+    end
   end
 
   # separatorsAreCollapsed

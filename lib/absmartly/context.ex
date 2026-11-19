@@ -476,6 +476,7 @@ defmodule ABSmartly.Context do
       state
       | data: context_data,
         switchbacks: switchbacks,
+        switchback_slots: Map.take(state.switchback_slots, Map.keys(switchbacks)),
         switchback_generation: generation,
         ready: true,
         variable_index: var_index,
@@ -2192,7 +2193,8 @@ defmodule ABSmartly.Context do
         audience_cache: %{},
         rules_cache: %{},
         experiment_holdouts: %{},
-        switchbacks: %{}
+        switchbacks: %{},
+        switchback_slots: %{}
     }
 
     emit_event(state, :error, reason)

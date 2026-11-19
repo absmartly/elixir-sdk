@@ -1042,6 +1042,55 @@ defmodule ABSmartly.Switchback.ContextTest do
     assert :sys.get_state(ctx).switchback_slots == %{}
   end
 
+  # Rule environments are matched against the configured environment
+  # ("production" here), never a user attribute named "environment".
+  test "a switchback rule's environment scope ignores the user environment attribute", %{
+    clock: clock
+  } do
+    staging = ~s({"rules":[{"type":"assign","environments":["staging"],"variant":2}]})
+    {ctx, events} = create(clock, data(sb(3, @hour, %{"assignmentRules" => staging})))
+    :ok = Context.set_attribute(ctx, "environment", "staging")
+    set(clock, @anchor + 5)
+    assert Context.treatment(ctx, "exp_sb") == e3(0)
+
+    assert [%{"ruleOverride" => false, "variant" => v}] = publish_exposures(ctx, events)
+    assert v == e3(0)
+  end
+
+  # A refresh that edits the rules without changing their outcome is
+  # validated once; later reads in the period evaluate nothing.
+  test "a same-outcome rule refresh is validated once, then the stamp holds", %{clock: clock} do
+    {ctx, _} = create(clock, data(sb(2, @hour, %{"assignmentRules" => @assign_1})))
+    set(clock, @anchor + 5)
+    assert Context.treatment(ctx, "exp_sb") == 1
+
+    respaced = ~s({"rules": [{"type": "assign", "environments": [], "variant": 1}]})
+    refresh(ctx, [sb(2, @hour, %{"assignmentRules" => respaced})])
+
+    calls =
+      count_rule_evaluations(ctx, fn ->
+        for _ <- 1..20, do: assert(Context.treatment(ctx, "exp_sb") == 1)
+      end)
+
+    assert calls <= 1
+  end
+
+  test "set_data and a failed load release slots of experiments that are no longer switchbacks",
+       %{
+         clock: clock
+       } do
+    {ctx, _} = create(clock, data([]))
+
+    for i <- 1..10 do
+      :ok = Context.set_data(ctx, %{"experiments" => [switchback(i, "sb_#{i}", 2, @hour)]})
+      Context.treatment(ctx, "sb_#{i}")
+    end
+
+    assert Map.keys(:sys.get_state(ctx).switchback_slots) == ["sb_10"]
+    :ok = Context.set_failed(ctx, "boom")
+    assert :sys.get_state(ctx).switchback_slots == %{}
+  end
+
   # perPeriodCacheIsBounded
   test "the per-period cache is bounded", %{clock: clock} do
     {ctx, _} = create(clock, data(sb(2, @hour)))

@@ -95,11 +95,10 @@ defmodule ABSmartly.Switchback.AttributePath do
   defp parse("/" <> rest, acc), do: parse(rest, acc)
 
   defp parse(<<quote, rest::binary>>, acc) when quote in [?', ?"] do
+    # As in the Collector and the Java SDK, parsing continues right after the
+    # closing quote, so text after it (`"city"junk`) is the next segment.
     case :binary.split(rest, <<quote>>) do
-      # A closed quote must end the segment: text after it is malformed.
-      [key, ""] -> parse("", [{:key, key} | acc])
-      [key, "/" <> _ = rest] -> parse(rest, [{:key, key} | acc])
-      [_key, _trailing] -> :error
+      [key, rest] -> parse(rest, [{:key, key} | acc])
       [_unterminated] -> :error
     end
   end
