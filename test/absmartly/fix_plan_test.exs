@@ -258,6 +258,8 @@ defmodule ABSmartly.FixPlanTest do
         })
 
       assert Context.variable_value(ctx, "color", "none") == "blue"
+      # Listed once, as the JS SDK indexes a key by experiment id.
+      assert Context.variable_keys(ctx)["color"] == ["dup_first"]
     end
   end
 

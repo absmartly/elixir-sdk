@@ -2157,7 +2157,7 @@ defmodule ABSmartly.Context do
     # Java SDKs index them, so the payload order never picks a key's winner.
     sorted_var_index =
       Map.new(var_index, fn {key, exps} ->
-        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id)}
+        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id) |> Enum.uniq_by(& &1.id)}
       end)
 
     # Parsed once per installed data, so an experiment's rules are not
