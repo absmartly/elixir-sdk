@@ -4,23 +4,30 @@ defmodule ABSmartly.Switchback.Json do
   its JSON order.
 
   The order of `switchbackClusters` decides which unit serves a switchback
-  experiment, and `Jason.decode/1` gives an unordered map. `decode/1` decodes
-  with `objects: :ordered_objects` and turns every object back into a map,
-  except each `switchbackClusters` value, which stays a `Jason.OrderedObject`
-  (its values are plain; a repeated key keeps its first position and last
-  value, as Jackson does). A body without a `switchbackClusters` of two or
-  more entries is decoded once by `Jason.decode/1`, as before.
+  experiment, and `Jason.decode/1` gives an unordered map. `decode/1` keeps
+  the `switchbackClusters` of every object in an `experiments` list as a
+  `Jason.OrderedObject` (with string values; a repeated key keeps its first
+  position and last value, as Jackson does). Everything else decodes exactly
+  as `Jason.decode/1` decodes it, including a repeated key, which keeps its
+  first value, and customer configuration such as an object-valued variant
+  `config`, which stays a plain map even when it contains a key named
+  `switchbackClusters`. A body without an experiment `switchbackClusters` is
+  decoded once, by `Jason.decode/1`.
+
+  The `experiments` list may sit at any depth, so a body that wraps context
+  data (`{"data": {"experiments": [...]}}`) keeps its order too.
 
   Use it when you fetch context data yourself and pass it to
   `ABSmartly.Types.ContextData.from_map/1`.
   """
 
   @doc """
-  Like `Jason.decode/1`, but keeps every `switchbackClusters` object ordered.
+  Like `Jason.decode/1`, but keeps every experiment's `switchbackClusters`
+  ordered.
   """
   def decode(body) when is_binary(body) do
     with {:ok, decoded} <- decode_plain(body) do
-      if ordered_clusters_needed?(decoded) do
+      if clusters_present?(decoded) do
         with {:ok, ordered} <- Jason.decode(body, objects: :ordered_objects),
              do: {:ok, normalize(ordered)}
       else
@@ -36,76 +43,81 @@ defmodule ABSmartly.Switchback.Json do
   # key, so the walk is skipped. A body with an escape may spell the key with
   # escapes, so its keys are checked as they are decoded, in the same pass.
   defp decode_plain(body) do
-    cond do
-      :binary.match(body, "switchbackClusters") != :nomatch ->
-        Jason.decode(body)
+    if :binary.match(body, "switchbackClusters") != :nomatch do
+      Jason.decode(body)
+    else
+      key = {__MODULE__, :seen}
+      Process.delete(key)
 
-      true ->
-        key = {__MODULE__, :seen}
-        Process.delete(key)
+      result =
+        Jason.decode(body,
+          keys: fn
+            "switchbackClusters" = k ->
+              Process.put(key, true)
+              k
 
-        result =
-          Jason.decode(body,
-            keys: fn
-              "switchbackClusters" = k ->
-                Process.put(key, true)
-                k
+            k ->
+              k
+          end
+        )
 
-              k ->
-                k
-            end
-          )
+      seen = Process.delete(key)
 
-        seen = Process.delete(key)
-
-        with {:ok, decoded} <- result,
-             do: {:ok, if(seen, do: decoded, else: {:plain, decoded})}
+      with {:ok, decoded} <- result,
+           do: {:ok, if(seen, do: decoded, else: {:plain, decoded})}
     end
   end
 
-  # Only a `switchbackClusters` object with two or more entries has an order
-  # to keep, so a body without one is decoded once, as before.
-  defp ordered_clusters_needed?({:plain, _decoded}), do: false
+  # Whether any experiment carries a switchbackClusters object. Every such
+  # object takes the ordered decode, whatever its size, so a repeated member
+  # resolves the same way whether or not another experiment has clusters.
+  defp clusters_present?({:plain, _decoded}), do: false
 
-  defp ordered_clusters_needed?(%{"switchbackClusters" => %{} = clusters})
-       when map_size(clusters) > 1,
-       do: true
+  defp clusters_present?(%{"experiments" => experiments} = map) when is_list(experiments) do
+    Enum.any?(experiments, &match?(%{"switchbackClusters" => %{}}, &1)) or
+      Enum.any?(Map.delete(map, "experiments"), fn {_key, value} -> clusters_present?(value) end)
+  end
 
-  defp ordered_clusters_needed?(%{} = map),
-    do: Enum.any?(map, fn {_key, value} -> ordered_clusters_needed?(value) end)
+  defp clusters_present?(%{} = map),
+    do: Enum.any?(map, fn {_key, value} -> clusters_present?(value) end)
 
-  defp ordered_clusters_needed?(list) when is_list(list),
-    do: Enum.any?(list, &ordered_clusters_needed?/1)
-
-  defp ordered_clusters_needed?(_value), do: false
+  defp clusters_present?(list) when is_list(list), do: Enum.any?(list, &clusters_present?/1)
+  defp clusters_present?(_value), do: false
 
   @doc """
   Turns every `Jason.OrderedObject` in a value decoded with
-  `objects: :ordered_objects` into a map, except the value of each
-  `switchbackClusters` key. A repeated key keeps its first value, as
-  `Jason.decode/1` does, except inside `switchbackClusters` (see `decode/1`).
+  `objects: :ordered_objects` into a map, except the `switchbackClusters` of
+  each object in an `experiments` list. A repeated key keeps its first value,
+  as `Jason.decode/1` does, except inside `switchbackClusters` (see
+  `decode/1`).
   """
-  def normalize(%Jason.OrderedObject{values: values}) do
+  def normalize(value), do: normalize(value, :other)
+
+  defp normalize(%Jason.OrderedObject{values: values}, context) do
     # Reversed so that, as in `Jason.decode/1`, the first of a repeated key
     # wins (Map.new/2 keeps the last).
     values
     |> Enum.reverse()
     |> Map.new(fn
-      {"switchbackClusters", %Jason.OrderedObject{values: clusters}} ->
+      {"switchbackClusters", %Jason.OrderedObject{values: clusters}}
+      when context == :experiment ->
         {"switchbackClusters", %Jason.OrderedObject{values: dedup(clusters)}}
 
+      {"experiments", experiments} when is_list(experiments) ->
+        {"experiments", Enum.map(experiments, &normalize(&1, :experiment))}
+
       {key, value} ->
-        {key, normalize(value)}
+        {key, normalize(value, :other)}
     end)
   end
 
-  def normalize(list) when is_list(list), do: Enum.map(list, &normalize/1)
-  def normalize(other), do: other
+  defp normalize(list, _context) when is_list(list), do: Enum.map(list, &normalize(&1, :other))
+  defp normalize(other, _context), do: other
 
   # A repeated key keeps its first position and its last value, as a
   # LinkedHashMap (the Java SDK's Jackson decode) does.
   defp dedup(pairs) do
-    last = Map.new(pairs, fn {k, v} -> {k, v} end)
+    last = Map.new(pairs)
 
     pairs
     |> Enum.map(&elem(&1, 0))

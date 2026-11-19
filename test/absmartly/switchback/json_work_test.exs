@@ -30,13 +30,13 @@ defmodule ABSmartly.Switchback.JsonWorkTest do
       end)
 
     :erlang.trace(worker, true, [:call, {:tracer, self()}])
-    :erlang.trace_pattern({Json, :ordered_clusters_needed?, 1}, true, [:local])
+    :erlang.trace_pattern({Json, :clusters_present?, 1}, true, [:local])
 
     try do
       send(worker, {:decode, body})
       assert_receive {:decoded, {:ok, _}}
     after
-      :erlang.trace_pattern({Json, :ordered_clusters_needed?, 1}, false, [:local])
+      :erlang.trace_pattern({Json, :clusters_present?, 1}, false, [:local])
     end
 
     calls = collect_ordered_walk_calls(0)
@@ -47,7 +47,7 @@ defmodule ABSmartly.Switchback.JsonWorkTest do
 
   defp collect_ordered_walk_calls(count) do
     receive do
-      {:trace, _, :call, {Json, :ordered_clusters_needed?, [_]}} ->
+      {:trace, _, :call, {Json, :clusters_present?, [_]}} ->
         collect_ordered_walk_calls(count + 1)
     after
       0 -> count

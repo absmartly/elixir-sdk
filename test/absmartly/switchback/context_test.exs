@@ -1067,12 +1067,103 @@ defmodule ABSmartly.Switchback.ContextTest do
     respaced = ~s({"rules": [{"type": "assign", "environments": [], "variant": 1}]})
     refresh(ctx, [sb(2, @hour, %{"assignmentRules" => respaced})])
 
-    calls =
+    # The first read after the refresh validates the new rules once; the
+    # next 19 reuse the stamp.
+    first = count_rule_evaluations(ctx, fn -> assert Context.treatment(ctx, "exp_sb") == 1 end)
+    assert first == 1
+
+    rest =
       count_rule_evaluations(ctx, fn ->
-        for _ <- 1..20, do: assert(Context.treatment(ctx, "exp_sb") == 1)
+        for _ <- 1..19, do: assert(Context.treatment(ctx, "exp_sb") == 1)
       end)
 
-    assert calls <= 1
+    assert rest == 0
+  end
+
+  # A refresh to a rule with another variant is seen by the first read in
+  # the same period: skipping the validation would keep serving variant 1.
+  test "a rule refresh to another variant re-resolves the period's slot", %{clock: clock} do
+    {ctx, events} = create(clock, data(sb(3, @hour, %{"assignmentRules" => @assign_1})))
+    set(clock, @anchor + 5)
+    assert Context.treatment(ctx, "exp_sb") == 1
+
+    refresh(ctx, [sb(3, @hour, %{"assignmentRules" => @assign_2})])
+    set(clock, @anchor + 6)
+    assert Context.treatment(ctx, "exp_sb") == 2
+
+    assert publish_exposures(ctx, events) == [
+             exposure(1, "exp_sb", 1, @anchor + 5, false, true, %{"ruleOverride" => true}),
+             exposure(1, "exp_sb", 2, @anchor + 6, false, true, %{"ruleOverride" => true})
+           ]
+  end
+
+  # As in the Java SDK, a pre-anchor resolution has its own slot and never
+  # evicts a retained period, so returning to that period exposes nothing new.
+  test "a pre-anchor lookup does not evict a retained period", %{clock: clock} do
+    {ctx, events} = create(clock, data(sb(2, @hour)))
+
+    for i <- 0..1 do
+      set(clock, @anchor + i * @hour)
+      Context.treatment(ctx, "exp_sb")
+    end
+
+    set(clock, @anchor - 1)
+    assert Context.treatment(ctx, "exp_sb") == 0
+    set(clock, @anchor)
+    assert Context.treatment(ctx, "exp_sb") == e2(0)
+
+    assert publish_exposures(ctx, events) == [
+             exposure(1, "exp_sb", e2(0), @anchor, true, true),
+             exposure(1, "exp_sb", e2(1), @anchor + @hour, true, true)
+           ]
+  end
+
+  defp variable_switchback(id, name, configs, overrides) do
+    switchback(id, name, length(configs), @hour, overrides)
+    |> Map.put(
+      "variants",
+      for({config, i} <- Enum.with_index(configs), do: %{"name" => "#{i}", "config" => config})
+    )
+  end
+
+  # As in the Java SDK, the first assigned experiment in id order wins the
+  # key even when its arm does not set it: the caller gets the default, and
+  # only the winner is exposed.
+  test "a switchback winner whose arm lacks the key gives the default and is the only exposure",
+       %{clock: clock} do
+    first =
+      variable_switchback(1, "sb_first", [~s({"price":"control"}), ~s({"other":1})], %{
+        "fullOnVariant" => 1
+      })
+
+    second =
+      variable_switchback(2, "sb_second", [~s({"price":"later"}), ~s({"price":"later"})], %{})
+
+    set(clock, @anchor + 5)
+    {ctx, events} = create(clock, data([first, second]))
+    assert Context.peek_variable_value(ctx, "price", "dflt") == "dflt"
+    assert Context.pending(ctx) == 0
+    assert Context.variable_value(ctx, "price", "dflt") == "dflt"
+
+    assert [%{"name" => "sb_first", "variant" => 1, "fullOn" => true}] =
+             publish_exposures(ctx, events)
+  end
+
+  # The winner on a shared key is the lowest experiment id, whatever the
+  # payload order.
+  test "shared switchback keys are won by the lowest id in either payload order", %{
+    clock: clock
+  } do
+    one = variable_switchback(1, "sb_one", [~s({"price":"one"}), ~s({"price":"one"})], %{})
+    two = variable_switchback(2, "sb_two", [~s({"price":"two"}), ~s({"price":"two"})], %{})
+
+    for experiments <- [[one, two], [two, one]] do
+      set(clock, @anchor + 5)
+      {ctx, events} = create(clock, data(experiments))
+      assert Context.peek_variable_value(ctx, "price", "dflt") == "one"
+      assert Context.variable_value(ctx, "price", "dflt") == "one"
+      assert [%{"name" => "sb_one"}] = publish_exposures(ctx, events)
+    end
   end
 
   test "set_data and a failed load release slots of experiments that are no longer switchbacks",

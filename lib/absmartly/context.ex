@@ -1104,11 +1104,21 @@ defmodule ABSmartly.Context do
   # experiment and records nothing.
   defp do_variable_value(state, key, default_value, queue_exposure) do
     experiments = Map.get(state.variable_index, key, [])
-    now = if map_size(state.switchbacks) > 0, do: now_millis(state)
 
+    if Enum.any?(experiments, &is_map_key(state.switchbacks, &1.name)),
+      do: switchback_variable_value(state, experiments, key, default_value, queue_exposure),
+      else: unit_variable_value(state, experiments, key, default_value, queue_exposure)
+  end
+
+  defp unit_variable_value(state, experiments, key, default_value, queue_exposure) do
     {result, state} =
       Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc_state} ->
-        {assignment, acc_state} = variable_candidate(acc_state, exp, queue_exposure, now)
+        {assignment, acc_state} = get_or_assign(acc_state, exp)
+
+        acc_state =
+          if queue_exposure,
+            do: expose(acc_state, exp.name, exp, assignment),
+            else: acc_state
 
         cond do
           assignment.assigned || assignment.overridden || assignment.rule_override ->
@@ -1138,29 +1148,63 @@ defmodule ABSmartly.Context do
     end
   end
 
-  defp variable_candidate(state, experiment, queue_exposure, now)
+  # A key with a switchback among its experiments is resolved as the Java SDK
+  # resolves every key (getVariableAssignment, then getVariableValue): the
+  # experiments in ascending id order, the first one assigned, overridden or
+  # won by a rule is the winner, whether or not its arm sets the key, and
+  # only the winner is exposed. A suppressed experiment is the fallback when
+  # nothing wins. The other candidates only fire their holdouts. The value
+  # is the winner's, or the caller's default when its arm lacks the key. All
+  # switchbacks resolve at one clock reading.
+  defp switchback_variable_value(state, experiments, key, default_value, queue_exposure) do
+    now = now_millis(state)
+
+    {selected, state} =
+      experiments
+      |> Enum.sort_by(& &1.id)
+      |> Enum.reduce_while({nil, state}, fn exp, {fallback, acc_state} ->
+        {candidate, acc_state} = variable_candidate(acc_state, exp, now)
+        a = candidate.assignment
+
+        acc_state =
+          if queue_exposure,
+            do: queue_holdout_exposures(acc_state, a.holdout_arms),
+            else: acc_state
+
+        cond do
+          a.assigned or a.overridden or a.rule_override -> {:halt, {candidate, acc_state}}
+          a.suppressed and fallback == nil -> {:cont, {candidate, acc_state}}
+          true -> {:cont, {fallback, acc_state}}
+        end
+      end)
+
+    case selected do
+      nil ->
+        {default_value, state}
+
+      candidate ->
+        state = if queue_exposure, do: expose_candidate(state, candidate, now), else: state
+        config = variant_config(candidate.experiment, candidate.assignment)
+        {if(is_map(config), do: Map.get(config, key, default_value), else: default_value), state}
+    end
+  end
+
+  defp variable_candidate(state, experiment, now)
        when is_map_key(state.switchbacks, experiment.name) do
     {%{assignment: assignment}, period, state} = switchback_assign(state, experiment, now)
-
-    state =
-      if queue_exposure and
-           (assignment.assigned or assignment.overridden or assignment.rule_override),
-         do: expose_switchback(state, experiment, period, now),
-         else: state
-
-    {assignment, state}
+    {%{experiment: experiment, assignment: assignment, period: period}, state}
   end
 
-  defp variable_candidate(state, experiment, queue_exposure, _now) do
+  defp variable_candidate(state, experiment, _now) do
     {assignment, state} = get_or_assign(state, experiment)
-
-    state =
-      if queue_exposure,
-        do: expose(state, experiment.name, experiment, assignment),
-        else: state
-
-    {assignment, state}
+    {%{experiment: experiment, assignment: assignment, period: nil}, state}
   end
+
+  defp expose_candidate(state, %{experiment: exp, period: nil, assignment: a}, _now),
+    do: expose(state, exp.name, exp, a)
+
+  defp expose_candidate(state, %{experiment: exp, period: period}, now),
+    do: expose_switchback(state, exp, period, now)
 
   defp variant_config(experiment, assignment) do
     case Enum.at(experiment.variants, assignment.variant) do
@@ -2371,6 +2415,9 @@ defmodule ABSmartly.Context do
 
   # Keeps at most #{@switchback_retained_periods} period slots, evicting the
   # lowest index other than the one just installed; :pre is kept apart.
+  defp retain_switchback_slot(epoch, :pre, slot),
+    do: %{epoch | slots: Map.put(epoch.slots, :pre, slot)}
+
   defp retain_switchback_slot(epoch, period, slot) do
     slots = Map.put(epoch.slots, period, slot)
 

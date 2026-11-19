@@ -55,13 +55,56 @@ defmodule ABSmartly.Switchback.JsonTest do
              )
   end
 
-  test "a body without a multi-entry switchbackClusters is decoded once" do
+  test "a body without an experiment switchbackClusters decodes as Jason.decode/1" do
     for body <- [
           ~s({"experiments":[{"id":1,"name":"\\u00e9"}]}),
-          ~s({"experiments":[{"switchbackClusters":{"a":"b"}}]})
+          ~s({"experiments":[{"id":1,"variants":[{"config":{"switchbackClusters":{"z":"1","a":"2"}}}]}]}),
+          ~s({"switchbackClusters":{"z":"1","a":"2"}})
         ] do
-      assert Json.decode(body) == Jason.decode(body)
+      assert Json.decode(body) == Jason.decode(body), body
     end
+  end
+
+  # Q1 on elixir-sdk#6: only an experiment's own switchbackClusters is
+  # ordered; customer configuration keeps Jason's plain maps.
+  test "an object-valued variant config named switchbackClusters stays a plain map" do
+    body =
+      ~s({"experiments":[{"switchbackClusters":{"u":"p","s":"q"},) <>
+        ~s("variants":[{"config":{"switchbackClusters":{"z":"1","z":"2","a":"3"}}}]}]})
+
+    {:ok, %{"experiments" => [experiment]}} = Json.decode(body)
+
+    assert experiment["switchbackClusters"] == %Jason.OrderedObject{
+             values: [{"u", "p"}, {"s", "q"}]
+           }
+
+    assert hd(experiment["variants"])["config"] == %{
+             "switchbackClusters" => %{"z" => "1", "a" => "3"}
+           }
+  end
+
+  # A repeated cluster member resolves the same way whether or not another
+  # experiment has a multi-entry cluster map.
+  test "a repeated cluster member does not depend on neighbouring experiments" do
+    alone = ~s({"experiments":[{"switchbackClusters":{"store_id":"old","store_id":"new"}}]})
+
+    with_neighbour =
+      ~s({"experiments":[{"switchbackClusters":{"store_id":"old","store_id":"new"}},) <>
+        ~s({"switchbackClusters":{"u":"p","s":"q"}}]})
+
+    expected = %Jason.OrderedObject{values: [{"store_id", "new"}]}
+    assert clusters_of(alone) == expected
+    {:ok, %{"experiments" => [first, _]}} = Json.decode(with_neighbour)
+    assert first["switchbackClusters"] == expected
+  end
+
+  test "a wrapped context payload keeps its cluster order" do
+    body = ~s({"data":{"experiments":[{"switchbackClusters":{"z":"1","a":"2"}}]}})
+    {:ok, %{"data" => %{"experiments" => [experiment]}}} = Json.decode(body)
+
+    assert experiment["switchbackClusters"] == %Jason.OrderedObject{
+             values: [{"z", "1"}, {"a", "2"}]
+           }
   end
 
   test "invalid JSON is an error, as with Jason.decode/1" do
