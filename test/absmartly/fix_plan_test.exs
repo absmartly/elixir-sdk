@@ -249,6 +249,15 @@ defmodule ABSmartly.FixPlanTest do
         assert Context.peek_variable_value(ctx, "color", "none") == "red"
         assert Context.variable_value(ctx, "color", "none") == "red"
       end
+
+      # Two experiments with one id (which the collector never sends) keep
+      # their payload order, so the first wins, as in the JS and Java SDKs.
+      ctx =
+        start_context(%{
+          "experiments" => [shared.(1, "dup_first", "blue"), shared.(1, "dup_second", "red")]
+        })
+
+      assert Context.variable_value(ctx, "color", "none") == "blue"
     end
   end
 

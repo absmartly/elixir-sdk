@@ -1187,6 +1187,41 @@ defmodule ABSmartly.Switchback.ContextTest do
            ]
   end
 
+  # The candidate scan queues the winner's holdouts once; exposing the
+  # winner does not walk them again.
+  test "a unit winner's holdouts are walked once on a switchback key", %{clock: clock} do
+    wins =
+      unit_variable(1, "unit_wins", [~s({"price":"u0"}), ~s({"price":"u1"})], %{
+        "holdoutIds" => [11]
+      })
+
+    sb = variable_switchback(2, "sb_later", [~s({"price":"s0"}), ~s({"price":"s1"})], %{})
+
+    set(clock, @anchor + 5)
+    {ctx, _} = create(clock, data([wins, sb], [holdout([0.0, 1.0])]))
+
+    :erlang.trace(ctx, true, [:call, {:tracer, self()}])
+    :erlang.trace_pattern({Context, :queue_holdout_exposures, 2}, true, [:local])
+
+    try do
+      Context.variable_value(ctx, "price", "dflt")
+    after
+      :erlang.trace(ctx, false, [:call])
+    end
+
+    Context.pending(ctx)
+    walks = count_traces_of(Context, :queue_holdout_exposures, 0)
+    assert walks == 1
+  end
+
+  defp count_traces_of(module, function, n) do
+    receive do
+      {:trace, _, :call, {^module, ^function, _}} -> count_traces_of(module, function, n + 1)
+    after
+      50 -> n
+    end
+  end
+
   # Java: when nothing wins a switchback key, a held-out experiment supplies
   # its control value, and only its holdout is exposed.
   test "a held-out experiment is the fallback on a switchback key nothing wins", %{

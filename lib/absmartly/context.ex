@@ -2156,7 +2156,9 @@ defmodule ABSmartly.Context do
     # Each key's experiments in ascending id order, as the JavaScript and
     # Java SDKs index them, so the payload order never picks a key's winner.
     sorted_var_index =
-      Map.new(var_index, fn {key, exps} -> {key, Enum.sort_by(exps, & &1.id)} end)
+      Map.new(var_index, fn {key, exps} ->
+        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id)}
+      end)
 
     # Parsed once per installed data, so an experiment's rules are not
     # re-decoded on every assignment.
