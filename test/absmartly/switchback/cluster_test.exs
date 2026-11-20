@@ -323,6 +323,43 @@ defmodule ABSmartly.Switchback.ClusterTest do
       assert Context.pending(ctx) == 12
     end
 
+    # Owner decision (php-sdk#13 Q2): changing a cluster attribute within a
+    # period is not supported. The arm cached at the first read stays for the
+    # period, before the exposure and after a publish, and the change applies
+    # from the next period.
+    test "the arm cached at the first read stays for the period, exposed or not", %{
+      clock: clock
+    } do
+      {ctx, events} = ctx(clock, attribute_switchback("city"))
+      assert expected("Lisboa", 0) != expected("Faro", 0)
+      assert expected("Lisboa", 1) != expected("Faro", 1)
+
+      set(clock, @anchor + 10)
+      :ok = Context.set_attribute(ctx, "city", "Lisboa")
+      assert Context.peek(ctx, "exp_sb") == expected("Lisboa", 0)
+
+      set(clock, @anchor + 20)
+      :ok = Context.set_attribute(ctx, "city", "Faro")
+      assert Context.variable_value(ctx, "sb.arm", nil) == expected("Lisboa", 0)
+      assert Context.treatment(ctx, "exp_sb") == expected("Lisboa", 0)
+
+      assert publish_exposures(ctx, events) == [
+               exposure(expected("Lisboa", 0), @anchor + 20, true, false)
+             ]
+
+      set(clock, @anchor + 30)
+      :ok = Context.set_attribute(ctx, "city", "Faro")
+      assert Context.treatment(ctx, "exp_sb") == expected("Lisboa", 0)
+      assert Context.pending(ctx) == 0
+
+      set(clock, @anchor + @hour)
+      assert Context.treatment(ctx, "exp_sb") == expected("Faro", 1)
+
+      assert publish_exposures(ctx, events) == [
+               exposure(expected("Faro", 1), @anchor + @hour, true, false)
+             ]
+    end
+
     # attributeSetAfterAnIneligibleResolutionWaitsForTheNextPeriod
     test "an attribute set after an ineligible resolution waits for the next period", %{
       clock: clock
