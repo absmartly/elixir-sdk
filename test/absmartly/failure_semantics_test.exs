@@ -828,8 +828,9 @@ defmodule ABSmartly.FailureSemanticsTest do
     end
 
     test "variable_value stops exposing candidates after the winner" do
-      full = fn name, color ->
+      full = fn id, name, color ->
         exp_map(name, "session_id", %{
+          "id" => id,
           "fullOnVariant" => 1,
           "variants" => [%{"config" => nil}, %{"config" => Jason.encode!(%{"color" => color})}]
         })
@@ -845,7 +846,7 @@ defmodule ABSmartly.FailureSemanticsTest do
       Process.register(self(), :var_pub)
 
       ctx =
-        ready_ctx([full.("e", "red"), full.("f", "blue")], nil, %{
+        ready_ctx([full.(1, "e", "red"), full.(2, "f", "blue")], nil, %{
           sdk_config("unused")
           | publisher: VarPublisher
         })

@@ -5,6 +5,7 @@ defmodule ABSmartly.Context do
 
   alias ABSmartly.{
     AssignmentRules,
+    Switchback,
     Types,
     Utils,
     VariantAssigner,
@@ -51,7 +52,24 @@ defmodule ABSmartly.Context do
     # A unit's arm in a holdout, by {holdout id, unit type}, valid while the
     # holdout's iteration is unchanged.
     holdout_assignments: %{},
-    holdout_exposed: MapSet.new()
+    holdout_exposed: MapSet.new(),
+    # Internal clock seam (`:clock` start option, a zero-arity function
+    # returning epoch ms); nil reads the system clock.
+    clock: nil,
+    # The switchback experiments of the installed data, by name:
+    # `%{sources: sources, identity: identity}` (see build_switchback_index/2).
+    # Empty when the payload has no switchbacks, so unit experiments pay
+    # nothing.
+    switchbacks: %{},
+    # Each switchback's resolved slots, by name, then by period index (or
+    # :pre for a resolution without a period): at most two period slots and
+    # one :pre slot per experiment, dropped when its identity changes.
+    switchback_slots: %{},
+    switchback_generation: 0,
+    # The variable keys that have a switchback among their experiments, with
+    # those experiments in ascending id order (the Java SDK's key order).
+    # Empty without switchbacks, so ordinary keys skip it.
+    switchback_variable_index: %{}
   ]
 
   def child_spec(opts) do
@@ -76,7 +94,7 @@ defmodule ABSmartly.Context do
     with {:ok, units} <- normalize_initial_units(context_config.units) do
       GenServer.start_link(
         __MODULE__,
-        {sdk_config, data, %{context_config | units: units}, data_fetcher}
+        {sdk_config, data, %{context_config | units: units}, data_fetcher, opts[:clock]}
       )
     end
   end
@@ -87,7 +105,7 @@ defmodule ABSmartly.Context do
     with {:ok, units} <- normalize_initial_units(context_config.units) do
       GenServer.start_link(
         __MODULE__,
-        {:async, sdk_config, %{context_config | units: units}, data_fetcher}
+        {:async, sdk_config, %{context_config | units: units}, data_fetcher, opts[:clock]}
       )
     end
   end
@@ -330,9 +348,13 @@ defmodule ABSmartly.Context do
   end
 
   def init({:async, sdk_config, context_config, data_fetcher}) do
+    init({:async, sdk_config, context_config, data_fetcher, nil})
+  end
+
+  def init({:async, sdk_config, context_config, data_fetcher, clock}) do
     # Trap exits so supervisor-driven shutdown runs terminate/2 (pending-event publish).
     Process.flag(:trap_exit, true)
-    state = initial_state(sdk_config, context_config, data_fetcher)
+    state = initial_state(sdk_config, context_config, data_fetcher, clock)
     {:ok, state, {:continue, :fetch_async}}
   end
 
@@ -342,14 +364,19 @@ defmodule ABSmartly.Context do
   end
 
   def init({sdk_config, data, context_config, data_fetcher}) do
+    init({sdk_config, data, context_config, data_fetcher, nil})
+  end
+
+  def init({sdk_config, data, context_config, data_fetcher, clock}) do
     Process.flag(:trap_exit, true)
-    state = initial_state(sdk_config, context_config, data_fetcher) |> mark_ready(data)
+    state = initial_state(sdk_config, context_config, data_fetcher, clock) |> mark_ready(data)
     Logger.info("Context initialized successfully")
     {:ok, state}
   end
 
-  defp initial_state(sdk_config, context_config, data_fetcher) do
+  defp initial_state(sdk_config, context_config, data_fetcher, clock) do
     %__MODULE__{
+      clock: clock,
       sdk_config: sdk_config,
       data: %Types.ContextData{experiments: []},
       ready: false,
@@ -358,7 +385,7 @@ defmodule ABSmartly.Context do
       finalized: false,
       finalizing: false,
       units: context_config.units,
-      attributes: config_attributes_to_list(context_config.attributes),
+      attributes: config_attributes_to_list(context_config.attributes, read_clock(clock)),
       overrides: context_config.overrides,
       custom_assignments: context_config.custom_assignments,
       assignments: %{},
@@ -442,9 +469,20 @@ defmodule ABSmartly.Context do
 
     experiment_holdouts = build_holdout_index(context_data)
 
+    {switchbacks, generation} =
+      build_switchback_index(
+        context_data.experiments,
+        state.switchbacks,
+        state.switchback_generation
+      )
+
     state = %{
       state
       | data: context_data,
+        switchbacks: switchbacks,
+        switchback_slots: Map.take(state.switchback_slots, Map.keys(switchbacks)),
+        switchback_generation: generation,
+        switchback_variable_index: switchback_variable_index(var_index, switchbacks),
         ready: true,
         variable_index: var_index,
         experiment_index: exp_index,
@@ -571,7 +609,7 @@ defmodule ABSmartly.Context do
 
   def handle_call({:set_attribute, name, value}, _from, state) do
     name_str = to_string(name)
-    entry = %{name: name_str, value: value, set_at: now_millis()}
+    entry = %{name: name_str, value: value, set_at: now_millis(state)}
     state = %{state | attributes: state.attributes ++ [entry], attrs_seq: state.attrs_seq + 1}
     {:reply, :ok, state}
   end
@@ -582,7 +620,7 @@ defmodule ABSmartly.Context do
   end
 
   def handle_call({:set_attributes, attributes}, _from, state) do
-    set_at = now_millis()
+    set_at = now_millis(state)
 
     new_entries =
       Enum.map(attributes, fn {name, value} ->
@@ -916,19 +954,15 @@ defmodule ABSmartly.Context do
   defp validate_uid_or_error(_uid, unit_type),
     do: {:error, "Unit '#{unit_type}' must be a string or a number."}
 
-  defp config_attributes_to_list(nil), do: []
+  defp config_attributes_to_list(nil, _set_at), do: []
 
-  defp config_attributes_to_list(attrs) when is_map(attrs) do
-    set_at = now_millis()
-
+  defp config_attributes_to_list(attrs, set_at) when is_map(attrs) do
     Enum.map(attrs, fn {name, value} ->
       %{name: to_string(name), value: value, set_at: set_at}
     end)
   end
 
-  defp config_attributes_to_list(attrs) when is_list(attrs) do
-    set_at = now_millis()
-
+  defp config_attributes_to_list(attrs, set_at) when is_list(attrs) do
     Enum.flat_map(attrs, fn
       %{"name" => name, "value" => value} -> [%{name: name, value: value, set_at: set_at}]
       {name, value} -> [%{name: to_string(name), value: value, set_at: set_at}]
@@ -950,6 +984,19 @@ defmodule ABSmartly.Context do
       {nil, nil} ->
         do_treatment_for_unknown(state, experiment_name, queue_exposure)
     end
+  end
+
+  defp do_treatment_for_experiment(state, experiment_name, experiment, queue_exposure)
+       when is_map_key(state.switchbacks, experiment_name) do
+    now = now_millis(state)
+    {slot, period, state} = switchback_assign(state, experiment, now)
+
+    state =
+      if queue_exposure,
+        do: expose_switchback(state, experiment, period, now),
+        else: state
+
+    {slot.assignment.variant, state}
   end
 
   defp do_treatment_for_experiment(state, experiment_name, experiment, queue_exposure) do
@@ -979,7 +1026,7 @@ defmodule ABSmartly.Context do
       state =
         if assignment.suppressed and not assignment.overridden and not assignment.rule_override,
           do: state,
-          else: enqueue_exposure(state, create_exposure(experiment, assignment))
+          else: enqueue_exposure(state, create_exposure(state, experiment, assignment))
 
       queue_holdout_exposures(state, assignment.holdout_arms)
     end
@@ -993,7 +1040,7 @@ defmodule ABSmartly.Context do
           name: experiment_name,
           unit: nil,
           variant: override || 0,
-          exposed_at: now_millis(),
+          exposed_at: now_millis(state),
           assigned: false,
           eligible: true,
           overridden: override != nil,
@@ -1055,9 +1102,23 @@ defmodule ABSmartly.Context do
   # suppressed by a holdout never wins the key, but when no other experiment
   # does, the first suppressed one supplies its control value instead of the
   # default (even when it lacks the key, so a later one cannot).
+  #
+  # A switchback candidate is resolved at one clock reading for the whole
+  # lookup, and, as in the Java SDK, exposed only when it can win the key:
+  # a strict-mismatched switchback is not assigned, gives way to the next
+  # experiment and records nothing.
   defp do_variable_value(state, key, default_value, queue_exposure) do
-    experiments = Map.get(state.variable_index, key, [])
+    case Map.get(state.switchback_variable_index, key) do
+      nil ->
+        experiments = Map.get(state.variable_index, key, [])
+        unit_variable_value(state, experiments, key, default_value, queue_exposure)
 
+      by_id ->
+        switchback_variable_value(state, by_id, key, default_value, queue_exposure)
+    end
+  end
+
+  defp unit_variable_value(state, experiments, key, default_value, queue_exposure) do
     {result, state} =
       Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc_state} ->
         {assignment, acc_state} = get_or_assign(acc_state, exp)
@@ -1094,6 +1155,71 @@ defmodule ABSmartly.Context do
         {default_value, state}
     end
   end
+
+  # A key with a switchback among its experiments is resolved as the Java SDK
+  # resolves every key (getVariableAssignment, then getVariableValue): the
+  # experiments in ascending id order, the first one assigned, overridden or
+  # won by a rule is the winner, whether or not its arm sets the key, and
+  # only the winner is exposed. A suppressed experiment is the fallback when
+  # nothing wins. The other candidates only fire their holdouts. The value
+  # is the winner's, or the caller's default when its arm lacks the key. All
+  # switchbacks resolve at one clock reading.
+  defp switchback_variable_value(state, experiments, key, default_value, queue_exposure) do
+    now = now_millis(state)
+
+    {selected, state} =
+      Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc_state} ->
+        {candidate, acc_state} = variable_candidate(acc_state, exp, now)
+        a = candidate.assignment
+
+        acc_state =
+          if queue_exposure,
+            do: queue_holdout_exposures(acc_state, a.holdout_arms),
+            else: acc_state
+
+        cond do
+          a.assigned or a.overridden or a.rule_override -> {:halt, {candidate, acc_state}}
+          a.suppressed and fallback == nil -> {:cont, {candidate, acc_state}}
+          true -> {:cont, {fallback, acc_state}}
+        end
+      end)
+
+    case selected do
+      nil ->
+        {default_value, state}
+
+      candidate ->
+        state = if queue_exposure, do: expose_candidate(state, candidate, now), else: state
+        config = variant_config(candidate.experiment, candidate.assignment)
+        {if(is_map(config), do: Map.get(config, key, default_value), else: default_value), state}
+    end
+  end
+
+  defp variable_candidate(state, experiment, now)
+       when is_map_key(state.switchbacks, experiment.name) do
+    {%{assignment: assignment}, period, state} = switchback_assign(state, experiment, now)
+    {%{experiment: experiment, assignment: assignment, period: period}, state}
+  end
+
+  defp variable_candidate(state, experiment, _now) do
+    {assignment, state} = get_or_assign(state, experiment)
+    {%{experiment: experiment, assignment: assignment, period: nil}, state}
+  end
+
+  # The candidate scan already queued the winner's holdouts, before its own
+  # exposure, so only the experiment's exposure is left to queue.
+  defp expose_candidate(state, %{experiment: exp, period: nil, assignment: a}, _now) do
+    if MapSet.member?(state.exposed_experiments, exp.name) or
+         (a.suppressed and not a.overridden and not a.rule_override) do
+      %{state | exposed_experiments: MapSet.put(state.exposed_experiments, exp.name)}
+    else
+      state = %{state | exposed_experiments: MapSet.put(state.exposed_experiments, exp.name)}
+      enqueue_exposure(state, create_exposure(state, exp, a))
+    end
+  end
+
+  defp expose_candidate(state, %{experiment: exp, period: period}, now),
+    do: expose_switchback(state, exp, period, now)
 
   defp variant_config(experiment, assignment) do
     case Enum.at(experiment.variants, assignment.variant) do
@@ -1177,7 +1303,7 @@ defmodule ABSmartly.Context do
   defp do_track(state, goal_name, properties) do
     goal = %Types.Goal{
       name: goal_name,
-      achieved_at: now_millis(),
+      achieved_at: now_millis(state),
       properties: properties
     }
 
@@ -1410,7 +1536,7 @@ defmodule ABSmartly.Context do
 
     publish_event = %Types.PublishEvent{
       hashed: true,
-      published_at: now_millis(),
+      published_at: now_millis(state),
       units: hashed_units,
       exposures: Enum.reverse(state.exposures),
       goals: Enum.reverse(state.goals),
@@ -1437,6 +1563,13 @@ defmodule ABSmartly.Context do
 
     experiment_holdouts = build_holdout_index(context_data)
 
+    {switchbacks, generation} =
+      build_switchback_index(
+        context_data.experiments,
+        state.switchbacks,
+        state.switchback_generation
+      )
+
     # Like the JavaScript SDK's `holdoutSetMatches`, a change of the holdouts
     # covering an experiment (their ids or iterations) re-resolves it, even
     # an overridden one, so the new holdouts are exposed. A same-iteration
@@ -1457,7 +1590,14 @@ defmodule ABSmartly.Context do
         audience_cache: aud_cache,
         rules_cache: rules_cache,
         exposed_experiments: exposed_experiments,
-        experiment_holdouts: experiment_holdouts
+        experiment_holdouts: experiment_holdouts,
+        switchbacks: switchbacks,
+        switchback_variable_index: switchback_variable_index(var_index, switchbacks),
+        # Slots of experiments that are no longer switchbacks are released;
+        # a switchback that returns gets a new generation, so none of them
+        # could be served again.
+        switchback_slots: Map.take(state.switchback_slots, Map.keys(switchbacks)),
+        switchback_generation: generation
     }
 
     Logger.info("Context refreshed with #{length(context_data.experiments)} experiments")
@@ -1739,7 +1879,7 @@ defmodule ABSmartly.Context do
             name: name,
             unit: arm.unit_type,
             variant: arm.variant,
-            exposed_at: now_millis(),
+            exposed_at: now_millis(state),
             assigned: true,
             eligible: true,
             overridden: false,
@@ -1790,13 +1930,18 @@ defmodule ABSmartly.Context do
   # Without parsed rules there is nothing to resolve, so the evaluation map is
   # not needed.
   defp resolve_rule(state, experiment, pinned_missing) do
+    uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
+    cached_rule(state, experiment, uid)
+  end
+
+  # The experiment's parsed rules resolved for `uid`, the unit a split rule
+  # randomizes over; {nil, false} without rules.
+  defp cached_rule(state, experiment, uid) do
     case Map.get(state.rules_cache, experiment.name) do
       nil ->
         {nil, false}
 
       rules ->
-        uid = if pinned_missing, do: nil, else: Map.get(state.units, unit_type(experiment))
-
         AssignmentRules.resolve(
           rules,
           experiment,
@@ -1823,6 +1968,8 @@ defmodule ABSmartly.Context do
   defp invalidate_rules_missing_unit(state, []), do: state
 
   defp invalidate_rules_missing_unit(state, added_unit_types) do
+    state = drop_absent_switchback_slots(state)
+
     assignments =
       Map.reject(state.assignments, fn {name, assignment} ->
         experiment = Map.get(state.experiment_index, name)
@@ -1954,15 +2101,17 @@ defmodule ABSmartly.Context do
   defp parse_audience(audience) when is_map(audience), do: audience
   defp parse_audience(_), do: nil
 
-  defp create_exposure(experiment, assignment) do
-    unit_type = unit_type(experiment)
+  # A switchback passes its serving unit and the clock reading that chose
+  # its period; a unit experiment is exposed under its unit type, now.
+  defp create_exposure(state, experiment, assignment, unit_and_time \\ nil) do
+    {unit_type, exposed_at} = unit_and_time || {unit_type(experiment), now_millis(state)}
 
     %Types.Exposure{
       id: experiment.id,
       name: experiment.name,
       unit: unit_type,
       variant: assignment.variant,
-      exposed_at: now_millis(),
+      exposed_at: exposed_at,
       assigned: assignment.assigned,
       eligible: assignment.eligible,
       overridden: assignment.overridden,
@@ -2004,7 +2153,12 @@ defmodule ABSmartly.Context do
         end)
       end)
 
-    reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
+    # Each key's experiments in ascending id order, as the JavaScript and
+    # Java SDKs index them, so the payload order never picks a key's winner.
+    sorted_var_index =
+      Map.new(var_index, fn {key, exps} ->
+        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id) |> Enum.uniq_by(& &1.id)}
+      end)
 
     # Parsed once per installed data, so an experiment's rules are not
     # re-decoded on every assignment.
@@ -2016,7 +2170,7 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    {reversed_var_index, exp_index, aud_cache, rules_cache}
+    {sorted_var_index, exp_index, aud_cache, rules_cache}
   end
 
   # Mirrors the JavaScript SDK's `_init`: only holdouts with a non-empty split
@@ -2030,6 +2184,7 @@ defmodule ABSmartly.Context do
           do: {holdout.id, holdout}
 
     for %{holdout_ids: [_ | _] = ids} = experiment <- experiments,
+        not switchback?(experiment),
         covering =
           ids
           |> Enum.uniq()
@@ -2075,6 +2230,7 @@ defmodule ABSmartly.Context do
         old_exp.full_on_variant != new_exp.full_on_variant -> true
         old_exp.traffic_split != new_exp.traffic_split -> true
         old_exp.unit_type != new_exp.unit_type -> true
+        switchback?(old_exp) != switchback?(new_exp) -> true
         true -> false
       end
     end)
@@ -2106,7 +2262,10 @@ defmodule ABSmartly.Context do
         experiment_index: %{},
         audience_cache: %{},
         rules_cache: %{},
-        experiment_holdouts: %{}
+        experiment_holdouts: %{},
+        switchbacks: %{},
+        switchback_slots: %{},
+        switchback_variable_index: %{}
     }
 
     emit_event(state, :error, reason)
@@ -2142,7 +2301,405 @@ defmodule ABSmartly.Context do
     :ok
   end
 
-  defp now_millis do
-    System.system_time(:millisecond)
+  # --- switchbacks ------------------------------------------------------------
+  #
+  # A port of the Java SDK's switchback serving (java-sdk#15, SWITCHBACK.md).
+  # A switchback experiment is never assigned through `get_or_assign/2`: it
+  # is resolved per period slot by `switchback_assign/3` and exposed once per
+  # slot by `expose_switchback/4`.
+
+  @switchback_anchor_alignment_ms 3_600_000
+  @switchback_max_anchor_ms 253_402_300_800_000
+  @switchback_retained_periods 2
+
+  defp switchback?(%{randomization_type: "switchback"}), do: true
+  defp switchback?(_experiment), do: false
+
+  # The variable keys a switchback sets, with their experiments (already in
+  # ascending id order). Without switchbacks there is nothing to scan.
+  defp switchback_variable_index(_var_index, switchbacks) when switchbacks == %{}, do: %{}
+
+  defp switchback_variable_index(var_index, switchbacks) do
+    for {key, experiments} <- var_index,
+        Enum.any?(experiments, &is_map_key(switchbacks, &1.name)),
+        into: %{},
+        do: {key, experiments}
   end
+
+  # The switchbacks of the installed data, by name. Each keeps the previous
+  # generation while its identity is unchanged, and gets a fresh one
+  # otherwise; slots resolved under another generation are dropped on the
+  # experiment's next resolution. An identity ends when the experiment is
+  # removed or becomes a unit experiment, so returning to an identical
+  # definition later starts a new generation too.
+  defp build_switchback_index(experiments, previous, generation) do
+    Enum.reduce(experiments, {%{}, generation}, fn experiment, {index, generation} ->
+      if switchback?(experiment) do
+        # An allow-list that is not a list makes the configuration
+        # unreadable, like an unreadable cluster map.
+        sources =
+          case experiment.switchback_clusters do
+            %Jason.OrderedObject{values: values}
+            when is_list(experiment.switchback_cluster_values) or
+                   is_nil(experiment.switchback_cluster_values) ->
+              Switchback.Serving.sources(values)
+
+            _ ->
+              nil
+          end
+
+        info = %{sources: sources, identity: switchback_identity(experiment, sources)}
+
+        {info, generation} =
+          case Map.get(previous, experiment.name) do
+            %{identity: identity, generation: kept} when identity == info.identity ->
+              {Map.put(info, :generation, kept), generation}
+
+            _ ->
+              {Map.put(info, :generation, generation + 1), generation + 1}
+          end
+
+        {Map.put(index, experiment.name, info), generation}
+      else
+        {index, generation}
+      end
+    end)
+  end
+
+  # Everything that maps periods or clusters to variants: id, iteration, the
+  # ordered cluster map, the allow-list, the anchor, the period and the
+  # design, plus unitType on the legacy path (it is the legacy unit). Seed,
+  # split, burn, carryover and estimand are not identity.
+  defp switchback_identity(experiment, sources) do
+    clusters =
+      case experiment.switchback_clusters do
+        %Jason.OrderedObject{values: values} -> values
+        _ -> nil
+      end
+
+    {experiment.id, experiment.iteration, clusters, experiment.switchback_cluster_values,
+     experiment.switchback_start_at, experiment.switchback_period_ms,
+     experiment.switchback_design_type, if(sources == nil, do: {:legacy, experiment.unit_type})}
+  end
+
+  # Whether the Collector's Registry can serve the schedule: an hour-aligned
+  # anchor in [0, 10000-01-01), a positive period and at least two arms. It
+  # only replaces the draw: rules, audience and full-on still apply.
+  defp switchback_servable?(%{switchback_start_at: start, switchback_period_ms: period} = exp)
+       when is_integer(start) and is_integer(period) do
+    start >= 0 and start < @switchback_max_anchor_ms and
+      rem(start, @switchback_anchor_alignment_ms) == 0 and period > 0 and
+      length(exp.split) >= 2
+  end
+
+  defp switchback_servable?(_experiment), do: false
+
+  # periodIndex = floorDiv(now - switchbackStartAt, switchbackPeriodMs), or
+  # :pre before the anchor, for an unservable schedule and on the legacy path.
+  defp switchback_period(experiment, %{sources: sources}, now) do
+    if sources != nil and switchback_servable?(experiment) and
+         now >= experiment.switchback_start_at do
+      Integer.floor_div(now - experiment.switchback_start_at, experiment.switchback_period_ms)
+    else
+      :pre
+    end
+  end
+
+  defp switchback_seed(%{seed_hi: seed_hi, seed_lo: seed_lo}) do
+    import Bitwise
+    bor(seed_hi <<< 32, band(seed_lo, 0xFFFFFFFF))
+  end
+
+  # The slot of `experiment` for the period `now` falls in, resolved now if
+  # it is missing or out of date. Returns `{slot, period, state}`.
+  defp switchback_assign(state, experiment, now) do
+    name = experiment.name
+    info = Map.fetch!(state.switchbacks, name)
+    period = switchback_period(experiment, info, now)
+
+    epoch =
+      case Map.get(state.switchback_slots, name) do
+        %{generation: generation} = epoch when generation == info.generation -> epoch
+        _ -> %{generation: info.generation, slots: %{}}
+      end
+
+    cached = Map.get(epoch.slots, period)
+    override = Map.get(state.overrides, name)
+    custom = Map.get(state.custom_assignments, name)
+    state = cache_evaluation_vars(state, experiment)
+
+    case cached && switchback_slot_current(state, experiment, cached, override, custom) do
+      :current ->
+        if cached.rule_key == experiment.assignment_rules and cached.attrs_seq == state.attrs_seq do
+          {cached, period, state}
+        else
+          slot = %{cached | rule_key: experiment.assignment_rules, attrs_seq: state.attrs_seq}
+          epoch = %{epoch | slots: Map.put(epoch.slots, period, slot)}
+          {slot, period, put_switchback_epoch(state, name, epoch)}
+        end
+
+      _stale ->
+        slot =
+          resolve_switchback(state, experiment, info, cached, {override, custom}, period, now)
+
+        epoch = retain_switchback_slot(epoch, period, slot)
+        {slot, period, put_switchback_epoch(state, name, epoch)}
+    end
+  end
+
+  defp put_switchback_epoch(state, name, epoch),
+    do: %{state | switchback_slots: Map.put(state.switchback_slots, name, epoch)}
+
+  # Keeps at most #{@switchback_retained_periods} period slots, evicting the
+  # lowest index other than the one just installed; :pre is kept apart.
+  defp retain_switchback_slot(epoch, :pre, slot),
+    do: %{epoch | slots: Map.put(epoch.slots, :pre, slot)}
+
+  defp retain_switchback_slot(epoch, period, slot) do
+    slots = Map.put(epoch.slots, period, slot)
+
+    periods =
+      slots
+      |> Map.keys()
+      |> Enum.filter(&is_integer/1)
+      |> Enum.reject(&(&1 == period))
+      |> Enum.sort()
+
+    evict = Enum.take(periods, max(length(periods) + 1 - @switchback_retained_periods, 0))
+    %{epoch | slots: Map.drop(slots, evict)}
+  end
+
+  defp switchback_slot_current(state, experiment, slot, override, custom) do
+    a = slot.assignment
+
+    cond do
+      override != nil ->
+        if a.overridden and a.variant == override, do: :current, else: nil
+
+      a.overridden ->
+        nil
+
+      a.full_on_variant != experiment.full_on_variant or
+          a.traffic_split != experiment.traffic_split ->
+        nil
+
+      not a.rule_override and slot.custom != custom ->
+        nil
+
+      # An ineligible or absent slot never consulted its rules or audience.
+      elem(slot.serving, 0) != :eligible ->
+        :current
+
+      slot.rule_key == experiment.assignment_rules and slot.attrs_seq >= state.attrs_seq ->
+        :current
+
+      true ->
+        cond do
+          switchback_rule(state, experiment, slot.serving) != a.rule_variant -> :stale
+          a.rule_override -> :current
+          switchback_audience_mismatch(state, experiment) != a.audience_mismatch -> :stale
+          true -> :current
+        end
+    end
+  end
+
+  # The Collector's switchback branch (R33): the serving resolution decides
+  # whether the experiment applies and under which unit; for an eligible
+  # cluster the order is assignment rules (a split randomizes the serving
+  # unit), strict audience, full-on, the anchor and schedule, traffic (the
+  # serving unit's hash), custom assignment, then the draw over the raw
+  # cluster key. Holdouts never apply to a switchback.
+  defp resolve_switchback(state, experiment, info, cached, {override, custom}, period, now) do
+    # Within one slot the serving unit and cluster key are read once, unless
+    # no linked unit was set then.
+    serving =
+      case cached do
+        %{serving: {status, _, _} = serving} when status != :absent -> serving
+        _ -> switchback_serving(state, experiment, info, now)
+      end
+
+    {status, unit_type, key} = serving
+
+    base = %{
+      base_assignment(experiment)
+      | rule_key: experiment.assignment_rules,
+        audience_match_seq: state.attrs_seq
+    }
+
+    unit_type = unit_type || switchback_fallback_unit_type(experiment, info)
+
+    {assignment, silent} =
+      cond do
+        override != nil ->
+          {%{base | variant: override, overridden: true}, false}
+
+        status == :absent ->
+          {%{base | eligible: false}, true}
+
+        status == :ineligible ->
+          {%{base | eligible: false, assigned: true}, true}
+
+        rule_variant = switchback_rule(state, experiment, serving) ->
+          {%{base | variant: rule_variant, rule_variant: rule_variant, rule_override: true},
+           false}
+
+        true ->
+          mismatch = switchback_audience_mismatch(state, experiment)
+          base = %{base | audience_mismatch: mismatch, assigned: true}
+
+          cond do
+            mismatch and experiment.audience_strict == true ->
+              {%{base | assigned: false}, false}
+
+            full_on?(experiment) ->
+              {%{base | variant: experiment.full_on_variant, full_on: true}, false}
+
+            period == :pre ->
+              {%{base | eligible: false}, true}
+
+            not traffic_eligible?(Utils.hash_unit(Map.fetch!(state.units, unit_type)), experiment) ->
+              {%{base | eligible: false}, false}
+
+            custom != nil ->
+              {%{base | variant: custom, custom: true}, false}
+
+            true ->
+              variant =
+                Switchback.Assigner.assign(
+                  key,
+                  period,
+                  switchback_seed(experiment),
+                  length(experiment.split)
+                )
+
+              {%{base | variant: variant}, false}
+          end
+      end
+
+    %{
+      assignment: assignment,
+      unit_type: unit_type,
+      serving: serving,
+      silent: silent,
+      exposed: false,
+      custom: custom,
+      rule_key: experiment.assignment_rules,
+      attrs_seq: state.attrs_seq
+    }
+  end
+
+  defp switchback_serving(state, experiment, %{sources: nil}, _now),
+    do: Switchback.Serving.legacy(experiment.unit_type, state.units)
+
+  defp switchback_serving(state, experiment, %{sources: sources}, now) do
+    Switchback.Serving.resolve(
+      sources,
+      experiment.switchback_cluster_values,
+      state.units,
+      fn path ->
+        case latest_attribute(state.attributes, Switchback.AttributePath.root_key(path), now) do
+          nil -> nil
+          attribute -> Switchback.AttributePath.resolve_attribute(path, attribute.value)
+        end
+      end
+    )
+  end
+
+  # The unit a switchback without a serving unit is recorded under (an
+  # override is still exposed): the first linked type of a readable cluster
+  # map, otherwise the declared unitType the legacy path reads.
+  defp switchback_fallback_unit_type(_experiment, %{sources: [{type, _} | _]}), do: type
+  defp switchback_fallback_unit_type(experiment, _info), do: experiment.unit_type
+
+  # The attribute the Collector records with an exposure at `now`: among the
+  # attributes set at or before `now` whose trimmed name matches, the latest
+  # setAt wins and a tie goes to the one set last.
+  defp latest_attribute(attributes, name, now) do
+    Enum.reduce(attributes, nil, fn attribute, selected ->
+      if attribute.set_at <= now and is_binary(attribute.name) and
+           java_trim(attribute.name) == name and
+           (selected == nil or attribute.set_at >= selected.set_at),
+         do: attribute,
+         else: selected
+    end)
+  end
+
+  # The variant of the first matching rule, randomizing a split over the
+  # serving unit; nil when no rule applies or the cluster is not eligible.
+  defp switchback_rule(state, experiment, {:eligible, unit_type, _key}) do
+    {variant, _missing_unit} = cached_rule(state, experiment, Map.get(state.units, unit_type))
+    variant
+  end
+
+  defp switchback_rule(_state, _experiment, _serving), do: nil
+
+  defp switchback_audience_mismatch(state, experiment),
+    do: audience_result(state, experiment) == false
+
+  # A switchback exposure is stamped with `now`, the clock reading that chose
+  # its period, and is recorded once per slot; a silent resolution records
+  # nothing.
+  defp expose_switchback(state, experiment, period, now) do
+    name = experiment.name
+    epoch = Map.fetch!(state.switchback_slots, name)
+    slot = Map.fetch!(epoch.slots, period)
+
+    if slot.exposed do
+      state
+    else
+      epoch = %{epoch | slots: Map.put(epoch.slots, period, %{slot | exposed: true})}
+      state = put_switchback_epoch(state, name, epoch)
+
+      if slot.silent,
+        do: state,
+        else:
+          enqueue_exposure(
+            state,
+            create_exposure(state, experiment, slot.assignment, {slot.unit_type, now})
+          )
+    end
+  end
+
+  # A switchback resolved before any linked unit was set is resolved again
+  # once a unit is set. One that was not overridden never published
+  # anything, so it is dropped even if exposed.
+  defp drop_absent_switchback_slots(%{switchback_slots: slots} = state) when slots == %{},
+    do: state
+
+  defp drop_absent_switchback_slots(state) do
+    slots =
+      Map.new(state.switchback_slots, fn {name, epoch} ->
+        kept =
+          Map.reject(epoch.slots, fn {_period, slot} ->
+            elem(slot.serving, 0) == :absent and
+              not (slot.assignment.overridden and slot.exposed)
+          end)
+
+        {name, %{epoch | slots: kept}}
+      end)
+
+    %{state | switchback_slots: slots}
+  end
+
+  # Java's String.trim, as the Collector trims attribute names: code points
+  # up to U+0020 at either end, not Unicode whitespace.
+  defp java_trim(name), do: name |> trim_leading_controls() |> trim_trailing_controls()
+
+  defp trim_leading_controls(<<c, rest::binary>>) when c <= 0x20, do: trim_leading_controls(rest)
+  defp trim_leading_controls(name), do: name
+
+  # Bytes up to 0x20 are single-byte code points in UTF-8, so the name can
+  # be trimmed byte by byte without splitting a character.
+  defp trim_trailing_controls(name) do
+    size = byte_size(name)
+
+    if size > 0 and :binary.last(name) <= 0x20,
+      do: trim_trailing_controls(binary_part(name, 0, size - 1)),
+      else: name
+  end
+
+  defp now_millis(state), do: read_clock(state.clock)
+
+  defp read_clock(nil), do: System.system_time(:millisecond)
+  defp read_clock(clock), do: clock.()
 end

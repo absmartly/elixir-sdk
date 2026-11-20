@@ -251,6 +251,21 @@ A holdout keeps a share of units out of a set of experiments, to measure their c
 
 `Context.data/1` returns the holdouts in `ABSmartly.Types.ContextData`'s `holdouts` field (a list of `ABSmartly.Types.HoldoutData`), and each `ABSmartly.Types.ExperimentData` has the `holdout_ids` and `holdout_type` the collector sent.
 
+### Switchback Experiments
+
+A switchback experiment randomizes *clusters* over time: every unit in a cluster (for example, a store's city) sees the same variant during a period, and the variant changes on a fixed schedule. Switchbacks are configured in the Web Console and need no code; the SDK serves them as the ABsmartly collector does (the same serving rules as the Java SDK).
+
+- The collector sends, for each linked unit type, the attribute path that holds its cluster value. Set those attributes with `Context.set_attribute/3`, for example `Context.set_attribute(context, "city", "Lisbon")`. A path can reach into maps and lists (`"profile/city"`, `"items/0/city"`).
+- A cluster value is a non-empty string, or an integer, which is keyed by its decimal text (`42` and `"42"` are the same cluster). Floats (including `3.0`), booleans, maps, lists, `nil` and `""` are not cluster values.
+- The first linked unit, in the order the collector sends them, whose attribute holds a value serves the experiment, and its exposure is published under that unit. When the context has no unit of a linked type, the experiment does not apply (variant 0, no exposure). When no unit has a value, two units have different values, or the value is not one of the experiment's allowed cluster values, the unit gets variant 0 and nothing is published.
+- An exposure is published for each experiment and period, stamped with the time that selected the period. A later read in the period publishes again only if its assignment changed, for example because of an override, an assignment rule, an audience or a refresh.
+- Set a unit's cluster attributes before the first read of the experiment in a period. Changing a cluster attribute within a period is not supported: the cluster value read first stays for the whole period, before and after its exposure is published, and the new value applies from the next period. Assignment rules and audiences are still checked again after `set_attribute/3`, so they can change the variant within the period.
+- `Context.set_override/3`, an [assignment rule](#assignment-rules), a strict audience mismatch, the full-on variant and `Context.set_custom_assignment/3` apply as they do for other experiments. Before the schedule starts, the unit gets variant 0 and nothing is published (rules, a strict audience and full-on still apply).
+- [Holdouts](#holdouts) never apply to a switchback experiment.
+- A variable key that a switchback experiment sets is resolved as in the Java SDK: its experiments are read in ascending id order, the first one the unit is assigned to (or overridden into, or given by a rule) supplies the value, and only that experiment is exposed. If that experiment's variant does not set the key, `Context.variable_value/3` returns your default rather than another experiment's value. Keys that no switchback sets are resolved as in the JavaScript SDK: in id order, the first experiment that is assigned and sets the key supplies the value.
+
+`ABSmartly.Types.ExperimentData` has the `randomization_type` and `switchback_*` fields the collector sent. The order of `switchback_clusters` matters, so it is a `Jason.OrderedObject`. `SDK.create_context/3`, `SDK.create_context_async/3` and `Context.refresh/1` keep that order. If you fetch context data yourself for `SDK.create_context_with/4` or `Context.refresh/2`, decode it with `ABSmartly.Switchback.Json.decode/1` instead of `Jason.decode/1`. A plain map with more than one entry has no order, so a switchback decoded that way is not served (variant 0, no exposure).
+
 ### Custom Assignments
 
 Custom assignments allow you to implement your own assignment logic while still benefiting from ABsmartly's analytics.
@@ -553,6 +568,20 @@ end
 ```
 
 ## Changelog
+
+### Switchback experiments are served
+
+#### Added
+
+- **Switchback experiments** (see [Switchback Experiments](#switchback-experiments)), served by the collector's cluster rules exactly as in the Java SDK: the cluster value is read from the context attributes at each linked unit type's path, the variant follows the experiment's balanced schedule for the period, and one exposure is published per period under the serving unit. The cluster value is read once per period; changing a cluster attribute within a period is not supported, and the new value applies from the next period. Holdouts never apply to a switchback.
+- `ABSmartly.Types.ExperimentData` has new fields, all defaulting to `nil`: `randomization_type`, `switchback_clusters`, `switchback_cluster_values`, `switchback_start_at`, `switchback_period_ms`, `switchback_carryover_duration_ms`, `switchback_burn_in_duration_ms`, `switchback_burn_out_duration_ms`, `switchback_design_type` and `switchback_estimand`. Payloads without switchbacks are handled exactly as before.
+- `ABSmartly.Switchback.Json.decode/1` decodes context JSON with each `switchbackClusters` kept in order, for context data you fetch yourself.
+
+#### Changed
+
+- **Switchback experiments change assignment.** Earlier versions served a switchback experiment like a unit experiment (a sticky variant for its `unitType`), so their exposures did not follow the schedule, and a payload with a switchback that has no `unitType` failed the whole context (`Missing required experiment fields`), so every experiment served control. Units in running switchback experiments now move to the scheduled variant of their cluster, change variant at each period, and get one exposure per period; units without a cluster value get variant 0 and no exposure. Unit experiments are unchanged.
+- Only an integer attribute is a numeric cluster value: `3` is the cluster `"3"`, while `3.0`, like every float, is not a cluster value. JSON payloads keep that difference, since Jason decodes `3.0` as a float.
+- **A variable key shared by several experiments is won by the lowest experiment id.** `Context.variable_value/3`, `Context.peek_variable_value/3` and `Context.variable_keys/1` read a key's experiments in ascending id order, as the JavaScript and Java SDKs do, instead of the order of the context data. When two experiments a unit is assigned to set the same key, the one with the lower id now supplies the value and is exposed, wherever it sits in the payload. Payloads whose experiments arrive in id order see no change.
 
 ### Holdouts are applied
 

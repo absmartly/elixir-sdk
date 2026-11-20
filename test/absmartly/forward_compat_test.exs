@@ -193,6 +193,95 @@ defmodule ABSmartly.ForwardCompatTest do
     assert log.() == []
   end
 
+  # A 400,000-hour period from 1978-05-15T08:00Z, as in the cross-SDK
+  # scenarios: now is in period 1 until 2069.
+  @start_at 263_980_800_000
+  @period_ms 1_440_000_000_000
+
+  defp switchback(id, name, extra) do
+    experiment(id, name, nil, %{
+      "unitType" => "store_id",
+      "randomizationType" => "switchback",
+      "switchbackClusters" => %{"store_id" => "city"},
+      "switchbackStartAt" => @start_at,
+      "switchbackPeriodMs" => @period_ms
+    })
+    |> Map.merge(extra)
+  end
+
+  test "unknown and malformed switchback fields degrade only their own experiment, silently" do
+    future = %{
+      "futureSwitchback" => %{"periodMinutes" => 60, "clusters" => [1]},
+      "switchbackClusterUnitType" => "store_id",
+      "switchbackClusterCount" => 10,
+      "switchbackClusterAttribute" => "city",
+      "switchbackFutureScalar" => 1,
+      "switchbackFutureArray" => [%{"x" => 1}]
+    }
+
+    malformed = [
+      %{"switchbackClusters" => "city"},
+      %{"switchbackClusters" => 7},
+      %{"switchbackClusters" => ["city"]},
+      %{"switchbackClusters" => %{"store_id" => 1}},
+      %{"switchbackClusters" => %{"store_id" => %{"path" => "city"}}},
+      %{"switchbackClusterValues" => "city-a"},
+      %{"switchbackStartAt" => "0"},
+      %{"switchbackStartAt" => 0.5},
+      %{"switchbackPeriodMs" => [1]},
+      %{"randomizationType" => 1},
+      %{"switchbackDesignType" => %{}}
+    ]
+
+    experiments =
+      [switchback(1, "sb_future", future), experiment(2, "exp_unit", nil, future)] ++
+        for {extra, i} <- Enum.with_index(malformed), do: switchback(10 + i, "sb_bad_#{i}", extra)
+
+    {log, ctx} =
+      log_events_of_self_and_context(fn ->
+        ctx =
+          start_context(%{"experiments" => experiments}, %{
+            "store_id" => @session,
+            "session_id" => @session
+          })
+
+        :ok = Context.set_attribute(ctx, "city", "city-a")
+        ctx
+      end)
+
+    assert Context.is_ready?(ctx)
+
+    seed = Bitwise.bor(Bitwise.bsl(55_006_150, 32), 47_189_152)
+    expected = ABSmartly.Switchback.Assigner.assign("city-a", 1, seed, 3)
+
+    assert Context.treatment(ctx, "sb_future") == expected
+    assert Context.treatment(ctx, "exp_unit") == normal_variant()
+
+    # A misread field is treated as missing: an ineligible control (variant
+    # 0, no exposure), or for `randomizationType` a unit experiment; never a
+    # crash or a guessed cluster. A misread design type only takes part in
+    # the epoch identity, so that experiment still serves the draw.
+    for i <- 0..(length(malformed) - 1), i not in [9, 10] do
+      assert Context.treatment(ctx, "sb_bad_#{i}") == 0, inspect(Enum.at(malformed, i))
+    end
+
+    assert Context.treatment(ctx, "sb_bad_9") ==
+             VariantAssigner.assign(
+               Utils.hash_unit(@session),
+               [0.34, 0.33, 0.33],
+               55_006_150,
+               47_189_152
+             )
+
+    assert Context.treatment(ctx, "sb_bad_10") == expected
+    assert Context.data(ctx).experiments |> Enum.at(12) |> Map.get(:switchback_design_type) == nil
+
+    assert pending_exposures(ctx) |> Enum.map(& &1.name) ==
+             ["sb_future", "exp_unit", "sb_bad_9", "sb_bad_10"]
+
+    assert log.() == []
+  end
+
   # Runs `fun` (which returns the context) with a logger handler that keeps
   # the warning-or-above events of this process and of the processes it
   # starts (the context, from its init on). Returns a function reading them,

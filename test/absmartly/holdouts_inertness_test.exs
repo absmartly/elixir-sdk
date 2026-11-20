@@ -109,4 +109,38 @@ defmodule ABSmartly.HoldoutsInertnessTest do
 
     assert sessions(payload) == @recorded["sessions"]
   end
+
+  # Unit experiments carrying every switchback field ("unit" or no
+  # randomizationType) are byte-identical to main. Cross-SDK scenario 421
+  # covers unit experiments next to a switchback experiment.
+  test "switchback fields and switchback experiments are inert for unit experiments" do
+    sb_fields = %{
+      "switchbackClusters" => %Jason.OrderedObject{
+        values: [{"user_id", "country"}, {"session_id", "country"}]
+      },
+      "switchbackClusterValues" => ["US"],
+      "switchbackStartAt" => 0,
+      "switchbackPeriodMs" => 3_600_000,
+      "switchbackCarryoverDurationMs" => 0,
+      "switchbackBurnInDurationMs" => 0,
+      "switchbackBurnOutDurationMs" => 0,
+      "switchbackDesignType" => "balanced_block",
+      "switchbackEstimand" => "global_average_treatment_effect",
+      "switchbackClusterUnitType" => "session_id",
+      "switchbackClusterCount" => 10,
+      "switchbackClusterAttribute" => "country"
+    }
+
+    for type <- ["unit", nil] do
+      payload =
+        Map.update!(@recorded["payload"], "experiments", fn experiments ->
+          Enum.map(
+            experiments,
+            &(&1 |> Map.merge(sb_fields) |> Map.put("randomizationType", type))
+          )
+        end)
+
+      assert sessions(payload) == @recorded["sessions"], inspect(type)
+    end
+  end
 end
