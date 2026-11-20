@@ -1428,6 +1428,83 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
+  # Not in ContextHoldoutTest: an override read while its experiment is not
+  # in the data has no covering holdouts, so coverage arriving with the
+  # experiment exposes the override again with its holdouts.
+  test "an override read before its experiment arrives covered exposes with its holdouts" do
+    {ctx, ep} = start(data([], []), overrides: %{"exp_late" => 1})
+
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    refresh(ctx, data([holdout(11, "holdout_late", @holdout_a)], covered(1, "exp_late", [11])))
+    assert Context.treatment(ctx, "exp_late") == 1
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert published(ctx, ep) == [
+             exposure(0, "exp_late", 1, assigned: false, overridden: true, unit: nil),
+             exposure(1, "exp_late", 1, assigned: false, overridden: true),
+             holdout_exposure(11, "holdout_late", 0)
+           ]
+  end
+
+  test "an override read before its experiment arrives uncovered is not exposed again" do
+    {ctx, ep} = start(data([], []), overrides: %{"exp_late" => 1})
+
+    assert Context.treatment(ctx, "exp_late") == 1
+    refresh(ctx, data([], experiment(1, "exp_late")))
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert published(ctx, ep) == [
+             exposure(0, "exp_late", 1, assigned: false, overridden: true, unit: nil)
+           ]
+  end
+
+  test "a new iteration of a covering holdout other than the first re-resolves" do
+    holdouts = fn iteration ->
+      [
+        holdout(11, "holdout_first", @holdout_a),
+        holdout(12, "holdout_second", @holdout_a, iteration: iteration)
+      ]
+    end
+
+    {ctx, ep} = start(data(holdouts.(1), covered(1, "exp_two", [11, 12])))
+
+    assert Context.treatment(ctx, "exp_two") == 0
+    refresh(ctx, data(holdouts.(2), covered(1, "exp_two", [11, 12])))
+    assert Context.treatment(ctx, "exp_two") == 0
+
+    assert published(ctx, ep) == [
+             holdout_exposure(11, "holdout_first", 0),
+             holdout_exposure(12, "holdout_second", 0),
+             holdout_exposure(12, "holdout_second", 0)
+           ]
+  end
+
+  # Not in ContextHoldoutTest: an arm only a pinned assignment holds (the
+  # cache moved on to another iteration and back) is not exposed again.
+  test "an arm pinned across an iteration round trip exposes once" do
+    holdouts = fn iteration -> [holdout(11, "holdout_rt", @holdout_a, iteration: iteration)] end
+
+    experiments = [
+      covered(1, "exp_a", [11]),
+      covered(2, "exp_b", [11]),
+      covered(3, "exp_c", [11])
+    ]
+
+    {ctx, ep} = start(data(holdouts.(1), experiments))
+
+    assert Context.treatment(ctx, "exp_b") == 0
+    assert Context.peek(ctx, "exp_a") == 0
+    refresh(ctx, data(holdouts.(2), experiments))
+    assert Context.treatment(ctx, "exp_c") == 0
+    refresh(ctx, data(holdouts.(1), experiments))
+    assert Context.peek(ctx, "exp_c") == 0
+    assert Context.treatment(ctx, "exp_a") == 0
+
+    arms = for %{"name" => "holdout_rt", "variant" => variant} <- published(ctx, ep), do: variant
+    assert arms == [0, 0]
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =

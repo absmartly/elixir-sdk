@@ -48,6 +48,9 @@ defmodule ABSmartly.Context do
     # list of HoldoutData sorted by id. Experiments without coverage have no
     # entry, so a payload without holdouts costs nothing.
     experiment_holdouts: %{},
+    # The ids and iterations of those holdouts, by experiment name, built
+    # with the index so a cached read compares without allocating.
+    experiment_holdout_keys: %{},
     # A unit's arm in a holdout, by {holdout id, unit type}, valid while the
     # holdout's iteration is unchanged.
     holdout_assignments: %{},
@@ -457,7 +460,8 @@ defmodule ABSmartly.Context do
         experiment_index: exp_index,
         audience_cache: aud_cache,
         rules_cache: rules_cache,
-        experiment_holdouts: experiment_holdouts
+        experiment_holdouts: experiment_holdouts,
+        experiment_holdout_keys: holdout_keys(experiment_holdouts)
     }
 
     state = prune_holdout_exposed(state)
@@ -1455,7 +1459,8 @@ defmodule ABSmartly.Context do
         audience_cache: aud_cache,
         rules_cache: rules_cache,
         exposed_experiments: exposed_experiments,
-        experiment_holdouts: experiment_holdouts
+        experiment_holdouts: experiment_holdouts,
+        experiment_holdout_keys: holdout_keys(experiment_holdouts)
     }
 
     state = prune_holdout_exposed(state)
@@ -2067,12 +2072,16 @@ defmodule ABSmartly.Context do
   # The ids and iterations of the holdouts covering an experiment (nil when
   # not covered): a change re-resolves it at the next read, so the new
   # holdouts are exposed. A same-iteration seed or split edit changes nothing.
-  defp holdout_key(state, experiment) do
-    case Map.get(state.experiment_holdouts, experiment.name) do
-      nil -> nil
-      holdouts -> Enum.map(holdouts, &{&1.id, &1.iteration})
-    end
-  end
+  defp holdout_key(state, experiment),
+    do: Map.get(state.experiment_holdout_keys, experiment.name)
+
+  defp holdout_keys(experiment_holdouts) when experiment_holdouts == %{}, do: %{}
+
+  defp holdout_keys(experiment_holdouts),
+    do:
+      Map.new(experiment_holdouts, fn {name, holdouts} ->
+        {name, Enum.map(holdouts, &{&1.id, &1.iteration})}
+      end)
 
   # An override read with other covering holdouts than its last read is
   # exposed again, like the JavaScript SDK's rebuilt overridden assignment.
@@ -2088,8 +2097,16 @@ defmodule ABSmartly.Context do
             exposed_experiments: MapSet.delete(state.exposed_experiments, name)
         }
 
-      :error ->
+      :error when key == nil ->
         %{state | override_holdout_keys: Map.put(state.override_holdout_keys, name, key)}
+
+      # Read before while its experiment was absent, so without holdouts.
+      :error ->
+        %{
+          state
+          | override_holdout_keys: Map.put(state.override_holdout_keys, name, key),
+            exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+        }
     end
   end
 
@@ -2145,7 +2162,8 @@ defmodule ABSmartly.Context do
         experiment_index: %{},
         audience_cache: %{},
         rules_cache: %{},
-        experiment_holdouts: %{}
+        experiment_holdouts: %{},
+        experiment_holdout_keys: %{}
     }
 
     emit_event(state, :error, reason)
