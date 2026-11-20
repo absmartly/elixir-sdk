@@ -1728,7 +1728,6 @@ defmodule ABSmartly.Context do
   defp holdout_unit_missing?(%{holdout_arms: arms}),
     do: Enum.any?(arms, fn {_name, arm} -> arm == nil end)
 
-  # Forgets the exposure of arms no assignment or cache entry can serve again.
   defp prune_holdout_exposed(state) do
     if MapSet.size(state.holdout_exposed) == 0 do
       state

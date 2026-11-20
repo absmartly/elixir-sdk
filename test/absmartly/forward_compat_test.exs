@@ -162,13 +162,9 @@ defmodule ABSmartly.ForwardCompatTest do
 
     assert Context.is_ready?(ctx)
 
-    # Holdout 11 holds the unit out, so the union suppresses exp_covered_a.
     assert Context.treatment(ctx, "exp_covered_a") == 0
     assert Context.variable_value(ctx, "color", "none") == "none"
-    # Only holdout 12 is a valid covering holdout for exp_covered_b, and it
-    # does not hold the unit out (on the experiment's own unit type).
     assert Context.treatment(ctx, "exp_covered_b") == 1
-    # A holdoutIds value that is not a list covers nothing.
     assert Context.treatment(ctx, "exp_bad_holdout_ids") == 1
 
     exposures =

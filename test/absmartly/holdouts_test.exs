@@ -444,7 +444,6 @@ defmodule ABSmartly.HoldoutsTest do
         ])
       )
 
-    # Arm 1 of three holds a non-full-on experiment out; arm 1 of two does not.
     assert Context.treatment(ctx, "exp_three_typed_full") == 0
     assert Context.treatment(ctx, "exp_three_untyped") == 0
     assert Context.treatment(ctx, "exp_two_typed_three") == @normal_variant
@@ -547,7 +546,6 @@ defmodule ABSmartly.HoldoutsTest do
         ])
       )
 
-    # The first candidate's control variant lacks the key: the default wins.
     assert Context.peek_variable_value(ctx, "key", "default") == "default"
   end
 
@@ -607,6 +605,23 @@ defmodule ABSmartly.HoldoutsTest do
   # Not in ContextHoldoutTest: integral floats are the integers, as in the
   # JavaScript SDK (`11.0` and `11` are the same id, `13.0` the same seed);
   # 11.5 is no id.
+  test "integral float seeds preserve both halves when assigning the arm" do
+    for seeds <- [{13, 111}, {13.0, 111.0}] do
+      {ctx, ep} =
+        start(
+          data(
+            [holdout(11, "holdout_seed", seeds)],
+            covered(1, "exp_seed", [11], split: [0.0, 1.0])
+          ),
+          uid: "float-seed-23"
+        )
+
+      assert Context.peek(ctx, "exp_seed") == 0
+      assert Context.treatment(ctx, "exp_seed") == 0
+      assert published(ctx, ep) == [holdout_exposure(11, "holdout_seed", 0)]
+    end
+  end
+
   test "integral float holdout ids, seeds and iterations match integers" do
     {seed_hi, seed_lo} = @holdout_a
 
@@ -626,8 +641,6 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.treatment(ctx, "exp_float_ids") == 0
     assert Context.treatment(ctx, "exp_fractional_id") == @normal_variant
 
-    # The float iteration is the same epoch: a refresh to the integer one does
-    # not re-expose.
     refresh(
       ctx,
       data([holdout(11, "holdout_a", @holdout_a)], [
@@ -784,7 +797,6 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.treatment(ctx, "exp_holdout_custom_cache") == 0
     assert Context.pending(ctx) == 1
 
-    # A new custom assignment does not re-expose a suppressed experiment.
     :ok = Context.set_custom_assignment(ctx, "exp_holdout_custom_cache", 1)
     assert Context.treatment(ctx, "exp_holdout_custom_cache") == 0
     assert Context.pending(ctx) == 1
@@ -1240,9 +1252,6 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
-  # Not in ContextHoldoutTest: exposure state of retired holdout iterations is
-  # reclaimed, so a long-lived context refreshed across many iterations keeps
-  # a bounded state, and each iteration still exposes exactly once.
   test "repeated iteration bumps keep holdout exposure state bounded" do
     {ctx, ep} = start(data([holdout(11, "holdout_r", @holdout_b)], covered(1, "exp_r", [11])))
 
@@ -1343,8 +1352,6 @@ defmodule ABSmartly.HoldoutsTest do
     assert arms == [0, 0]
   end
 
-  # Not in ContextHoldoutTest: set_data/2 reclaims the exposure of arms an
-  # overridden read left behind, as refresh does.
   test "repeated set_data iteration bumps keep holdout exposure state bounded" do
     exp = covered(1, "exp_r", [11])
     {ctx, ep} = start(data([holdout(11, "holdout_r", @holdout_b)], exp))

@@ -562,7 +562,7 @@ end
 
 #### Changed
 
-- **Holdouts** (see [Holdouts](#holdouts)), as in the JavaScript SDK: experiments covered by a holdout through `holdoutIds` are held out (variant 0, no exposure of their own) for units in the holdout's held-out arm, and each covering holdout publishes its own exposure. Two-arm and three-arm holdouts are supported; the number of arms comes from the holdout's `split`.
+- **Holdouts** (see [Holdouts](#holdouts)), as in the JavaScript SDK: experiments covered by a holdout through `holdoutIds` are held out (variant 0, no exposure of their own) for units in the holdout's held-out arm, unless an override or matching assignment rule takes precedence; each covering holdout publishes its own exposure. Two-arm and three-arm holdouts are supported; the number of arms comes from the holdout's `split`.
 
 ### Assignment rules, semver operators and a versioned `X-Agent`
 
