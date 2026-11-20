@@ -247,6 +247,7 @@ A holdout keeps a share of units out of a set of experiments, to measure their c
 - An experiment covered by several holdouts is held out when any one of them holds the unit out.
 - `Context.set_override/3` and a matching [assignment rule](#assignment-rules) win over a holdout.
 - Each covering holdout publishes one exposure of its own (with the holdout's id and name) the first time `Context.treatment/2` or `Context.variable_value/3` reads a covered experiment, whether or not the unit is held out. `Context.peek/2` and `Context.peek_variable_value/3` publish nothing.
+- Set the experiment's unit before its first exposing read. A covered experiment read without its unit has no holdout arm, so no holdout exposure is published. Setting the unit later re-resolves it only if it was not exposed yet, as in the JavaScript SDK; an exposed experiment keeps the decision the user already saw.
 - The holdout arm is computed from the covered experiment's unit, once per holdout iteration, so a refresh that edits a holdout without starting a new iteration never moves a unit to another arm.
 
 `Context.data/1` returns the holdouts in `ABSmartly.Types.ContextData`'s `holdouts` field (a list of `ABSmartly.Types.HoldoutData`), and each `ABSmartly.Types.ExperimentData` has the `holdout_ids` and `holdout_type` the collector sent.
@@ -562,7 +563,7 @@ end
 
 #### Changed
 
-- **Holdouts** (see [Holdouts](#holdouts)), as in the JavaScript SDK: experiments covered by a holdout through `holdoutIds` are held out (variant 0, no exposure of their own) for units in the holdout's held-out arm, unless an override or matching assignment rule takes precedence; each covering holdout publishes its own exposure. Two-arm and three-arm holdouts are supported; the number of arms comes from the holdout's `split`.
+- **Holdouts** (see [Holdouts](#holdouts)), as in the JavaScript SDK: experiments covered by a holdout through `holdoutIds` are held out (variant 0, no exposure of their own) for units in the holdout's held-out arm, unless an override or matching assignment rule takes precedence; each covering holdout publishes its own exposure once the experiment's unit is set. Two-arm and three-arm holdouts are supported; the number of arms comes from the holdout's `split`.
 
 ### Assignment rules, semver operators and a versioned `X-Agent`
 
