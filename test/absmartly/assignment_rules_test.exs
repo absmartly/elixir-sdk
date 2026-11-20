@@ -270,6 +270,31 @@ defmodule ABSmartly.AssignmentRulesTest do
       assert Context.treatment(ctx, "exp_test_abc") == 1
     end
 
+    # A JSON integer beyond the float range decodes to a bignum that the
+    # evaluator cannot convert, so evaluating it raises rather than giving null.
+    test "a rule whose conditions raise is skipped for the next rule" do
+      huge = "1" <> String.duplicate("0", 400)
+
+      rules =
+        ~s({"rules":[{"name":"huge","type":"assign","variant":0,) <>
+          ~s("conditions":{"eq":[{"var":"country"},{"value":#{huge}}]}},) <>
+          ~s({"name":"All","type":"assign","variant":1}]})
+
+      {ctx, _} =
+        start_context(experiment(rules), attributes: [%{"name" => "country", "value" => "US"}])
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :warning, format: "[$level] $message"], fn ->
+          assert Context.treatment(ctx, "exp_test_abc") == 1
+        end)
+
+      assert log =~
+               ~s([warning] Failed to evaluate assignment rule conditions for rule "huge": ) <>
+                 "bad argument in arithmetic expression"
+
+      assert Process.alive?(ctx)
+    end
+
     test "a rule without conditions matches everyone" do
       rule = %{"type" => "assign", "variant" => 0}
       {ctx, _} = start_context(experiment(rules([rule])))
