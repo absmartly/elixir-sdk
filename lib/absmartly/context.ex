@@ -51,9 +51,10 @@ defmodule ABSmartly.Context do
     # A unit's arm in a holdout, by {holdout id, unit type}, valid while the
     # holdout's iteration is unchanged.
     holdout_assignments: %{},
-    # The ref of the arm last exposed, by the same key: an arm of a new
-    # iteration replaces its predecessor's marker, so the state stays bounded.
-    holdout_exposed: %{}
+    # The refs of the exposed arms, like the JavaScript SDK's per-arm
+    # `exposed` flag. Each data install keeps only the arms still reachable
+    # from a pinned assignment or the arm cache, so it stays bounded.
+    holdout_exposed: MapSet.new()
   ]
 
   def child_spec(opts) do
@@ -454,6 +455,8 @@ defmodule ABSmartly.Context do
         rules_cache: rules_cache,
         experiment_holdouts: experiment_holdouts
     }
+
+    state = prune_holdout_exposed(state)
 
     # Emit before waking waiters so the event is observable once
     # wait_until_ready/2 returns.
@@ -1462,6 +1465,8 @@ defmodule ABSmartly.Context do
         experiment_holdouts: experiment_holdouts
     }
 
+    state = prune_holdout_exposed(state)
+
     Logger.info("Context refreshed with #{length(context_data.experiments)} experiments")
     emit_event(state, :refresh, %{experiments: context_data.experiments})
     state
@@ -1723,6 +1728,22 @@ defmodule ABSmartly.Context do
   defp holdout_unit_missing?(%{holdout_arms: arms}),
     do: Enum.any?(arms, fn {_name, arm} -> arm == nil end)
 
+  # Forgets the exposure of arms no assignment or cache entry can serve again.
+  defp prune_holdout_exposed(state) do
+    if MapSet.size(state.holdout_exposed) == 0 do
+      state
+    else
+      pinned =
+        for {_name, %Types.Assignment{holdout_arms: [_ | _] = arms}} <- state.assignments,
+            {_holdout, %{ref: ref}} <- arms,
+            do: ref
+
+      cached = for {_key, %{ref: ref}} <- state.holdout_assignments, do: ref
+      reachable = MapSet.new(pinned ++ cached)
+      %{state | holdout_exposed: MapSet.intersection(state.holdout_exposed, reachable)}
+    end
+  end
+
   defp queue_holdout_exposures(state, nil), do: state
 
   defp queue_holdout_exposures(state, arms) do
@@ -1731,12 +1752,10 @@ defmodule ABSmartly.Context do
         acc
 
       {name, arm}, acc ->
-        key = {arm.id, arm.unit_type}
-
-        if Map.get(acc.holdout_exposed, key) == arm.ref do
+        if MapSet.member?(acc.holdout_exposed, arm.ref) do
           acc
         else
-          acc = %{acc | holdout_exposed: Map.put(acc.holdout_exposed, key, arm.ref)}
+          acc = %{acc | holdout_exposed: MapSet.put(acc.holdout_exposed, arm.ref)}
 
           enqueue_exposure(acc, %Types.Exposure{
             id: arm.id,

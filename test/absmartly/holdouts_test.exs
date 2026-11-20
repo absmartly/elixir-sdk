@@ -1267,6 +1267,107 @@ defmodule ABSmartly.HoldoutsTest do
     assert :erts_debug.size(:sys.get_state(ctx)) == size
   end
 
+  # Not in ContextHoldoutTest: set_data/2 on a ready context installs a new
+  # iteration without dropping pinned assignments, so an arm of the previous
+  # iteration stays reachable next to the new one. Like the JavaScript SDK's
+  # per-arm `exposed` flag, each arm still exposes once.
+  test "arms of two iterations reachable after set_data each expose once" do
+    {ctx, ep} =
+      start(data([holdout(11, "holdout_s", @holdout_a)], [covered(1, "exp_a", [11])]))
+
+    assert Context.treatment(ctx, "exp_a") == 0
+
+    :ok =
+      Context.set_data(
+        ctx,
+        data([holdout(11, "holdout_s", @holdout_b, iteration: 2)], [
+          covered(1, "exp_a", [11]),
+          covered(2, "exp_b", [11])
+        ])
+      )
+
+    :ok = Context.set_override(ctx, "exp_b", 1)
+    assert Context.treatment(ctx, "exp_b") == 1
+    :ok = Context.set_override(ctx, "exp_a", nil)
+    assert Context.treatment(ctx, "exp_a") == 0
+    :ok = Context.set_override(ctx, "exp_b", 0)
+    assert Context.treatment(ctx, "exp_b") == 0
+
+    arms =
+      for %{"name" => "holdout_s", "variant" => variant} <- published(ctx, ep), do: variant
+
+    assert arms == [0, 1]
+  end
+
+  # Not in ContextHoldoutTest: an arm only the arm cache still holds (its
+  # experiment's assignment was dropped by a refresh) keeps its exposure, so
+  # re-reading in the same holdout iteration does not expose the holdout again.
+  test "a cached arm whose assignment a refresh dropped does not re-expose" do
+    {ctx, ep} = start(data([holdout(11, "holdout_c", @holdout_b)], covered(1, "exp_c", [11])))
+
+    assert Context.treatment(ctx, "exp_c") == @normal_variant
+
+    refresh(
+      ctx,
+      data(
+        [holdout(11, "holdout_c", @holdout_b)],
+        covered(1, "exp_c", [11]) |> Map.put("iteration", 2)
+      )
+    )
+
+    assert Context.treatment(ctx, "exp_c") == @normal_variant
+
+    assert published(ctx, ep) |> Enum.map(&{&1["name"], &1["variant"]}) == [
+             {"exp_c", @normal_variant},
+             {"holdout_c", 1},
+             {"exp_c", @normal_variant}
+           ]
+  end
+
+  # Not in ContextHoldoutTest: an arm only a pinned assignment still holds
+  # (the arm cache moved to a newer iteration) keeps its exposure across a
+  # later data install.
+  test "a pinned arm the cache no longer holds stays exposed across installs" do
+    holdouts = fn iteration -> [holdout(11, "holdout_p", @holdout_a, iteration: iteration)] end
+    {ctx, ep} = start(data(holdouts.(1), [covered(1, "exp_a", [11])]))
+
+    assert Context.treatment(ctx, "exp_a") == 0
+    two = data(holdouts.(2), [covered(1, "exp_a", [11]), covered(2, "exp_b", [11])])
+    :ok = Context.set_data(ctx, two)
+    assert Context.treatment(ctx, "exp_b") == 0
+    :ok = Context.set_data(ctx, two)
+    :ok = Context.set_override(ctx, "exp_a", nil)
+    assert Context.treatment(ctx, "exp_a") == 0
+
+    arms = for %{"name" => "holdout_p", "variant" => variant} <- published(ctx, ep), do: variant
+    assert arms == [0, 0]
+  end
+
+  # Not in ContextHoldoutTest: set_data/2 reclaims the exposure of arms an
+  # overridden read left behind, as refresh does.
+  test "repeated set_data iteration bumps keep holdout exposure state bounded" do
+    exp = covered(1, "exp_r", [11])
+    {ctx, ep} = start(data([holdout(11, "holdout_r", @holdout_b)], exp))
+
+    cycle = fn iteration ->
+      :ok =
+        Context.set_data(
+          ctx,
+          data([holdout(11, "holdout_r", @holdout_b, iteration: iteration)], exp)
+        )
+
+      :ok = Context.set_override(ctx, "exp_r", 1)
+      assert Context.treatment(ctx, "exp_r") == 1
+      assert published(ctx, ep) |> Enum.count(&(&1["name"] == "holdout_r")) == iteration
+    end
+
+    Enum.each(1..20, cycle)
+    size = :erts_debug.size(:sys.get_state(ctx))
+    Enum.each(21..200, cycle)
+
+    assert :erts_debug.size(:sys.get_state(ctx)) == size
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =
