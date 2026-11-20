@@ -558,8 +558,11 @@ end
 
 #### Added
 
-- **Holdouts** (see [Holdouts](#holdouts)), as in the JavaScript SDK: experiments covered by a holdout through `holdoutIds` are held out (variant 0, no exposure of their own) for units in the holdout's held-out arm, and each covering holdout publishes its own exposure. Two-arm and three-arm holdouts are supported; the number of arms comes from the holdout's `split`.
 - `ABSmartly.Types.ContextData` has a new `holdouts` field (default `[]`), `ABSmartly.Types.ExperimentData` has new `holdout_ids` and `holdout_type` fields (default `nil`), and there is a new `ABSmartly.Types.HoldoutData` struct. Payloads without holdouts are handled exactly as before.
+
+#### Changed
+
+- **Holdouts** (see [Holdouts](#holdouts)), as in the JavaScript SDK: experiments covered by a holdout through `holdoutIds` are held out (variant 0, no exposure of their own) for units in the holdout's held-out arm, and each covering holdout publishes its own exposure. Two-arm and three-arm holdouts are supported; the number of arms comes from the holdout's `split`.
 
 ### Assignment rules, semver operators and a versioned `X-Agent`
 

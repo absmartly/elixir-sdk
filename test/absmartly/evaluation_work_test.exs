@@ -117,6 +117,23 @@ defmodule ABSmartly.EvaluationWorkTest do
     assert counts == %{build => 0}
   end
 
+  test "data installs without exposed holdouts skip the pruning walk" do
+    experiments = Enum.map(1..1000, &experiment("plain_#{&1}"))
+    ctx = start_context(experiments, [])
+    Enum.each(experiments, &Context.peek(ctx, &1["name"]))
+    data = %{"experiments" => experiments}
+    build = {MapSet, :intersection, 2}
+
+    # Set intersection is specific to the pruning walk, unlike set creation
+    # which is also used to build the variable index.
+    for install <- [&Context.set_data/2, &Context.refresh/2] do
+      counts = count_calls(ctx, [build], fn -> :ok = install.(ctx, %{"experiments" => []}) end)
+      assert counts == %{build => 0}
+      :ok = Context.set_data(ctx, data)
+      Enum.each(experiments, &Context.peek(ctx, &1["name"]))
+    end
+  end
+
   @build {ABSmartly.Context, :build_evaluation_vars, 1}
   @rules {ABSmartly.Matcher, :evaluate_rules, 3}
 
