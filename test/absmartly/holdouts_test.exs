@@ -1240,6 +1240,33 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
+  # Not in ContextHoldoutTest: exposure state of retired holdout iterations is
+  # reclaimed, so a long-lived context refreshed across many iterations keeps
+  # a bounded state, and each iteration still exposes exactly once.
+  test "repeated iteration bumps keep holdout exposure state bounded" do
+    {ctx, ep} = start(data([holdout(11, "holdout_r", @holdout_b)], covered(1, "exp_r", [11])))
+
+    cycle = fn iteration ->
+      refresh(
+        ctx,
+        data(
+          [holdout(11, "holdout_r", @holdout_b, iteration: iteration)],
+          covered(1, "exp_r", [11])
+        )
+      )
+
+      assert Context.treatment(ctx, "exp_r") == @normal_variant
+      assert Context.treatment(ctx, "exp_r") == @normal_variant
+      assert published(ctx, ep) |> Enum.count(&(&1["name"] == "holdout_r")) == iteration
+    end
+
+    Enum.each(1..20, cycle)
+    size = :erts_debug.size(:sys.get_state(ctx))
+    Enum.each(21..200, cycle)
+
+    assert :erts_debug.size(:sys.get_state(ctx)) == size
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =

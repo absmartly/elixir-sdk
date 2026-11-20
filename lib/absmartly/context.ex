@@ -51,7 +51,9 @@ defmodule ABSmartly.Context do
     # A unit's arm in a holdout, by {holdout id, unit type}, valid while the
     # holdout's iteration is unchanged.
     holdout_assignments: %{},
-    holdout_exposed: MapSet.new()
+    # The ref of the arm last exposed, by the same key: an arm of a new
+    # iteration replaces its predecessor's marker, so the state stays bounded.
+    holdout_exposed: %{}
   ]
 
   def child_spec(opts) do
@@ -1729,10 +1731,12 @@ defmodule ABSmartly.Context do
         acc
 
       {name, arm}, acc ->
-        if MapSet.member?(acc.holdout_exposed, arm.ref) do
+        key = {arm.id, arm.unit_type}
+
+        if Map.get(acc.holdout_exposed, key) == arm.ref do
           acc
         else
-          acc = %{acc | holdout_exposed: MapSet.put(acc.holdout_exposed, arm.ref)}
+          acc = %{acc | holdout_exposed: Map.put(acc.holdout_exposed, key, arm.ref)}
 
           enqueue_exposure(acc, %Types.Exposure{
             id: arm.id,
