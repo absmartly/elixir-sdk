@@ -323,10 +323,7 @@ defmodule ABSmartly.Switchback.ClusterTest do
       assert Context.pending(ctx) == 12
     end
 
-    # Changing a cluster attribute within a period is not supported, as in the
-    # Java SDK: the cluster value read first stays for the period, before the
-    # exposure and after a publish, and the new value applies from the next
-    # period.
+    # A cluster attribute changed within the period applies from the next one.
     test "the arm cached at the first read stays for the period, exposed or not", %{
       clock: clock
     } do
