@@ -323,10 +323,10 @@ defmodule ABSmartly.Switchback.ClusterTest do
       assert Context.pending(ctx) == 12
     end
 
-    # Owner decision (php-sdk#13 Q2): changing a cluster attribute within a
-    # period is not supported. The arm cached at the first read stays for the
-    # period, before the exposure and after a publish, and the change applies
-    # from the next period.
+    # Changing a cluster attribute within a period is not supported, as in the
+    # Java SDK: the cluster value read first stays for the period, before the
+    # exposure and after a publish, and the new value applies from the next
+    # period.
     test "the arm cached at the first read stays for the period, exposed or not", %{
       clock: clock
     } do
