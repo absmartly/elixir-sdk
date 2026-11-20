@@ -102,6 +102,21 @@ defmodule ABSmartly.EvaluationWorkTest do
     end
   end
 
+  test "overridden covered reads reuse the installed holdout index" do
+    experiment = experiment("covered") |> Map.put("holdoutIds", [11])
+    holdout = %{"id" => 11, "name" => "h", "seedHi" => 0, "seedLo" => 0, "split" => [1.0, 0.0]}
+    ctx = start_context([experiment], [], [holdout])
+    :ok = Context.set_override(ctx, "covered", 1)
+    build = {Context, :build_holdout_index, 1}
+
+    counts =
+      count_calls(ctx, [build], fn ->
+        Enum.each(1..10, fn _ -> assert Context.peek(ctx, "covered") == 1 end)
+      end)
+
+    assert counts == %{build => 0}
+  end
+
   @build {ABSmartly.Context, :build_evaluation_vars, 1}
   @rules {ABSmartly.Matcher, :evaluate_rules, 3}
 
