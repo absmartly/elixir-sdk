@@ -311,7 +311,8 @@ defmodule ABSmartly.Types do
       rule_key: nil,
       audience_match_seq: 0,
       suppressed: false,
-      holdout_arms: nil
+      holdout_arms: nil,
+      holdout_key: nil
     ]
   end
 

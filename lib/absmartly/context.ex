@@ -54,7 +54,11 @@ defmodule ABSmartly.Context do
     # The refs of the exposed arms, like the JavaScript SDK's per-arm
     # `exposed` flag. Each data install keeps only the arms still reachable
     # from a pinned assignment or the arm cache, so it stays bounded.
-    holdout_exposed: MapSet.new()
+    holdout_exposed: MapSet.new(),
+    # The covering holdouts an override was last read with, by experiment
+    # name: overrides are not cached, so this stands in for the identity the
+    # JavaScript SDK pins in an overridden assignment.
+    override_holdout_keys: %{}
   ]
 
   def child_spec(opts) do
@@ -1442,17 +1446,6 @@ defmodule ABSmartly.Context do
 
     experiment_holdouts = build_holdout_index(context_data)
 
-    # Like the JavaScript SDK's `holdoutSetMatches`, a change of the holdouts
-    # covering an experiment (their ids or iterations) re-resolves it, even
-    # an overridden one, so the new holdouts are exposed. A same-iteration
-    # seed or split edit changes nothing.
-    {assignments, exposed_experiments} =
-      state.experiment_holdouts
-      |> holdout_changed_names(experiment_holdouts)
-      |> Enum.reduce({assignments, exposed_experiments}, fn name, {acc, exposed} ->
-        {Map.delete(acc, name), MapSet.delete(exposed, name)}
-      end)
-
     state = %{
       state
       | data: context_data,
@@ -1480,6 +1473,7 @@ defmodule ABSmartly.Context do
       # Resolved for overrides too, as in the JavaScript SDK's `_assign`: the
       # holdouts still expose, from the arms fixed at this read.
       {holdout_arms, state} = holdout_arms(state, experiment)
+      state = track_override_holdouts(state, name, holdout_key(state, experiment))
 
       assignment = %Types.Assignment{
         id: experiment.id,
@@ -1494,7 +1488,8 @@ defmodule ABSmartly.Context do
         custom: false,
         audience_mismatch: false,
         rule_override: false,
-        holdout_arms: holdout_arms
+        holdout_arms: holdout_arms,
+        holdout_key: holdout_key(state, experiment)
       }
 
       {assignment, state}
@@ -1545,11 +1540,15 @@ defmodule ABSmartly.Context do
 
   defp maybe_reassign(nil, state, _experiment, _name), do: {nil, state}
 
-  # Mirrors the JavaScript SDK's `audienceMatches` (context.ts).
+  # Mirrors the JavaScript SDK's `holdoutSetMatches` and `audienceMatches`
+  # (context.ts).
   defp maybe_reassign(cached, state, experiment, name) do
     rules_changed = cached.rule_key != experiment.assignment_rules
 
     cond do
+      cached.holdout_key != holdout_key(state, experiment) ->
+        reassign(state, experiment, name)
+
       rules_changed and experiment.assignment_rules == nil and
           (cached.rule_variant != nil or cached.rule_override) ->
         reassign(state, experiment, name)
@@ -1637,6 +1636,7 @@ defmodule ABSmartly.Context do
         rule_variant: rule_variant,
         rule_missing_unit: missing_unit,
         holdout_arms: holdout_arms,
+        holdout_key: holdout_key(state, experiment),
         suppressed: held_out?(holdout_arms, experiment)
     }
 
@@ -2064,16 +2064,33 @@ defmodule ABSmartly.Context do
 
   defp build_holdout_index(_context_data), do: %{}
 
-  defp holdout_changed_names(old, new) when old == %{} and new == %{}, do: []
+  # The ids and iterations of the holdouts covering an experiment (nil when
+  # not covered): a change re-resolves it at the next read, so the new
+  # holdouts are exposed. A same-iteration seed or split edit changes nothing.
+  defp holdout_key(state, experiment) do
+    case Map.get(state.experiment_holdouts, experiment.name) do
+      nil -> nil
+      holdouts -> Enum.map(holdouts, &{&1.id, &1.iteration})
+    end
+  end
 
-  defp holdout_changed_names(old, new) do
-    identity = fn holdouts -> holdouts && Enum.map(holdouts, &{&1.id, &1.iteration}) end
+  # An override read with other covering holdouts than its last read is
+  # exposed again, like the JavaScript SDK's rebuilt overridden assignment.
+  defp track_override_holdouts(state, name, key) do
+    case Map.fetch(state.override_holdout_keys, name) do
+      {:ok, ^key} ->
+        state
 
-    old
-    |> Map.keys()
-    |> Enum.concat(Map.keys(new))
-    |> Enum.uniq()
-    |> Enum.filter(&(identity.(Map.get(old, &1)) != identity.(Map.get(new, &1))))
+      {:ok, _other} ->
+        %{
+          state
+          | override_holdout_keys: Map.put(state.override_holdout_keys, name, key),
+            exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+        }
+
+      :error ->
+        %{state | override_holdout_keys: Map.put(state.override_holdout_keys, name, key)}
+    end
   end
 
   # Assignments are sticky across a refresh, as in the JavaScript SDK's

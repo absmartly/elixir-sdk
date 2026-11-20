@@ -1276,10 +1276,9 @@ defmodule ABSmartly.HoldoutsTest do
     assert :erts_debug.size(:sys.get_state(ctx)) == size
   end
 
-  # Not in ContextHoldoutTest: set_data/2 on a ready context installs a new
-  # iteration without dropping pinned assignments, so an arm of the previous
-  # iteration stays reachable next to the new one. Like the JavaScript SDK's
-  # per-arm `exposed` flag, each arm still exposes once.
+  # Not in ContextHoldoutTest: after set_data/2 installs a new iteration on a
+  # ready context, the arms of both iterations expose once each, like the
+  # JavaScript SDK's per-arm `exposed` flag.
   test "arms of two iterations reachable after set_data each expose once" do
     {ctx, ep} =
       start(data([holdout(11, "holdout_s", @holdout_a)], [covered(1, "exp_a", [11])]))
@@ -1298,7 +1297,7 @@ defmodule ABSmartly.HoldoutsTest do
     :ok = Context.set_override(ctx, "exp_b", 1)
     assert Context.treatment(ctx, "exp_b") == 1
     :ok = Context.set_override(ctx, "exp_a", nil)
-    assert Context.treatment(ctx, "exp_a") == 0
+    assert Context.treatment(ctx, "exp_a") == @normal_variant
     :ok = Context.set_override(ctx, "exp_b", 0)
     assert Context.treatment(ctx, "exp_b") == 0
 
@@ -1373,6 +1372,60 @@ defmodule ABSmartly.HoldoutsTest do
     Enum.each(21..200, cycle)
 
     assert :erts_debug.size(:sys.get_state(ctx)) == size
+  end
+
+  # Not in ContextHoldoutTest: as the JavaScript SDK's `holdoutSetMatches`, a
+  # covering-holdout change is judged at read time against the holdouts pinned
+  # in the assignment, so a change reverted before the next read changes
+  # nothing.
+  test "a holdout added and removed again between reads does not re-expose" do
+    plain = experiment(1, "exp_flip")
+    {ctx, ep} = start(data([], plain))
+
+    assert Context.treatment(ctx, "exp_flip") == @normal_variant
+    refresh(ctx, data([holdout(11, "holdout_flip", @holdout_a)], covered(1, "exp_flip", [11])))
+    refresh(ctx, data([], plain))
+    assert Context.treatment(ctx, "exp_flip") == @normal_variant
+
+    assert published(ctx, ep) == [exposure(1, "exp_flip", @normal_variant)]
+  end
+
+  test "an overridden experiment's holdout added and removed between reads does not re-expose" do
+    plain = experiment(1, "exp_flip_override")
+    {ctx, ep} = start(data([], plain), overrides: %{"exp_flip_override" => 1})
+
+    assert Context.treatment(ctx, "exp_flip_override") == 1
+
+    refresh(
+      ctx,
+      data([holdout(11, "holdout_flip", @holdout_a)], covered(1, "exp_flip_override", [11]))
+    )
+
+    refresh(ctx, data([], plain))
+    assert Context.treatment(ctx, "exp_flip_override") == 1
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_flip_override", 1, assigned: false, overridden: true)
+           ]
+  end
+
+  test "coverage added by set_data on a ready context applies at the next read" do
+    {ctx, ep} = start(data([], experiment(1, "exp_set_data_cover")))
+
+    assert Context.treatment(ctx, "exp_set_data_cover") == @normal_variant
+
+    :ok =
+      Context.set_data(
+        ctx,
+        data([holdout(11, "holdout_late", @holdout_a)], covered(1, "exp_set_data_cover", [11]))
+      )
+
+    assert Context.treatment(ctx, "exp_set_data_cover") == 0
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_set_data_cover", @normal_variant),
+             holdout_exposure(11, "holdout_late", 0)
+           ]
   end
 
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
