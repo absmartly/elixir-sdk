@@ -122,13 +122,14 @@ defmodule ABSmartly.EvaluationWorkTest do
     ctx = start_context(experiments, [])
     Enum.each(experiments, &Context.peek(ctx, &1["name"]))
     data = %{"experiments" => experiments}
-    build = {MapSet, :intersection, 2}
+    walk = {Context, :reachable_arm_refs, 1}
+    intersect = {MapSet, :intersection, 2}
 
-    # Set intersection is specific to the pruning walk, unlike set creation
-    # which is also used to build the variable index.
     for install <- [&Context.set_data/2, &Context.refresh/2] do
-      counts = count_calls(ctx, [build], fn -> :ok = install.(ctx, %{"experiments" => []}) end)
-      assert counts == %{build => 0}
+      counts =
+        count_calls(ctx, [walk, intersect], fn -> :ok = install.(ctx, %{"experiments" => []}) end)
+
+      assert counts == %{walk => 0, intersect => 0}
       :ok = Context.set_data(ctx, data)
       Enum.each(experiments, &Context.peek(ctx, &1["name"]))
     end
@@ -136,6 +137,24 @@ defmodule ABSmartly.EvaluationWorkTest do
 
   @build {ABSmartly.Context, :build_evaluation_vars, 1}
   @rules {ABSmartly.Matcher, :evaluate_rules, 3}
+
+  test "a unit of another type does not re-resolve a covered decision waiting for its unit" do
+    experiment =
+      experiment("covered") |> Map.merge(%{"unitType" => "user_id", "holdoutIds" => [11]})
+
+    holdout = %{"id" => 11, "name" => "h", "seedHi" => 0, "seedLo" => 0, "split" => [1.0, 0.0]}
+    ctx = start_context([experiment], [], [holdout])
+    Context.peek(ctx, "covered")
+    assign = {Context, :assign_variant, 2}
+
+    counts =
+      count_calls(ctx, [assign], fn ->
+        :ok = Context.set_units(ctx, %{"other_id" => "o1"})
+        Context.peek(ctx, "covered")
+      end)
+
+    assert counts == %{assign => 0}
+  end
 
   test "cached reads of a payload without holdouts never look up holdout keys" do
     ctx = start_context([experiment("plain")], [])

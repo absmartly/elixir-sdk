@@ -1739,6 +1739,122 @@ defmodule ABSmartly.HoldoutsTest do
     assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
   end
 
+  # Not in ContextHoldoutTest: like the JavaScript SDK's per-assignment
+  # `exposed` flag and `unitType`, a covered assignment made without its unit
+  # is re-resolved by set_unit even while its experiment is absent, as long
+  # as it was never really exposed.
+  test "a unit set while the covered experiment is absent re-resolves it on restore" do
+    payload =
+      data(
+        [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+        covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+      )
+
+    {ctx, ep} = start(payload, units: %{})
+
+    assert Context.peek(ctx, "exp_late") == 1
+    :ok = Context.set_data(ctx, data([], []))
+    assert Context.treatment(ctx, "exp_late") == 0
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    :ok = Context.set_data(ctx, payload)
+    assert Context.treatment(ctx, "exp_late") == 0
+
+    assert published(ctx, ep) == [
+             exposure(0, "exp_late", 0, assigned: false, unit: nil),
+             holdout_exposure(11, "holdout_late", 0, "user_id")
+           ]
+  end
+
+  # Not in ContextHoldoutTest: a custom write clears the name's exposure
+  # marker (main re-exposes the experiment), but the covered decision itself
+  # was exposed, so a later unit does not re-resolve it.
+  test "a custom write does not unpin an exposed covered decision made without the unit" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+        ),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_custom_assignment(ctx, "exp_late", 1)
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert Enum.all?(published(ctx, ep), &(&1["name"] == "exp_late" and &1["variant"] == 1))
+  end
+
+  test "a unit of another type set while the covered experiment is absent keeps its decision" do
+    payload =
+      data(
+        [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+        covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+      )
+
+    {ctx, ep} = start(payload, units: %{})
+
+    assert Context.peek(ctx, "exp_late") == 1
+    :ok = Context.set_data(ctx, data([], []))
+    :ok = Context.set_unit(ctx, @unit_type, @uid)
+    :ok = Context.set_data(ctx, payload)
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert published(ctx, ep) == [exposure(1, "exp_late", 1, unit: "user_id", full_on: true)]
+  end
+
+  # Not in ContextHoldoutTest: an override's exposure is not an exposure of
+  # the normal decision cached before it (the JavaScript SDK rebuilds that
+  # assignment), so once the override is cleared a late unit still resolves it.
+  test "an override exposure does not pin the normal decision made without the unit" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+        ),
+        units: %{}
+      )
+
+    assert Context.peek(ctx, "exp_late") == 1
+    :ok = Context.set_override(ctx, "exp_late", 1)
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_override(ctx, "exp_late", nil)
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 0
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_late", 1, unit: "user_id", assigned: false, overridden: true),
+             holdout_exposure(11, "holdout_late", 0, "user_id")
+           ]
+  end
+
+  # Not in ContextHoldoutTest: typed holdouts skip from_map/1, so seeds the
+  # assigner cannot use make the holdout invalid at install, like a bad split.
+  test "a typed holdout with unusable seeds is ignored" do
+    for {seed_hi, seed_lo} <- [{nil, 0}, {0, nil}, {"1", 2}, {1.5, 2}] do
+      bad = %Types.HoldoutData{
+        id: 11,
+        name: "holdout_bad",
+        iteration: 1,
+        seed_hi: seed_hi,
+        seed_lo: seed_lo,
+        split: [1.0, 0.0]
+      }
+
+      typed = %{
+        Types.ContextData.from_map(data([], covered(1, "exp_bad", [11])))
+        | holdouts: [bad]
+      }
+
+      {ctx, ep} = start_typed(typed)
+      assert Context.peek(ctx, "exp_bad") == @normal_variant
+      assert Context.treatment(ctx, "exp_bad") == @normal_variant
+      assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
+    end
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =

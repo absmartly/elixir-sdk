@@ -997,9 +997,29 @@ defmodule ABSmartly.Context do
           do: state,
           else: enqueue_exposure(state, create_exposure(experiment, assignment))
 
-      queue_holdout_exposures(state, assignment.holdout_arms)
+      state
+      |> mark_holdout_exposed(experiment_name, assignment)
+      |> queue_holdout_exposures(assignment.holdout_arms)
     end
   end
+
+  # Like the JavaScript SDK's per-assignment `exposed` flag: set_unit never
+  # re-resolves a covered decision once it was really exposed, whatever later
+  # clears the name's exposure marker (a custom write, a refresh).
+  defp mark_holdout_exposed(state, name, %{holdout_key: [_ | _], overridden: false}) do
+    case Map.get(state.assignments, name) do
+      %Types.Assignment{holdout_exposed: false} = cached ->
+        %{
+          state
+          | assignments: Map.put(state.assignments, name, %{cached | holdout_exposed: true})
+        }
+
+      _ ->
+        state
+    end
+  end
+
+  defp mark_holdout_exposed(state, _name, _assignment), do: state
 
   # A covered experiment whose only exposure is a placeholder from a read while
   # it was absent is exposed with its holdouts at its first real read.
@@ -1008,7 +1028,7 @@ defmodule ABSmartly.Context do
 
   defp do_treatment_for_override(state, experiment_name, override, queue_exposure) do
     state =
-      if queue_exposure do
+      if queue_exposure and not MapSet.member?(state.exposed_experiments, experiment_name) do
         exposure = %Types.Exposure{
           id: 0,
           name: experiment_name,
@@ -1024,16 +1044,13 @@ defmodule ABSmartly.Context do
           rule_override: false
         }
 
-        if MapSet.member?(state.exposed_experiments, experiment_name) do
+        state = %{
           state
-        else
-          state = %{
-            state
-            | placeholder_exposed: MapSet.put(state.placeholder_exposed, experiment_name)
-          }
+          | exposed_experiments: MapSet.put(state.exposed_experiments, experiment_name),
+            placeholder_exposed: MapSet.put(state.placeholder_exposed, experiment_name)
+        }
 
-          queue_exposure(state, experiment_name, exposure)
-        end
+        enqueue_exposure(state, exposure)
       else
         state
       end
@@ -1043,19 +1060,6 @@ defmodule ABSmartly.Context do
 
   defp do_treatment_for_unknown(state, experiment_name, queue_exposure),
     do: do_treatment_for_override(state, experiment_name, nil, queue_exposure)
-
-  defp queue_exposure(state, experiment_name, exposure) do
-    if MapSet.member?(state.exposed_experiments, experiment_name) do
-      state
-    else
-      state = %{
-        state
-        | exposed_experiments: MapSet.put(state.exposed_experiments, experiment_name)
-      }
-
-      enqueue_exposure(state, exposure)
-    end
-  end
 
   defp enqueue_exposure(state, exposure) do
     state =
@@ -1656,6 +1660,7 @@ defmodule ABSmartly.Context do
         rule_missing_unit: missing_unit,
         holdout_arms: holdout_arms,
         holdout_key: holdout_key(state, experiment),
+        holdout_unit_type: holdout_arms && unit_type(experiment),
         suppressed: held_out?(holdout_arms, experiment)
     }
 
@@ -1751,20 +1756,26 @@ defmodule ABSmartly.Context do
     if MapSet.size(state.holdout_exposed) == 0 do
       state
     else
-      pinned =
-        for {_name, %Types.Assignment{holdout_arms: [_ | _] = arms}} <- state.assignments,
-            {_holdout, %{ref: ref}} <- arms,
-            do: ref
-
-      overridden =
-        for {_name, {_variant, _key, [_ | _] = arms}} <- state.override_snapshots,
-            {_holdout, %{ref: ref}} <- arms,
-            do: ref
-
-      cached = for {_key, %{ref: ref}} <- state.holdout_assignments, do: ref
-      reachable = MapSet.new(pinned ++ overridden ++ cached)
+      reachable = reachable_arm_refs(state)
       %{state | holdout_exposed: MapSet.intersection(state.holdout_exposed, reachable)}
     end
+  end
+
+  # The refs of the arms a pinned assignment, an override or the arm cache
+  # can still serve.
+  defp reachable_arm_refs(state) do
+    pinned =
+      for {_name, %Types.Assignment{holdout_arms: [_ | _] = arms}} <- state.assignments,
+          {_holdout, %{ref: ref}} <- arms,
+          do: ref
+
+    overridden =
+      for {_name, {_variant, _key, [_ | _] = arms}} <- state.override_snapshots,
+          {_holdout, %{ref: ref}} <- arms,
+          do: ref
+
+    cached = for {_key, %{ref: ref}} <- state.holdout_assignments, do: ref
+    MapSet.new(pinned ++ overridden ++ cached)
   end
 
   defp queue_holdout_exposures(state, nil), do: state
@@ -1871,15 +1882,28 @@ defmodule ABSmartly.Context do
   defp invalidate_rules_missing_unit(state, added_unit_types) do
     assignments =
       Map.reject(state.assignments, fn {name, assignment} ->
-        experiment = Map.get(state.experiment_index, name)
-
-        (assignment.rule_missing_unit or holdout_unit_missing?(assignment)) and
-          experiment != nil and unit_type(experiment) in added_unit_types and
-          (not MapSet.member?(state.exposed_experiments, name) or
-             placeholder_only?(state, name, assignment))
+        missing_unit_resolves?(state, name, assignment, added_unit_types)
       end)
 
     %{state | assignments: assignments}
+  end
+
+  # A split rule resolved without its unit is judged on the installed
+  # experiment, as on main. A covered decision made without its unit is
+  # judged on itself, like the JavaScript SDK's assignment `unitType` and
+  # `exposed` flag, so it also resolves while its experiment is absent.
+  defp missing_unit_resolves?(state, name, assignment, added_unit_types) do
+    experiment = Map.get(state.experiment_index, name)
+
+    rule_resolves =
+      assignment.rule_missing_unit and experiment != nil and
+        unit_type(experiment) in added_unit_types and
+        (not MapSet.member?(state.exposed_experiments, name) or
+           placeholder_only?(state, name, assignment))
+
+    rule_resolves or
+      (holdout_unit_missing?(assignment) and not assignment.holdout_exposed and
+         assignment.holdout_unit_type in added_unit_types)
   end
 
   defp base_assignment(experiment) do
@@ -2072,7 +2096,9 @@ defmodule ABSmartly.Context do
   defp build_holdout_index(%Types.ContextData{holdouts: holdouts, experiments: experiments})
        when holdouts not in [nil, []] do
     holdouts_by_id =
-      for %Types.HoldoutData{split: [_ | _] = split} = holdout <- holdouts,
+      for %Types.HoldoutData{split: [_ | _] = split, seed_hi: seed_hi, seed_lo: seed_lo} =
+            holdout <- holdouts,
+          is_integer(seed_hi) and is_integer(seed_lo),
           Types.HoldoutData.valid_split?(split),
           into: %{},
           do: {holdout.id, holdout}
