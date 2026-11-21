@@ -1559,6 +1559,23 @@ defmodule ABSmartly.HoldoutsTest do
     assert arms == [0, 0]
   end
 
+  test "a changed override variant does not reuse its pinned arm" do
+    holdouts = fn iteration -> [holdout(11, "holdout_ov", @holdout_a, iteration: iteration)] end
+    experiments = [covered(1, "exp_a", [11]), covered(2, "exp_b", [11])]
+    {ctx, ep} = start(data(holdouts.(1), experiments), overrides: %{"exp_a" => 1})
+
+    assert Context.peek(ctx, "exp_a") == 1
+    refresh(ctx, data(holdouts.(2), experiments))
+    assert Context.treatment(ctx, "exp_b") == 0
+    refresh(ctx, data(holdouts.(1), experiments))
+    assert Context.treatment(ctx, "exp_b") == 0
+    :ok = Context.set_override(ctx, "exp_a", 0)
+    assert Context.treatment(ctx, "exp_a") == 0
+
+    arms = for %{"name" => "holdout_ov", "variant" => variant} <- published(ctx, ep), do: variant
+    assert arms == [0, 0]
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =

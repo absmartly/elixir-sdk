@@ -1552,7 +1552,8 @@ defmodule ABSmartly.Context do
     rules_changed = cached.rule_key != experiment.assignment_rules
 
     cond do
-      cached.holdout_key != holdout_key(state, experiment) ->
+      (cached.holdout_key != nil or state.experiment_holdout_keys != %{}) and
+          cached.holdout_key != holdout_key(state, experiment) ->
         reassign(cache_evaluation_vars(state, experiment), experiment, name)
 
       rules_changed and experiment.assignment_rules == nil and

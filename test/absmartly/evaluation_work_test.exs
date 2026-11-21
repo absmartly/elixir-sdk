@@ -137,6 +137,19 @@ defmodule ABSmartly.EvaluationWorkTest do
   @build {ABSmartly.Context, :build_evaluation_vars, 1}
   @rules {ABSmartly.Matcher, :evaluate_rules, 3}
 
+  test "cached reads of a payload without holdouts never look up holdout keys" do
+    ctx = start_context([experiment("plain")], [])
+    assert Context.peek(ctx, "plain") in [0, 1]
+    lookup = {Context, :holdout_key, 2}
+
+    counts =
+      count_calls(ctx, [lookup], fn ->
+        Enum.each(1..10, fn _ -> Context.peek(ctx, "plain") end)
+      end)
+
+    assert counts == %{lookup => 0}
+  end
+
   test "a holdout iteration change re-resolves with one evaluation map per attribute change" do
     names = Enum.map(1..40, &"covered_#{&1}")
 
