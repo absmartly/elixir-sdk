@@ -241,13 +241,13 @@ defmodule ABSmartly.Types do
         iteration: integer_or(map["iteration"], 0),
         seed_hi: integer_or(map["seedHi"], 0),
         seed_lo: integer_or(map["seedLo"], 0),
-        split: if(valid_split?(split), do: split, else: [])
+        split: if(is_list(split) and Enum.all?(split, &is_number/1), do: split, else: [])
       }
     end
 
     # Probabilities outside [0, 1] (whose sum can even overflow) make the
-    # holdout invalid; it is then dropped like one with an empty split.
-    # Installing typed context data checks it too.
+    # holdout invalid; installing the context data drops it like one with an
+    # empty split, for decoded and typed data alike.
     @doc false
     def valid_split?(split) when is_list(split),
       do: Enum.all?(split, &(is_number(&1) and &1 >= 0 and &1 <= 1))

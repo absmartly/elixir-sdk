@@ -109,4 +109,60 @@ defmodule ABSmartly.HoldoutsInertnessTest do
 
     assert sessions(payload) == @recorded["sessions"]
   end
+
+  # The placeholder of a read while absent re-resolves only covered
+  # assignments at set_unit: an uncovered split rule installed by set_data/2
+  # after that read keeps main's result once its unit is set.
+  test "set_unit after a placeholder keeps main's result for an uncovered rule" do
+    rules =
+      Jason.encode!(%{
+        "rules" => [
+          %{
+            "name" => "All",
+            "type" => "split",
+            "conditions" => nil,
+            "environments" => [],
+            "percentages" => "0/100"
+          }
+        ]
+      })
+
+    experiment = %{
+      "id" => 1,
+      "name" => "exp_rule",
+      "iteration" => 1,
+      "unitType" => "session_id",
+      "seedHi" => 1,
+      "seedLo" => 2,
+      "split" => [0.5, 0.5],
+      "trafficSeedHi" => 3,
+      "trafficSeedLo" => 4,
+      "trafficSplit" => [0.0, 1.0],
+      "fullOnVariant" => 0,
+      "applications" => [],
+      "variants" => [%{"name" => "A", "config" => nil}, %{"name" => "B", "config" => nil}],
+      "audience" => nil,
+      "audienceStrict" => false,
+      "assignmentRules" => rules
+    }
+
+    sdk_config = %Types.SDKConfig{
+      endpoint: Base.encode64(:erlang.term_to_binary(self())),
+      api_key: "k",
+      application: "website",
+      environment: "production",
+      publisher: Publisher
+    }
+
+    {:ok, ctx} =
+      Context.start_link(sdk_config, %Types.ContextData{experiments: []}, %Types.ContextConfig{
+        units: %{}
+      })
+
+    assert Context.treatment(ctx, "exp_rule") == 0
+    :ok = Context.set_data(ctx, %{"experiments" => [experiment]})
+    assert Context.peek(ctx, "exp_rule") == 0
+    :ok = Context.set_unit(ctx, "session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec")
+    assert Context.treatment(ctx, "exp_rule") == 0
+  end
 end
