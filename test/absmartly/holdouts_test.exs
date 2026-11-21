@@ -1675,6 +1675,15 @@ defmodule ABSmartly.HoldoutsTest do
       assert Context.treatment(ctx, "exp_bad") == @normal_variant
       assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
     end
+
+    decoded = fn split ->
+      hd(
+        Types.ContextData.from_map(data([holdout(11, "h", @holdout_a, split: split)], [])).holdouts
+      ).split
+    end
+
+    assert decoded.([50, 50]) == [50, 50]
+    assert decoded.(["0.5", 0.5]) == []
   end
 
   # Not in ContextHoldoutTest: a placeholder from a read while absent is not

@@ -112,7 +112,8 @@ defmodule ABSmartly.HoldoutsInertnessTest do
 
   # The placeholder of a read while absent re-resolves only covered
   # assignments at set_unit: an uncovered split rule installed by set_data/2
-  # after that read keeps main's result once its unit is set.
+  # after that read keeps main's result once its unit is set. (The
+  # JavaScript SDK returns 1 here; this PR keeps main's behaviour.)
   test "set_unit after a placeholder keeps main's result for an uncovered rule" do
     rules =
       Jason.encode!(%{
