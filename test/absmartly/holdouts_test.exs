@@ -145,10 +145,15 @@ defmodule ABSmartly.HoldoutsTest do
     }
 
     {:ok, ctx} =
-      Context.start_link(sdk_config, Types.ContextData.from_map(data), context_config)
+      Context.start_link(sdk_config, typed_data(data), context_config)
 
     {ctx, endpoint}
   end
+
+  defp start_typed(%Types.ContextData{} = data), do: start(data)
+
+  defp typed_data(%Types.ContextData{} = data), do: data
+  defp typed_data(data), do: Types.ContextData.from_map(data)
 
   defp exposure(id, name, variant, opts \\ []) do
     %{
@@ -1670,6 +1675,59 @@ defmodule ABSmartly.HoldoutsTest do
       assert Context.treatment(ctx, "exp_bad") == @normal_variant
       assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
     end
+  end
+
+  # Not in ContextHoldoutTest: a placeholder from a read while absent is not
+  # an exposure of the covered decision, so a peek made without the unit is
+  # still re-resolved when the unit arrives before the first covered read.
+  test "set_unit re-resolves a covered peek whose only exposure is a placeholder" do
+    {ctx, ep} = start(data([], []), units: %{})
+
+    assert Context.treatment(ctx, "exp_late") == 0
+
+    :ok =
+      Context.set_data(
+        ctx,
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+        )
+      )
+
+    assert Context.peek(ctx, "exp_late") == 1
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 0
+
+    assert published(ctx, ep) == [
+             exposure(0, "exp_late", 0, assigned: false, unit: nil),
+             holdout_exposure(11, "holdout_late", 0, "user_id")
+           ]
+  end
+
+  # Not in ContextHoldoutTest: typed context data (start_link/3 and
+  # refresh/2) skips from_map/1, so the probability check applies at install.
+  test "a typed holdout with probabilities outside 0..1 is ignored" do
+    bad = %Types.HoldoutData{
+      id: 11,
+      name: "holdout_bad",
+      iteration: 1,
+      seed_hi: 13,
+      seed_lo: 111,
+      split: [-1.0e308, -1.0e308]
+    }
+
+    typed = fn ->
+      %{Types.ContextData.from_map(data([], covered(1, "exp_bad", [11]))) | holdouts: [bad]}
+    end
+
+    {ctx, ep} = start(data([], experiment(1, "exp_bad")))
+    :ok = Context.refresh(ctx, typed.())
+    assert Context.treatment(ctx, "exp_bad") == @normal_variant
+    assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
+
+    {ctx, ep} = start_typed(typed.())
+    assert Context.treatment(ctx, "exp_bad") == @normal_variant
+    assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
   end
 
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment

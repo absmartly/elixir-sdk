@@ -247,10 +247,12 @@ defmodule ABSmartly.Types do
 
     # Probabilities outside [0, 1] (whose sum can even overflow) make the
     # holdout invalid; it is then dropped like one with an empty split.
-    defp valid_split?(split) when is_list(split),
+    # Installing typed context data checks it too.
+    @doc false
+    def valid_split?(split) when is_list(split),
       do: Enum.all?(split, &(is_number(&1) and &1 >= 0 and &1 <= 1))
 
-    defp valid_split?(_split), do: false
+    def valid_split?(_split), do: false
 
     # An integer, or an integral float (`11.0`), as the integer; the
     # JavaScript SDK makes no difference between `11.0` and `11`.

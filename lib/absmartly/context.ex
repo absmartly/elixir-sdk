@@ -1875,7 +1875,8 @@ defmodule ABSmartly.Context do
 
         (assignment.rule_missing_unit or holdout_unit_missing?(assignment)) and
           experiment != nil and unit_type(experiment) in added_unit_types and
-          not MapSet.member?(state.exposed_experiments, name)
+          (not MapSet.member?(state.exposed_experiments, name) or
+             placeholder_only?(state, name, assignment))
       end)
 
     %{state | assignments: assignments}
@@ -2071,7 +2072,8 @@ defmodule ABSmartly.Context do
   defp build_holdout_index(%Types.ContextData{holdouts: holdouts, experiments: experiments})
        when holdouts not in [nil, []] do
     holdouts_by_id =
-      for %Types.HoldoutData{split: [_ | _]} = holdout <- holdouts,
+      for %Types.HoldoutData{split: [_ | _] = split} = holdout <- holdouts,
+          Types.HoldoutData.valid_split?(split),
           into: %{},
           do: {holdout.id, holdout}
 
