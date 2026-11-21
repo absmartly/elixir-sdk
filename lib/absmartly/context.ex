@@ -958,11 +958,21 @@ defmodule ABSmartly.Context do
       {nil, nil} when is_map_key(state.assignments, experiment_name) ->
         cached = Map.fetch!(state.assignments, experiment_name)
 
-        if cached.suppressed and not cached.rule_override do
+        if saved_unassigned_holdout?(cached) do
           state =
             if queue_exposure and not cached.holdout_exposed do
-              state = mark_holdout_exposed(state, experiment_name, cached)
-              queue_holdout_exposures(state, cached.holdout_arms)
+              if cached.suppressed do
+                state = mark_holdout_exposed(state, experiment_name, cached)
+                queue_holdout_exposures(state, cached.holdout_arms)
+              else
+                saved = %{
+                  id: cached.id,
+                  name: experiment_name,
+                  unit_type: cached.holdout_unit_type
+                }
+
+                expose(state, experiment_name, saved, cached)
+              end
             else
               state
             end
@@ -1480,8 +1490,7 @@ defmodule ABSmartly.Context do
     exposed_experiments =
       Enum.reduce(changed_names, state.exposed_experiments, fn name, acc ->
         if Map.has_key?(state.overrides, name) or
-             (not Map.has_key?(exp_index, name) and
-                match?(%{suppressed: true, rule_override: false}, Map.get(assignments, name))) do
+             keep_saved_holdout?(Map.get(assignments, name), Map.get(exp_index, name)) do
           acc
         else
           MapSet.delete(acc, name)
@@ -2280,13 +2289,27 @@ defmodule ABSmartly.Context do
     end)
   end
 
+  defp saved_unassigned_holdout?(nil), do: false
+
+  defp saved_unassigned_holdout?(assignment),
+    do: assignment.holdout_key != nil and not assignment.assigned and not assignment.rule_override
+
+  defp keep_saved_holdout?(nil, _experiment), do: false
+  defp keep_saved_holdout?(assignment, nil), do: saved_unassigned_holdout?(assignment)
+
+  defp keep_saved_holdout?(assignment, experiment),
+    do:
+      saved_unassigned_holdout?(assignment) and assignment.id == experiment.id and
+        assignment.iteration == experiment.iteration and
+        assignment.full_on_variant == experiment.full_on_variant and
+        assignment.traffic_split == experiment.traffic_split
+
   defp invalidate_changed_assignments(assignments, changed_names, exp_index) do
     changed_names = MapSet.new(changed_names)
 
     Map.reject(assignments, fn {name, assignment} ->
       not assignment.overridden and MapSet.member?(changed_names, name) and
-        not (assignment.suppressed and not assignment.rule_override and
-               not Map.has_key?(exp_index, name))
+        not keep_saved_holdout?(assignment, Map.get(exp_index, name))
     end)
   end
 

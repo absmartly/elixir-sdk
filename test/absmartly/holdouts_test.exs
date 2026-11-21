@@ -2298,6 +2298,36 @@ defmodule ABSmartly.HoldoutsTest do
     end
   end
 
+  test "a missing-unit covered decision exposed while absent stays pinned" do
+    for install <- [&Context.set_data/2, &Context.refresh/2] do
+      e = covered(1, "e", [11])
+      {ctx, ep} = start(data([holdout(11, "h", {0, 0}, split: [1.0, 0.0])], e), units: %{})
+      assert Context.peek(ctx, "e") == 0
+      :ok = install.(ctx, data([], []))
+      assert Context.treatment(ctx, "e") == 0
+      :ok = Context.set_unit(ctx, @unit_type, @uid)
+      :ok = install.(ctx, data([holdout(11, "h", {0, 0}, split: [1.0, 0.0])], e))
+      assert Context.peek(ctx, "e") == 0
+
+      :ok =
+        install.(
+          ctx,
+          data([holdout(11, "h", {0, 0}, split: [0.0, 1.0])], [
+            e,
+            covered(2, "f", [11], full_on: 1)
+          ])
+        )
+
+      assert Context.treatment(ctx, "f") == 1
+
+      assert published(ctx, ep) == [
+               exposure(1, "e", 0, assigned: false),
+               exposure(2, "f", 1, full_on: true),
+               holdout_exposure(11, "h", 1)
+             ]
+    end
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =
