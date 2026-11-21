@@ -1517,6 +1517,14 @@ defmodule ABSmartly.Context do
           do: state,
           else: %{state | override_snapshots: Map.delete(state.override_snapshots, name)}
 
+      # A read while the custom differs rebuilds the assignment unexposed in
+      # the JavaScript SDK, so the covered decision is no longer pinned.
+      state =
+        if state.custom_assignments != %{} and
+             custom_stale?(state, name, Map.get(state.assignments, name)),
+           do: unpin_holdout_exposed(state, name),
+           else: state
+
       cached = Map.get(state.assignments, name)
 
       {cached, state} = maybe_reassign(cached, state, experiment, name)
@@ -1896,12 +1904,20 @@ defmodule ABSmartly.Context do
   defp invalidate_rules_missing_unit(state, []), do: state
 
   defp invalidate_rules_missing_unit(state, added_unit_types) do
-    assignments =
-      Map.reject(state.assignments, fn {name, assignment} ->
+    {dropped, assignments} =
+      Map.split_with(state.assignments, fn {name, assignment} ->
         missing_unit_resolves?(state, name, assignment, added_unit_types)
       end)
 
-    %{state | assignments: assignments}
+    # A dropped decision that was exposed is rebuilt unexposed, as in the
+    # JavaScript SDK, so its replacement and holdouts are exposed.
+    exposed =
+      Enum.reduce(dropped, state.exposed_experiments, fn
+        {name, %Types.Assignment{holdout_exposed: true}}, acc -> MapSet.delete(acc, name)
+        _, acc -> acc
+      end)
+
+    %{state | assignments: assignments, exposed_experiments: exposed}
   end
 
   # A split rule resolved without its unit is judged on the installed
@@ -1926,6 +1942,7 @@ defmodule ABSmartly.Context do
   # cached one makes an assignment not won by a rule stale, as of now, not as
   # of the custom write. (A decision still waiting for its unit has no arm, so
   # it is never held out.)
+  defp custom_stale?(_state, _name, nil), do: false
   defp custom_stale?(_state, _name, %{rule_override: true}), do: false
 
   defp custom_stale?(state, name, assignment) do

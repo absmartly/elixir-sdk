@@ -176,6 +176,19 @@ defmodule ABSmartly.EvaluationWorkTest do
     assert counts == %{assign => 0}
   end
 
+  test "cached reads without custom assignments never check them for staleness" do
+    ctx = start_context([experiment("plain")], [])
+    assert Context.peek(ctx, "plain") in [0, 1]
+    check = {Context, :custom_stale?, 3}
+
+    counts =
+      count_calls(ctx, [check], fn ->
+        Enum.each(1..10, fn _ -> Context.peek(ctx, "plain") end)
+      end)
+
+    assert counts == %{check => 0}
+  end
+
   test "cached reads of a payload without holdouts never look up holdout keys" do
     ctx = start_context([experiment("plain")], [])
     assert Context.peek(ctx, "plain") in [0, 1]

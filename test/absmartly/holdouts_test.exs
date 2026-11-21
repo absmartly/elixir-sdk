@@ -2053,6 +2053,76 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
+  # Not in ContextHoldoutTest: a custom read before the unit is rebuilt by
+  # javascript-sdk, and once the unit arrives the custom decision is exposed
+  # with its holdout.
+  test "a custom read before a late unit exposes the re-resolved decision" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [0.0, 1.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id")
+        ),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "exp_late") == 0
+    :ok = Context.set_custom_assignment(ctx, "exp_late", 1)
+    assert Context.treatment(ctx, "exp_late") == 0
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_late", 0, unit: "user_id", assigned: false),
+             exposure(1, "exp_late", 0, unit: "user_id", assigned: false),
+             exposure(1, "exp_late", 1, unit: "user_id", custom: true),
+             holdout_exposure(11, "holdout_late", 1, "user_id")
+           ]
+  end
+
+  # Not in ContextHoldoutTest: a read while the custom differs rebuilds the
+  # assignment unexposed in javascript-sdk, so flipping the custom back
+  # afterwards does not pin it again.
+  test "a custom peeked then flipped back lets a late unit re-resolve the decision" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+        ),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_custom_assignment(ctx, "exp_late", 0)
+    assert Context.peek(ctx, "exp_late") == 1
+    :ok = Context.set_custom_assignment(ctx, "exp_late", 1)
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 0
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_late", 1, unit: "user_id", full_on: true),
+             holdout_exposure(11, "holdout_late", 0, "user_id")
+           ]
+  end
+
+  # Not in ContextHoldoutTest: an exposed override replaces the cached
+  # decision in javascript-sdk, so set_unit dropping the peeked decision
+  # underneath it does not expose the override again.
+  test "an exposed override is not exposed again when set_unit drops the decision under it" do
+    {ctx, ep} = late_unit_context(@holdout_b, overrides: %{})
+
+    assert Context.peek(ctx, "exp_late") == 2
+    :ok = Context.set_override(ctx, "exp_late", 1)
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_late", 1, unit: "user_id", assigned: false, overridden: true)
+           ]
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =
