@@ -1783,7 +1783,10 @@ defmodule ABSmartly.HoldoutsTest do
     :ok = Context.set_unit(ctx, "user_id", @uid)
     assert Context.treatment(ctx, "exp_late") == 1
 
-    assert Enum.all?(published(ctx, ep), &(&1["name"] == "exp_late" and &1["variant"] == 1))
+    assert published(ctx, ep) == [
+             exposure(1, "exp_late", 1, unit: "user_id", full_on: true),
+             exposure(1, "exp_late", 1, unit: "user_id", full_on: true)
+           ]
   end
 
   test "a unit of another type set while the covered experiment is absent keeps its decision" do
@@ -1853,6 +1856,115 @@ defmodule ABSmartly.HoldoutsTest do
       assert Context.treatment(ctx, "exp_bad") == @normal_variant
       assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
     end
+  end
+
+  # Not in ContextHoldoutTest: a custom variant other than the cached one
+  # makes the JavaScript SDK rebuild the assignment unexposed, so a later
+  # unit re-resolves it and the custom variant and holdout apply.
+  test "a differing custom write lets a late unit re-resolve an exposed covered decision" do
+    setters = [
+      &Context.set_custom_assignment(&1, "exp_late", 1),
+      &Context.set_custom_assignments(&1, %{"exp_late" => 1})
+    ]
+
+    for set_custom <- setters do
+      {ctx, ep} =
+        start(
+          data(
+            [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [0.0, 1.0])],
+            covered(1, "exp_late", [11], unit_type: "user_id")
+          ),
+          units: %{}
+        )
+
+      assert Context.treatment(ctx, "exp_late") == 0
+      :ok = set_custom.(ctx)
+      :ok = Context.set_unit(ctx, "user_id", @uid)
+      assert Context.peek(ctx, "exp_late") == 1
+      assert Context.treatment(ctx, "exp_late") == 1
+
+      assert published(ctx, ep) == [
+               exposure(1, "exp_late", 0, unit: "user_id", assigned: false),
+               exposure(1, "exp_late", 1, unit: "user_id", custom: true),
+               holdout_exposure(11, "holdout_late", 1, "user_id")
+             ]
+    end
+  end
+
+  # Not in ContextHoldoutTest: a rule wins over a custom assignment, so a
+  # differing custom write leaves a rule-won exposed decision pinned, as in
+  # the JavaScript SDK, and a late unit does not re-resolve it.
+  test "a differing custom write keeps a rule-won exposed covered decision pinned" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [0.0, 1.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", rules: @us_rule)
+        ),
+        units: %{}
+      )
+
+    :ok = Context.set_attribute(ctx, "country", "US")
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_custom_assignment(ctx, "exp_late", 0)
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_late", 1, unit: "user_id", assigned: false, rule_override: true)
+           ]
+  end
+
+  # Not in ContextHoldoutTest: the JavaScript SDK rebuilds an overridden
+  # assignment only when it is read, so an override set and cleared without
+  # a read leaves the exposed decision pinned.
+  test "an override set and cleared without a read keeps an exposed covered decision pinned" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+        ),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_overrides(ctx, %{"exp_late" => 0})
+    :ok = Context.set_override(ctx, "exp_late", nil)
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert Enum.map(published(ctx, ep), &{&1["name"], &1["variant"]}) == [
+             {"exp_late", 1},
+             {"exp_late", 1}
+           ]
+  end
+
+  # Not in ContextHoldoutTest: an override read replaces the cached decision
+  # (as the JavaScript SDK's overridden assignment does), so once cleared a
+  # late unit re-resolves it even though it was exposed before the override.
+  test "an override read lets a late unit re-resolve an exposed covered decision" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+        ),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_override(ctx, "exp_late", 1)
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_override(ctx, "exp_late", nil)
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 0
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_late", 1, unit: "user_id", full_on: true),
+             exposure(1, "exp_late", 1, unit: "user_id", assigned: false, overridden: true),
+             holdout_exposure(11, "holdout_late", 0, "user_id")
+           ]
   end
 
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
