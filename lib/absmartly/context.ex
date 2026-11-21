@@ -1522,7 +1522,7 @@ defmodule ABSmartly.Context do
       state =
         if state.custom_assignments != %{} and
              custom_stale?(state, name, Map.get(state.assignments, name)),
-           do: unpin_holdout_exposed(state, name),
+           do: rebuild_custom_pin(state, name),
            else: state
 
       cached = Map.get(state.assignments, name)
@@ -1565,6 +1565,17 @@ defmodule ABSmartly.Context do
           state
           | assignments: Map.put(state.assignments, name, %{cached | holdout_exposed: false})
         }
+
+      _ ->
+        state
+    end
+  end
+
+  defp rebuild_custom_pin(state, name) do
+    case Map.get(state.assignments, name) do
+      %Types.Assignment{holdout_key: [_ | _]} ->
+        state = unpin_holdout_exposed(state, name)
+        %{state | exposed_experiments: MapSet.delete(state.exposed_experiments, name)}
 
       _ ->
         state
@@ -1913,8 +1924,13 @@ defmodule ABSmartly.Context do
     # JavaScript SDK, so its replacement and holdouts are exposed.
     exposed =
       Enum.reduce(dropped, state.exposed_experiments, fn
-        {name, %Types.Assignment{holdout_exposed: true}}, acc -> MapSet.delete(acc, name)
-        _, acc -> acc
+        {name, %Types.Assignment{holdout_exposed: true}}, acc ->
+          if MapSet.member?(state.placeholder_exposed, name),
+            do: acc,
+            else: MapSet.delete(acc, name)
+
+        _, acc ->
+          acc
       end)
 
     %{state | assignments: assignments, exposed_experiments: exposed}
@@ -1947,8 +1963,12 @@ defmodule ABSmartly.Context do
 
   defp custom_stale?(state, name, assignment) do
     case Map.get(state.custom_assignments, name) do
-      nil -> false
-      custom -> custom != assignment.variant
+      nil ->
+        false
+
+      custom ->
+        served = if custom_applies?(custom, assignment), do: custom, else: assignment.variant
+        custom != served
     end
   end
 

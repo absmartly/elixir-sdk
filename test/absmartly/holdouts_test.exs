@@ -2123,6 +2123,77 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
+  test "repeated custom reads before a late unit expose the final decision and holdout" do
+    {ctx, ep} =
+      start(data([holdout(11, "h", {0, 0}, split: [0.0, 1.0])], covered(1, "e", [11])),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "e") == 0
+    :ok = Context.set_custom_assignment(ctx, "e", 1)
+    assert Context.treatment(ctx, "e") == 0
+    assert Context.treatment(ctx, "e") == 0
+    :ok = Context.set_unit(ctx, @unit_type, @uid)
+    assert Context.treatment(ctx, "e") == 1
+
+    assert published(ctx, ep) == [
+             exposure(1, "e", 0, assigned: false),
+             exposure(1, "e", 0, assigned: false),
+             exposure(1, "e", 0, assigned: false),
+             exposure(1, "e", 1, custom: true),
+             holdout_exposure(11, "h", 1)
+           ]
+  end
+
+  test "repeated custom reads followed by a flip back keep the exposed full-on decision pinned" do
+    {ctx, ep} =
+      start(
+        data([holdout(11, "h", {0, 0}, split: [1.0, 0.0])], covered(1, "e", [11], full_on: 1)),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "e") == 1
+    :ok = Context.set_custom_assignment(ctx, "e", 0)
+    assert Context.treatment(ctx, "e") == 1
+    assert Context.treatment(ctx, "e") == 1
+    :ok = Context.set_custom_assignment(ctx, "e", 1)
+    :ok = Context.set_unit(ctx, @unit_type, @uid)
+    assert Context.treatment(ctx, "e") == 1
+    assert published(ctx, ep) == List.duplicate(exposure(1, "e", 1, full_on: true), 4)
+  end
+
+  test "an unrelated custom assignment does not unpin an exposed covered decision" do
+    {ctx, ep} =
+      start(
+        data([holdout(11, "h", {0, 0}, split: [1.0, 0.0])], covered(1, "e", [11], full_on: 1)),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "e") == 1
+    :ok = Context.set_custom_assignment(ctx, "other", 0)
+    assert Context.treatment(ctx, "e") == 1
+    :ok = Context.set_unit(ctx, @unit_type, @uid)
+    assert Context.treatment(ctx, "e") == 1
+    assert published(ctx, ep) == [exposure(1, "e", 1, full_on: true)]
+  end
+
+  test "dropping an old covered decision preserves the newer placeholder exposure" do
+    payload =
+      data([holdout(11, "h", {0, 0}, split: [1.0, 0.0])], covered(1, "e", [11], full_on: 1))
+
+    {ctx, ep} = start(payload, units: %{})
+    assert Context.treatment(ctx, "e") == 1
+    :ok = Context.set_data(ctx, data([], []))
+    :ok = Context.set_custom_assignment(ctx, "e", 0)
+    assert Context.treatment(ctx, "e") == 0
+    :ok = Context.set_unit(ctx, @unit_type, @uid)
+    assert Context.treatment(ctx, "e") == 0
+    :ok = Context.set_data(ctx, payload)
+    assert Context.treatment(ctx, "e") == 0
+    placeholders = for %{"id" => 0} = e <- published(ctx, ep), do: e
+    assert placeholders == [exposure(0, "e", 0, unit: nil, assigned: false)]
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =
