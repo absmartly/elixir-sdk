@@ -189,10 +189,7 @@ defmodule ABSmartly.ForwardCompatTest do
     assert log.() == []
   end
 
-  # Runs `fun` (which returns the context) with a logger handler that keeps
-  # the warning-or-above events of this process and of the processes it
-  # starts (the context, from its init on). Returns a function reading them,
-  # which also removes the handler, and the context.
+  # Also captures the context's events from its init on.
   defp log_events_of_self_and_context(fun) do
     test_pid = self()
     {:ok, events} = Agent.start_link(fn -> [] end)

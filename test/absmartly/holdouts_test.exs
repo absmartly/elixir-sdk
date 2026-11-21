@@ -1505,6 +1505,60 @@ defmodule ABSmartly.HoldoutsTest do
     assert arms == [0, 0]
   end
 
+  # Not in ContextHoldoutTest: a read of an absent name publishes a
+  # placeholder exposure. When ready set_data/2 later installs the experiment
+  # covered, its first real read is a new decision and exposes with its
+  # holdouts, as after refresh/2 and in the JavaScript SDK.
+  test "an experiment arriving covered through set_data after an absent read exposes" do
+    {ctx, ep} = start(data([], []))
+
+    assert Context.treatment(ctx, "exp_arrives") == 0
+
+    :ok =
+      Context.set_data(
+        ctx,
+        data([holdout(11, "holdout_arrives", @holdout_b)], covered(1, "exp_arrives", [11]))
+      )
+
+    assert Context.treatment(ctx, "exp_arrives") == @normal_variant
+
+    assert published(ctx, ep) == [
+             exposure(0, "exp_arrives", 0, assigned: false, unit: nil),
+             exposure(1, "exp_arrives", @normal_variant),
+             holdout_exposure(11, "holdout_arrives", 1)
+           ]
+  end
+
+  test "an experiment arriving uncovered through set_data after an absent read keeps its exposure" do
+    {ctx, ep} = start(data([], []))
+
+    assert Context.treatment(ctx, "exp_arrives") == 0
+    :ok = Context.set_data(ctx, data([], experiment(1, "exp_arrives")))
+    assert Context.treatment(ctx, "exp_arrives") == @normal_variant
+
+    assert published(ctx, ep) == [exposure(0, "exp_arrives", 0, assigned: false, unit: nil)]
+  end
+
+  # Not in ContextHoldoutTest: an overridden read pins its holdout arms like
+  # any assignment, so while its override and covering holdouts are unchanged
+  # a sibling moving the arm cache to another iteration and back does not
+  # expose the pinned arm again.
+  test "an overridden peek keeps its pinned arm across an iteration round trip" do
+    holdouts = fn iteration -> [holdout(11, "holdout_ov", @holdout_a, iteration: iteration)] end
+    experiments = [covered(1, "exp_a", [11]), covered(2, "exp_b", [11])]
+    {ctx, ep} = start(data(holdouts.(1), experiments), overrides: %{"exp_a" => 1})
+
+    assert Context.treatment(ctx, "exp_b") == 0
+    assert Context.peek(ctx, "exp_a") == 1
+    refresh(ctx, data(holdouts.(2), experiments))
+    assert Context.treatment(ctx, "exp_b") == 0
+    refresh(ctx, data(holdouts.(1), experiments))
+    assert Context.treatment(ctx, "exp_a") == 1
+
+    arms = for %{"name" => "holdout_ov", "variant" => variant} <- published(ctx, ep), do: variant
+    assert arms == [0, 0]
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =
@@ -1972,6 +2026,7 @@ defmodule ABSmartly.HoldoutsTest do
       start(
         data([holdout(11, "holdout_a", @holdout_a)], [
           covered(1, "exp_var_key_suppressed", [11])
+          |> with_config(0, ~s({"shared":"suppressed_control"}))
           |> with_config(1, ~s({"shared":"from_suppressed"})),
           experiment(2, "exp_var_key_assigned") |> with_config(1, ~s({"shared":"from_assigned"}))
         ])

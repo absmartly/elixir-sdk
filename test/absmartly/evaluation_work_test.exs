@@ -137,6 +137,36 @@ defmodule ABSmartly.EvaluationWorkTest do
   @build {ABSmartly.Context, :build_evaluation_vars, 1}
   @rules {ABSmartly.Matcher, :evaluate_rules, 3}
 
+  test "a holdout iteration change re-resolves with one evaluation map per attribute change" do
+    names = Enum.map(1..40, &"covered_#{&1}")
+
+    holdout = fn iteration ->
+      %{
+        "id" => 11,
+        "name" => "h",
+        "iteration" => iteration,
+        "seedHi" => 0,
+        "seedLo" => 0,
+        "split" => [0.0, 1.0]
+      }
+    end
+
+    experiments =
+      Enum.map(names, &(experiment(&1, rules: rules("r", 1)) |> Map.put("holdoutIds", [11])))
+
+    ctx = start_context(experiments, many_attributes(500), [holdout.(1)])
+    Enum.each(names, &Context.treatment(ctx, &1))
+
+    counts =
+      count_calls(ctx, [@build], fn ->
+        :ok = Context.set_attribute(ctx, "country", "US")
+        :ok = Context.refresh(ctx, %{"experiments" => experiments, "holdouts" => [holdout.(2)]})
+        Enum.each(names, &Context.treatment(ctx, &1))
+      end)
+
+    assert counts == %{@build => 1}
+  end
+
   test "experiments without rules or an audience never build the evaluation map" do
     names = Enum.map(1..20, &"plain_#{&1}")
     ctx = start_context(Enum.map(names, &experiment/1), many_attributes(200))

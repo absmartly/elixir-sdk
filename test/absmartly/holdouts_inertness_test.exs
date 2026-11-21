@@ -1,8 +1,8 @@
 defmodule ABSmartly.HoldoutsInertnessTest do
   @moduledoc """
   Without holdouts nothing changes: variants, peeks, variable values and the
-  published body (exposures, goals, attributes, units) are byte-identical to
-  those recorded from main before holdouts were added
+  published body (exposures, goals, attributes, units, with timestamps
+  normalized) are equal to those recorded from main before holdouts were added
   (`test/fixtures/publish_without_holdouts.json`), for a sweep of unit ids
   over experiments with rules, audiences, full-on, traffic and several unit
   types. An empty `holdouts` list, and holdouts no experiment refers to, are
@@ -84,7 +84,7 @@ defmodule ABSmartly.HoldoutsInertnessTest do
     }
   end
 
-  # Byte-level: the JSON the default publisher would send.
+  # Round-tripped through JSON, as the default publisher would send it.
   defp sessions(payload) do
     Enum.map(@uids, &(payload |> session(&1) |> Jason.encode!() |> Jason.decode!()))
   end

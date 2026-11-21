@@ -58,10 +58,10 @@ defmodule ABSmartly.Context do
     # `exposed` flag. Each data install keeps only the arms still reachable
     # from a pinned assignment or the arm cache, so it stays bounded.
     holdout_exposed: MapSet.new(),
-    # The covering holdouts an override was last read with, by experiment
-    # name: overrides are not cached, so this stands in for the identity the
-    # JavaScript SDK pins in an overridden assignment.
-    override_holdout_keys: %{}
+    # The variant, covering holdouts and arms an override was last read with,
+    # by experiment name: overrides are not cached, so this stands in for the
+    # overridden assignment the JavaScript SDK pins.
+    override_snapshots: %{}
   ]
 
   def child_spec(opts) do
@@ -1476,25 +1476,16 @@ defmodule ABSmartly.Context do
 
     if override != nil do
       # Resolved for overrides too, as in the JavaScript SDK's `_assign`: the
-      # holdouts still expose, from the arms fixed at this read.
-      {holdout_arms, state} = holdout_arms(state, experiment)
-      state = track_override_holdouts(state, name, holdout_key(state, experiment))
+      # holdouts still expose, from the arms pinned by the override's read.
+      key = holdout_key(state, experiment)
+      {holdout_arms, state} = override_holdout_arms(state, experiment, override, key)
 
-      assignment = %Types.Assignment{
-        id: experiment.id,
-        iteration: experiment.iteration,
-        full_on_variant: experiment.full_on_variant,
-        traffic_split: experiment.traffic_split,
-        variant: override,
-        assigned: false,
-        overridden: true,
-        eligible: true,
-        full_on: false,
-        custom: false,
-        audience_mismatch: false,
-        rule_override: false,
-        holdout_arms: holdout_arms,
-        holdout_key: holdout_key(state, experiment)
+      assignment = %{
+        base_assignment(experiment)
+        | variant: override,
+          overridden: true,
+          holdout_arms: holdout_arms,
+          holdout_key: key
       }
 
       {assignment, state}
@@ -1509,7 +1500,17 @@ defmodule ABSmartly.Context do
         else
           state = cache_evaluation_vars(state, experiment)
           {assignment, state} = assign_variant(state, experiment)
-          {assignment, %{state | assignments: Map.put(state.assignments, name, assignment)}}
+          state = %{state | assignments: Map.put(state.assignments, name, assignment)}
+
+          # A name read while absent from the data (set_data/2 keeps that
+          # exposure) is exposed again once it resolves covered, so its
+          # holdouts are not lost.
+          state =
+            if assignment.holdout_key == nil,
+              do: state,
+              else: %{state | exposed_experiments: MapSet.delete(state.exposed_experiments, name)}
+
+          {assignment, state}
         end
 
       custom = Map.get(state.custom_assignments, name)
@@ -1552,7 +1553,7 @@ defmodule ABSmartly.Context do
 
     cond do
       cached.holdout_key != holdout_key(state, experiment) ->
-        reassign(state, experiment, name)
+        reassign(cache_evaluation_vars(state, experiment), experiment, name)
 
       rules_changed and experiment.assignment_rules == nil and
           (cached.rule_variant != nil or cached.rule_override) ->
@@ -1742,8 +1743,13 @@ defmodule ABSmartly.Context do
             {_holdout, %{ref: ref}} <- arms,
             do: ref
 
+      overridden =
+        for {_name, {_variant, _key, [_ | _] = arms}} <- state.override_snapshots,
+            {_holdout, %{ref: ref}} <- arms,
+            do: ref
+
       cached = for {_key, %{ref: ref}} <- state.holdout_assignments, do: ref
-      reachable = MapSet.new(pinned ++ cached)
+      reachable = MapSet.new(pinned ++ overridden ++ cached)
       %{state | holdout_exposed: MapSet.intersection(state.holdout_exposed, reachable)}
     end
   end
@@ -2075,39 +2081,42 @@ defmodule ABSmartly.Context do
   defp holdout_key(state, experiment),
     do: Map.get(state.experiment_holdout_keys, experiment.name)
 
-  defp holdout_keys(experiment_holdouts) when experiment_holdouts == %{}, do: %{}
-
   defp holdout_keys(experiment_holdouts),
     do:
       Map.new(experiment_holdouts, fn {name, holdouts} ->
         {name, Enum.map(holdouts, &{&1.id, &1.iteration})}
       end)
 
-  # An override read with other covering holdouts than its last read is
-  # exposed again, like the JavaScript SDK's rebuilt overridden assignment.
-  defp track_override_holdouts(state, name, key) do
-    case Map.fetch(state.override_holdout_keys, name) do
-      {:ok, ^key} ->
-        state
+  # Like the JavaScript SDK's pinned overridden assignment, an override read
+  # again with the same variant and covering holdouts reuses its arms (unless
+  # one waited for a missing unit). Other covering holdouts than its last read,
+  # including the first ones after a read of its absent experiment, expose it
+  # again.
+  defp override_holdout_arms(state, experiment, variant, key) do
+    name = experiment.name
 
-      {:ok, _other} ->
-        %{
-          state
-          | override_holdout_keys: Map.put(state.override_holdout_keys, name, key),
-            exposed_experiments: MapSet.delete(state.exposed_experiments, name)
-        }
+    case Map.get(state.override_snapshots, name) do
+      {^variant, ^key, arms} when is_list(arms) ->
+        if Enum.any?(arms, &match?({_name, nil}, &1)),
+          do: snapshot_override(state, experiment, variant, key),
+          else: {arms, state}
 
-      :error when key == nil ->
-        %{state | override_holdout_keys: Map.put(state.override_holdout_keys, name, key)}
+      {^variant, ^key, nil} ->
+        {nil, state}
 
-      # Read before while its experiment was absent, so without holdouts.
-      :error ->
-        %{
-          state
-          | override_holdout_keys: Map.put(state.override_holdout_keys, name, key),
-            exposed_experiments: MapSet.delete(state.exposed_experiments, name)
-        }
+      nil when key == nil ->
+        snapshot_override(state, experiment, variant, key)
+
+      _changed ->
+        state = %{state | exposed_experiments: MapSet.delete(state.exposed_experiments, name)}
+        snapshot_override(state, experiment, variant, key)
     end
+  end
+
+  defp snapshot_override(state, experiment, variant, key) do
+    {arms, state} = holdout_arms(state, experiment)
+    snapshots = Map.put(state.override_snapshots, experiment.name, {variant, key, arms})
+    {arms, %{state | override_snapshots: snapshots}}
   end
 
   # Assignments are sticky across a refresh, as in the JavaScript SDK's
