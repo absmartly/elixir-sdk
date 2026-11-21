@@ -150,6 +150,19 @@ defmodule ABSmartly.EvaluationWorkTest do
     assert counts == %{lookup => 0}
   end
 
+  test "normal reads without overrides leave the override snapshots untouched" do
+    ctx = start_context([experiment("plain")], [])
+    assert Context.peek(ctx, "plain") in [0, 1]
+    delete = {:maps, :remove, 2}
+
+    counts =
+      count_calls(ctx, [delete], fn ->
+        Enum.each(1..10, fn _ -> Context.peek(ctx, "plain") end)
+      end)
+
+    assert counts == %{delete => 0}
+  end
+
   test "a holdout iteration change re-resolves with one evaluation map per attribute change" do
     names = Enum.map(1..40, &"covered_#{&1}")
 
@@ -167,17 +180,21 @@ defmodule ABSmartly.EvaluationWorkTest do
     experiments =
       Enum.map(names, &(experiment(&1, rules: rules("r", 1)) |> Map.put("holdoutIds", [11])))
 
-    ctx = start_context(experiments, many_attributes(500), [holdout.(1)])
-    Enum.each(names, &Context.treatment(ctx, &1))
+    attributes = [%{"name" => "country", "value" => "US"} | many_attributes(500)]
+    ctx = start_context(experiments, attributes, [holdout.(1)])
+    Enum.each(names, &assert(Context.treatment(ctx, &1) == 1))
+    exposed = Context.pending(ctx)
 
     counts =
       count_calls(ctx, [@build], fn ->
-        :ok = Context.set_attribute(ctx, "country", "US")
+        # Leaves every rule outcome unchanged: only the holdout bump re-resolves.
+        :ok = Context.set_attribute(ctx, "unrelated", true)
         :ok = Context.refresh(ctx, %{"experiments" => experiments, "holdouts" => [holdout.(2)]})
-        Enum.each(names, &Context.treatment(ctx, &1))
+        Enum.each(names, &assert(Context.treatment(ctx, &1) == 1))
       end)
 
     assert counts == %{@build => 1}
+    assert Context.pending(ctx) - exposed == 41
   end
 
   test "experiments without rules or an audience never build the evaluation map" do

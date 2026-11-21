@@ -1576,6 +1576,102 @@ defmodule ABSmartly.HoldoutsTest do
     assert arms == [0, 0]
   end
 
+  # Not in ContextHoldoutTest: a placeholder exposure of a name read while
+  # absent never stands in for the holdout exposures of the covered
+  # experiment it later resolves to, even with a decision cached before.
+  test "a restored covered experiment exposes its holdouts after a placeholder read" do
+    payload = data([holdout(11, "holdout_restore", @holdout_b)], covered(1, "exp_restore", [11]))
+    {ctx, ep} = start(payload)
+
+    assert Context.peek(ctx, "exp_restore") == @normal_variant
+    :ok = Context.set_data(ctx, data([], []))
+    assert Context.treatment(ctx, "exp_restore") == 0
+    :ok = Context.set_data(ctx, payload)
+    assert Context.treatment(ctx, "exp_restore") == @normal_variant
+    assert Context.treatment(ctx, "exp_restore") == @normal_variant
+
+    assert published(ctx, ep) == [
+             exposure(0, "exp_restore", 0, assigned: false, unit: nil),
+             exposure(1, "exp_restore", @normal_variant),
+             holdout_exposure(11, "holdout_restore", 1)
+           ]
+  end
+
+  test "an exposed covered experiment read while absent is not exposed again when restored" do
+    payload = data([holdout(11, "holdout_restore", @holdout_b)], covered(1, "exp_restore", [11]))
+    {ctx, ep} = start(payload)
+
+    assert Context.treatment(ctx, "exp_restore") == @normal_variant
+    :ok = Context.set_data(ctx, data([], []))
+    assert Context.treatment(ctx, "exp_restore") == 0
+    :ok = Context.set_data(ctx, payload)
+    assert Context.treatment(ctx, "exp_restore") == @normal_variant
+
+    assert published(ctx, ep) == [
+             exposure(1, "exp_restore", @normal_variant),
+             holdout_exposure(11, "holdout_restore", 1)
+           ]
+  end
+
+  test "a restored overridden experiment exposes its holdouts after a placeholder read" do
+    payload = data([holdout(11, "holdout_restore", @holdout_b)], covered(1, "exp_restore", [11]))
+    {ctx, ep} = start(payload, overrides: %{"exp_restore" => 1})
+
+    assert Context.peek(ctx, "exp_restore") == 1
+    :ok = Context.set_data(ctx, data([], []))
+    assert Context.treatment(ctx, "exp_restore") == 1
+    :ok = Context.set_data(ctx, payload)
+    assert Context.treatment(ctx, "exp_restore") == 1
+    assert Context.treatment(ctx, "exp_restore") == 1
+
+    assert published(ctx, ep) == [
+             exposure(0, "exp_restore", 1, assigned: false, overridden: true, unit: nil),
+             exposure(1, "exp_restore", 1, assigned: false, overridden: true),
+             holdout_exposure(11, "holdout_restore", 1)
+           ]
+  end
+
+  # Not in ContextHoldoutTest: a normal decision supersedes the arms an
+  # override pinned, so restoring the override later uses the current arm.
+  test "an override restored after a normal treatment does not revive its old arm" do
+    holdouts = fn iteration, seeds ->
+      [holdout(11, "holdout_sup", seeds, iteration: iteration)]
+    end
+
+    experiments = [covered(1, "exp_a", [11]), covered(2, "exp_b", [11])]
+    {ctx, ep} = start(data(holdouts.(1, @holdout_a), experiments), overrides: %{"exp_a" => 1})
+
+    assert Context.peek(ctx, "exp_a") == 1
+    :ok = Context.set_override(ctx, "exp_a", nil)
+    refresh(ctx, data(holdouts.(2, @holdout_b), experiments))
+    assert Context.treatment(ctx, "exp_a") == @normal_variant
+    refresh(ctx, data(holdouts.(1, @holdout_a), experiments))
+    assert Context.treatment(ctx, "exp_b") == 0
+    :ok = Context.set_override(ctx, "exp_a", 1)
+    assert Context.treatment(ctx, "exp_a") == 1
+
+    arms = for %{"name" => "holdout_sup", "variant" => variant} <- published(ctx, ep), do: variant
+    assert arms == [1, 0]
+  end
+
+  # Not in ContextHoldoutTest: probabilities outside [0, 1] (such as
+  # `[-1e308, -1e308]`, whose sum overflows) make a holdout invalid, so it is
+  # ignored and the covered experiment still assigns.
+  test "a holdout with probabilities outside 0..1 is ignored" do
+    for split <- [[-1.0e308, -1.0e308], [1.0e308, 1.0e308], [-0.5, 1.5]] do
+      {ctx, ep} =
+        start(
+          data(
+            [holdout(11, "holdout_bad", @holdout_a, split: split)],
+            covered(1, "exp_bad", [11])
+          )
+        )
+
+      assert Context.treatment(ctx, "exp_bad") == @normal_variant
+      assert published(ctx, ep) == [exposure(1, "exp_bad", @normal_variant)]
+    end
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =

@@ -241,9 +241,16 @@ defmodule ABSmartly.Types do
         iteration: integer_or(map["iteration"], 0),
         seed_hi: integer_or(map["seedHi"], 0),
         seed_lo: integer_or(map["seedLo"], 0),
-        split: if(is_list(split) and Enum.all?(split, &is_number/1), do: split, else: [])
+        split: if(valid_split?(split), do: split, else: [])
       }
     end
+
+    # Probabilities outside [0, 1] (whose sum can even overflow) make the
+    # holdout invalid; it is then dropped like one with an empty split.
+    defp valid_split?(split) when is_list(split),
+      do: Enum.all?(split, &(is_number(&1) and &1 >= 0 and &1 <= 1))
+
+    defp valid_split?(_split), do: false
 
     # An integer, or an integral float (`11.0`), as the integer; the
     # JavaScript SDK makes no difference between `11.0` and `11`.

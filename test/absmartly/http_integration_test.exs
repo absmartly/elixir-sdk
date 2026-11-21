@@ -134,7 +134,6 @@ defmodule ABSmartly.HTTPIntegrationTest do
     assert hd(body["goals"])["name"] == "payment"
   end
 
-  # Each data-fetching path must install the holdouts.
   @holdout_get_body @get_body
                     |> Jason.decode!()
                     |> update_in(["experiments", Access.at(0)], &Map.put(&1, "holdoutIds", [11]))
