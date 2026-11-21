@@ -1517,6 +1517,12 @@ defmodule ABSmartly.Context do
       # Overrides expose their holdouts too (see override_holdout_arms/4).
       state = unpin_holdout_exposed(state, name)
       key = holdout_key(state, experiment)
+
+      state =
+        if key != nil or match?(%{holdout_key: [_ | _]}, Map.get(state.assignments, name)),
+          do: %{state | assignments: Map.delete(state.assignments, name)},
+          else: state
+
       {holdout_arms, state} = override_holdout_arms(state, experiment, override, key)
 
       assignment = %{
@@ -2225,9 +2231,10 @@ defmodule ABSmartly.Context do
 
     case Map.get(state.override_snapshots, name) do
       {^variant, ^key, arms} when is_list(arms) ->
-        if Enum.any?(arms, &match?({_name, nil}, &1)),
-          do: snapshot_override(state, experiment, variant, key),
-          else: {arms, state}
+        if Enum.any?(arms, &match?({_name, nil}, &1)) and
+             not MapSet.member?(state.exposed_experiments, name),
+           do: snapshot_override(state, experiment, variant, key),
+           else: {arms, state}
 
       {^variant, ^key, nil} ->
         {nil, state}
