@@ -1,0 +1,2156 @@
+{
+ "source": "Recorded from elixir-sdk main ea4fecb (before holdouts) by running the session in ABSmartly.HoldoutsInertnessTest over `payload`; timestamps zeroed.",
+ "payload": {
+  "experiments": [
+   {
+    "id": 1,
+    "name": "exp_plain",
+    "iteration": 1,
+    "unitType": "session_id",
+    "seedHi": 3603516,
+    "seedLo": 233373849,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0,
+     1
+    ],
+    "fullOnVariant": 0,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": null,
+    "audienceStrict": false,
+    "customFieldValues": null
+   },
+   {
+    "id": 2,
+    "name": "exp_user",
+    "iteration": 1,
+    "unitType": "user_id",
+    "seedHi": 3603517,
+    "seedLo": 233373848,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0,
+     1
+    ],
+    "fullOnVariant": 0,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": null,
+    "audienceStrict": false,
+    "customFieldValues": null
+   },
+   {
+    "id": 3,
+    "name": "exp_fullon",
+    "iteration": 1,
+    "unitType": "session_id",
+    "seedHi": 3603518,
+    "seedLo": 233373847,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0,
+     1
+    ],
+    "fullOnVariant": 2,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": null,
+    "audienceStrict": false,
+    "customFieldValues": null
+   },
+   {
+    "id": 4,
+    "name": "exp_traffic",
+    "iteration": 1,
+    "unitType": "session_id",
+    "seedHi": 3603519,
+    "seedLo": 233373846,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0.5,
+     0.5
+    ],
+    "fullOnVariant": 0,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": null,
+    "audienceStrict": false,
+    "customFieldValues": null
+   },
+   {
+    "id": 5,
+    "name": "exp_aud",
+    "iteration": 1,
+    "unitType": "session_id",
+    "seedHi": 3603520,
+    "seedLo": 233373845,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0,
+     1
+    ],
+    "fullOnVariant": 0,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": "{\"filter\":[{\"gte\":[{\"var\":\"age\"},{\"value\":40}]}]}",
+    "audienceStrict": true,
+    "customFieldValues": null
+   },
+   {
+    "id": 6,
+    "name": "exp_aud_ok",
+    "iteration": 1,
+    "unitType": "session_id",
+    "seedHi": 3603521,
+    "seedLo": 233373844,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0,
+     1
+    ],
+    "fullOnVariant": 0,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": "{\"filter\":[{\"gte\":[{\"var\":\"age\"},{\"value\":20}]}]}",
+    "audienceStrict": false,
+    "customFieldValues": null
+   },
+   {
+    "id": 7,
+    "name": "exp_rule",
+    "iteration": 1,
+    "unitType": "session_id",
+    "seedHi": 3603522,
+    "seedLo": 233373843,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0,
+     1
+    ],
+    "fullOnVariant": 0,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": null,
+    "audienceStrict": false,
+    "customFieldValues": null,
+    "assignmentRules": "{\"rules\":[{\"name\":\"us\",\"type\":\"assign\",\"variant\":2,\"conditions\":{\"eq\":[{\"var\":\"country\"},{\"value\":\"US\"}]}}]}"
+   },
+   {
+    "id": 8,
+    "name": "exp_other_unit",
+    "iteration": 1,
+    "unitType": "device_id",
+    "seedHi": 3603523,
+    "seedLo": 233373842,
+    "split": [
+     0.34,
+     0.33,
+     0.33
+    ],
+    "trafficSeedHi": 449867249,
+    "trafficSeedLo": 455443629,
+    "trafficSplit": [
+     0,
+     1
+    ],
+    "fullOnVariant": 0,
+    "applications": [
+     {
+      "name": "website"
+     }
+    ],
+    "variants": [
+     {
+      "name": "A",
+      "config": null
+     },
+     {
+      "name": "B",
+      "config": "{\"color\":\"blue\",\"size\":2}"
+     },
+     {
+      "name": "C",
+      "config": "{\"color\":\"red\"}"
+     }
+    ],
+    "audience": null,
+    "audienceStrict": false,
+    "customFieldValues": null
+   }
+  ]
+ },
+ "sessions": [
+  {
+   "peeks": [
+    1,
+    1,
+    2,
+    0,
+    0,
+    0,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 1
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 1
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": false,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "pAE3a1i5Drs5mKRNq56adA"
+     },
+     {
+      "type": "user_id",
+      "uid": "odnyLTKJS7I9LKcX6nZAoQ"
+     }
+    ]
+   },
+   "pvars": [
+    "blue",
+    2
+   ],
+   "treatments": [
+    1,
+    1,
+    2,
+    0,
+    0,
+    0,
+    2,
+    0
+   ],
+   "uid": "\"e791e240fcd3df7d238cfc285f475e8152fcc0ec\"",
+   "vars": [
+    "blue",
+    2,
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    0,
+    2,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": false,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "XPMq_jggnplt8uEw2p--2w"
+     },
+     {
+      "type": "user_id",
+      "uid": "FpBIZ4liyiiNT1AYMPlTMg"
+     }
+    ]
+   },
+   "pvars": [
+    "red",
+    "dflt"
+   ],
+   "treatments": [
+    0,
+    2,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "uid": "\" padded \"",
+   "vars": [
+    "red",
+    "dflt",
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    1,
+    0,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 1
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "1hMyBfmH6V5x2hanKuXtiA"
+     },
+     {
+      "type": "user_id",
+      "uid": "0EDu9g5aQ3PP0lYnBNElNw"
+     }
+    ]
+   },
+   "pvars": [
+    "blue",
+    2
+   ],
+   "treatments": [
+    1,
+    0,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "uid": "\"façade\"",
+   "vars": [
+    "blue",
+    2,
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    2,
+    2,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": false,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "ABEK-LQ5PvP3LFC-WzMr7A"
+     },
+     {
+      "type": "user_id",
+      "uid": "nUC54mRIh2Wtx-oH98DhvQ"
+     }
+    ]
+   },
+   "pvars": [
+    "red",
+    "dflt"
+   ],
+   "treatments": [
+    2,
+    2,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "uid": "\"日本語\"",
+   "vars": [
+    "red",
+    "dflt",
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    1,
+    0,
+    2,
+    0,
+    0,
+    0,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 1
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": false,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "klY-DavCjvE_aGJKlzEq1A"
+     },
+     {
+      "type": "user_id",
+      "uid": "jg2d6_tRpqXPeNW0nAovXA"
+     }
+    ]
+   },
+   "pvars": [
+    "blue",
+    2
+   ],
+   "treatments": [
+    1,
+    0,
+    2,
+    0,
+    0,
+    0,
+    2,
+    0
+   ],
+   "uid": "\"🚀emoji\"",
+   "vars": [
+    "blue",
+    2,
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    2,
+    2,
+    2,
+    1,
+    0,
+    2,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 1
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "z80ghJXVZe9m59_5-Ydk2g"
+     },
+     {
+      "type": "user_id",
+      "uid": "N6KkvRK6cFp5njhALUB9Dg"
+     }
+    ]
+   },
+   "pvars": [
+    "red",
+    2
+   ],
+   "treatments": [
+    2,
+    2,
+    2,
+    1,
+    0,
+    2,
+    2,
+    0
+   ],
+   "uid": "\"0\"",
+   "vars": [
+    "red",
+    2,
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    2,
+    2,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": false,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "jfy4n9hiDj5_tqA6U_MH3A"
+     },
+     {
+      "type": "user_id",
+      "uid": "FcBExtV6PjGACKTHhR9M0A"
+     }
+    ]
+   },
+   "pvars": [
+    "red",
+    "dflt"
+   ],
+   "treatments": [
+    2,
+    2,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "uid": "-42",
+   "vars": [
+    "red",
+    "dflt",
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    2,
+    1,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 1
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "OngwCmjeKhIQyeNybDy4eg"
+     },
+     {
+      "type": "user_id",
+      "uid": "cW_8J_kg5SgGe896rJfcag"
+     }
+    ]
+   },
+   "pvars": [
+    "red",
+    2
+   ],
+   "treatments": [
+    2,
+    1,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "uid": "9007199254740993",
+   "vars": [
+    "red",
+    2,
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    0,
+    1,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 1
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": false,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "BpBZt--EDwx0qBTskje27A"
+     },
+     {
+      "type": "user_id",
+      "uid": "E2PV_i1giwsAzrl_PwWnhg"
+     }
+    ]
+   },
+   "pvars": [
+    "blue",
+    2
+   ],
+   "treatments": [
+    0,
+    1,
+    2,
+    0,
+    0,
+    2,
+    2,
+    0
+   ],
+   "uid": "125.75",
+   "vars": [
+    "blue",
+    2,
+    "dflt"
+   ]
+  },
+  {
+   "peeks": [
+    2,
+    2,
+    2,
+    1,
+    0,
+    1,
+    2,
+    0
+   ],
+   "publish": {
+    "attributes": [
+     {
+      "name": "country",
+      "setAt": 0,
+      "value": "US"
+     },
+     {
+      "name": "age",
+      "setAt": 0,
+      "value": 30
+     }
+    ],
+    "exposures": [
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 1,
+      "name": "exp_plain",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 2,
+      "name": "exp_user",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "user_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": true,
+      "id": 3,
+      "name": "exp_fullon",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 4,
+      "name": "exp_traffic",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 1
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": true,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 5,
+      "name": "exp_aud",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 0
+     },
+     {
+      "assigned": true,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 6,
+      "name": "exp_aud_ok",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "session_id",
+      "variant": 1
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 7,
+      "name": "exp_rule",
+      "overridden": false,
+      "ruleOverride": true,
+      "unit": "session_id",
+      "variant": 2
+     },
+     {
+      "assigned": false,
+      "audienceMismatch": false,
+      "custom": false,
+      "eligible": true,
+      "exposedAt": 0,
+      "fullOn": false,
+      "id": 8,
+      "name": "exp_other_unit",
+      "overridden": false,
+      "ruleOverride": false,
+      "unit": "device_id",
+      "variant": 0
+     }
+    ],
+    "goals": [
+     {
+      "achievedAt": 0,
+      "name": "goal",
+      "properties": {
+       "amount": 1
+      }
+     }
+    ],
+    "hashed": true,
+    "publishedAt": 0,
+    "units": [
+     {
+      "type": "session_id",
+      "uid": "gnzLDuqKcGxMNKFokfhOew"
+     },
+     {
+      "type": "user_id",
+      "uid": "F7rNPzvL6J69zMO41snM0Q"
+     }
+    ]
+   },
+   "pvars": [
+    "red",
+    2
+   ],
+   "treatments": [
+    2,
+    2,
+    2,
+    1,
+    0,
+    1,
+    2,
+    0
+   ],
+   "uid": "12345",
+   "vars": [
+    "red",
+    2,
+    "dflt"
+   ]
+  }
+ ]
+}

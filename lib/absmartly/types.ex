@@ -58,7 +58,9 @@ defmodule ABSmartly.Types do
       :audience_strict,
       :audience,
       :assignment_rules,
-      :custom_field_values
+      :custom_field_values,
+      :holdout_ids,
+      :holdout_type
     ]
 
     @doc """
@@ -98,9 +100,24 @@ defmodule ABSmartly.Types do
         audience_strict: map["audienceStrict"] || false,
         audience: map["audience"],
         assignment_rules: assignment_rules(map),
-        custom_field_values: map["customFieldValues"]
+        custom_field_values: map["customFieldValues"],
+        holdout_ids: holdout_ids(map["holdoutIds"]),
+        holdout_type: if(is_binary(map["holdoutType"]), do: map["holdoutType"])
       }
     end
+
+    # The ids of the holdouts covering this experiment. Like an unknown field,
+    # a value that is not a list of integers never fails the context: anything
+    # else in it is ignored. An integral float (`11.0`) is the integer, as in
+    # the JavaScript SDK.
+    defp holdout_ids(ids) when is_list(ids) do
+      case for(id <- ids, id = ABSmartly.Types.HoldoutData.integer_id(id), do: id) do
+        [] -> nil
+        ids -> ids
+      end
+    end
+
+    defp holdout_ids(_), do: nil
 
     # The API sends `assignmentRules` as a JSON string. Anything else (an
     # object, a list, a number) is ignored for this experiment only, like the
@@ -177,11 +194,87 @@ defmodule ABSmartly.Types do
     defp check!(_, msg), do: raise(ArgumentError, "Invalid experiment data: " <> msg)
   end
 
+  defmodule HoldoutData do
+    @moduledoc """
+    A holdout from the API's `holdouts` list.
+
+    An experiment is covered by the holdouts listed in its `holdoutIds`. A
+    unit in a holdout's arm 0 is held out of every experiment it covers; with
+    a three-arm `split`, arm 1 holds it out of the covered experiments that
+    are not full-on.
+    """
+    defstruct [
+      :id,
+      :name,
+      :unit_type,
+      :holdout_type,
+      iteration: 0,
+      seed_hi: 0,
+      seed_lo: 0,
+      split: []
+    ]
+
+    @doc """
+    Create HoldoutData from an entry of the API's `holdouts` list.
+
+    Returns `nil` for an entry that is not an object with an integer `id`.
+    Other fields with an unexpected type get their default, and unknown fields
+    are ignored, so a malformed holdout never fails the context.
+    """
+    def from_map(%{"id" => id} = map) do
+      case integer_id(id) do
+        nil -> nil
+        id -> from_map(map, id)
+      end
+    end
+
+    def from_map(_), do: nil
+
+    defp from_map(map, id) do
+      split = map["split"]
+
+      %__MODULE__{
+        id: id,
+        name: map["name"],
+        unit_type: if(is_binary(map["unitType"]), do: map["unitType"]),
+        holdout_type: if(is_binary(map["holdoutType"]), do: map["holdoutType"]),
+        iteration: integer_or(map["iteration"], 0),
+        seed_hi: integer_or(map["seedHi"], 0),
+        seed_lo: integer_or(map["seedLo"], 0),
+        split: if(is_list(split) and Enum.all?(split, &is_number/1), do: split, else: [])
+      }
+    end
+
+    # Probabilities outside [0, 1] (whose sum can even overflow) make the
+    # holdout invalid; installing the context data drops it like one with an
+    # empty split, for decoded and typed data alike.
+    @doc false
+    def valid_split?(split) when is_list(split),
+      do: Enum.all?(split, &(is_number(&1) and &1 >= 0 and &1 <= 1))
+
+    def valid_split?(_split), do: false
+
+    # An integer, or an integral float (`11.0`), as the integer; the
+    # JavaScript SDK makes no difference between `11.0` and `11`.
+    @doc false
+    def integer_id(id) when is_integer(id), do: id
+    def integer_id(id) when is_float(id) and id == trunc(id), do: trunc(id)
+    def integer_id(_id), do: nil
+
+    # An integral float (`13.0`) is the integer, as in the JavaScript SDK.
+    defp integer_or(value, default) do
+      case integer_id(value) do
+        nil -> default
+        integer -> integer
+      end
+    end
+  end
+
   defmodule ContextData do
     @moduledoc """
-    Context data containing experiments.
+    Context data containing experiments and the holdouts covering them.
     """
-    defstruct experiments: []
+    defstruct experiments: [], holdouts: []
 
     @doc """
     Create ContextData from API JSON.
@@ -191,12 +284,18 @@ defmodule ABSmartly.Types do
         (map["experiments"] || [])
         |> Enum.map(&ExperimentData.from_map/1)
 
-      %__MODULE__{experiments: experiments}
+      %__MODULE__{experiments: experiments, holdouts: holdouts(map["holdouts"])}
     end
 
     def from_map(other) do
       raise ArgumentError, "Expected context data to be a map, got: #{inspect(other)}"
     end
+
+    defp holdouts(holdouts) when is_list(holdouts) do
+      for entry <- holdouts, holdout = HoldoutData.from_map(entry), do: holdout
+    end
+
+    defp holdouts(_), do: []
   end
 
   defmodule Assignment do
@@ -219,7 +318,10 @@ defmodule ABSmartly.Types do
       rule_variant: nil,
       rule_missing_unit: false,
       rule_key: nil,
-      audience_match_seq: 0
+      audience_match_seq: 0,
+      suppressed: false,
+      holdout_arms: nil,
+      holdout_key: nil
     ]
   end
 

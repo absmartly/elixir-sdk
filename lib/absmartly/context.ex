@@ -43,7 +43,27 @@ defmodule ABSmartly.Context do
     attrs_seq: 0,
     pending_waiters: [],
     exposure_count: 0,
-    goal_count: 0
+    goal_count: 0,
+    # The holdouts covering each covered experiment, by experiment name:
+    # `{key, holdouts}`, the HoldoutData sorted by id and their ids and
+    # iterations, precomputed so a cached read compares without allocating.
+    # Experiments without coverage have no entry, so a payload without
+    # holdouts costs nothing.
+    experiment_holdouts: %{},
+    # A unit's arm in a holdout, by {holdout id, unit type}, valid while the
+    # holdout's iteration is unchanged.
+    holdout_assignments: %{},
+    # The refs of the exposed arms, like the JavaScript SDK's per-arm
+    # `exposed` flag. Each data install keeps only the arms still reachable
+    # from a pinned assignment or the arm cache, so it stays bounded.
+    holdout_exposed: MapSet.new(),
+    # The variant, covering holdouts and arms an override was last read with,
+    # by experiment name: overrides are not cached, so this stands in for the
+    # overridden assignment the JavaScript SDK pins.
+    override_snapshots: %{},
+    # Names exposed only by a read while absent from the data: that
+    # placeholder never stands in for a covered experiment's exposures.
+    placeholder_exposed: MapSet.new()
   ]
 
   def child_spec(opts) do
@@ -432,6 +452,8 @@ defmodule ABSmartly.Context do
     {var_index, exp_index, aud_cache, rules_cache} =
       indexes || build_indexes(context_data.experiments)
 
+    experiment_holdouts = build_holdout_index(context_data)
+
     state = %{
       state
       | data: context_data,
@@ -439,8 +461,11 @@ defmodule ABSmartly.Context do
         variable_index: var_index,
         experiment_index: exp_index,
         audience_cache: aud_cache,
-        rules_cache: rules_cache
+        rules_cache: rules_cache,
+        experiment_holdouts: experiment_holdouts
     }
+
+    state = prune_holdout_exposed(state)
 
     # Emit before waking waiters so the event is observable once
     # wait_until_ready/2 returns.
@@ -945,15 +970,41 @@ defmodule ABSmartly.Context do
     {assignment, state} = get_or_assign(state, experiment)
 
     state =
-      if queue_exposure do
-        exposure = create_exposure(experiment, assignment)
-        queue_exposure(state, experiment_name, exposure)
-      else
-        state
-      end
+      if queue_exposure,
+        do: expose(state, experiment_name, experiment, assignment),
+        else: state
 
     {assignment.variant, state}
   end
+
+  # Mirrors the JavaScript SDK's `_treatment`/`_triggerExposures`: the first
+  # exposing read of an experiment queues its own exposure, unless a holdout
+  # suppressed it, and then the exposure of each holdout covering it that was
+  # not exposed yet, in holdout id order.
+  defp expose(state, experiment_name, experiment, assignment) do
+    if MapSet.member?(state.exposed_experiments, experiment_name) and
+         not placeholder_only?(state, experiment_name, assignment) do
+      state
+    else
+      state = %{
+        state
+        | exposed_experiments: MapSet.put(state.exposed_experiments, experiment_name),
+          placeholder_exposed: MapSet.delete(state.placeholder_exposed, experiment_name)
+      }
+
+      state =
+        if assignment.suppressed and not assignment.overridden and not assignment.rule_override,
+          do: state,
+          else: enqueue_exposure(state, create_exposure(experiment, assignment))
+
+      queue_holdout_exposures(state, assignment.holdout_arms)
+    end
+  end
+
+  # A covered experiment whose only exposure is a placeholder from a read while
+  # it was absent is exposed with its holdouts at its first real read.
+  defp placeholder_only?(state, name, assignment),
+    do: assignment.holdout_key != nil and MapSet.member?(state.placeholder_exposed, name)
 
   defp do_treatment_for_override(state, experiment_name, override, queue_exposure) do
     state =
@@ -973,7 +1024,16 @@ defmodule ABSmartly.Context do
           rule_override: false
         }
 
-        queue_exposure(state, experiment_name, exposure)
+        if MapSet.member?(state.exposed_experiments, experiment_name) do
+          state
+        else
+          state = %{
+            state
+            | placeholder_exposed: MapSet.put(state.placeholder_exposed, experiment_name)
+          }
+
+          queue_exposure(state, experiment_name, exposure)
+        end
       else
         state
       end
@@ -985,75 +1045,90 @@ defmodule ABSmartly.Context do
     do: do_treatment_for_override(state, experiment_name, nil, queue_exposure)
 
   defp queue_exposure(state, experiment_name, exposure) do
-    unless MapSet.member?(state.exposed_experiments, experiment_name) do
-      state =
-        if state.exposure_count >= @max_queue_size do
-          Logger.error("Exposure queue size limit reached (#{@max_queue_size}), dropping oldest")
-
-          %{
-            state
-            | exposures: Enum.drop(state.exposures, -1),
-              exposure_count: state.exposure_count - 1
-          }
-        else
-          state
-        end
-
-      state = %{
-        state
-        | exposures: [exposure | state.exposures],
-          exposed_experiments: MapSet.put(state.exposed_experiments, experiment_name),
-          exposure_count: state.exposure_count + 1
-      }
-
-      emit_event(state, :exposure, exposure)
+    if MapSet.member?(state.exposed_experiments, experiment_name) do
       state
     else
-      state
+      state = %{
+        state
+        | exposed_experiments: MapSet.put(state.exposed_experiments, experiment_name)
+      }
+
+      enqueue_exposure(state, exposure)
     end
   end
 
+  defp enqueue_exposure(state, exposure) do
+    state =
+      if state.exposure_count >= @max_queue_size do
+        Logger.error("Exposure queue size limit reached (#{@max_queue_size}), dropping oldest")
+
+        %{
+          state
+          | exposures: Enum.drop(state.exposures, -1),
+            exposure_count: state.exposure_count - 1
+        }
+      else
+        state
+      end
+
+    state = %{
+      state
+      | exposures: [exposure | state.exposures],
+        exposure_count: state.exposure_count + 1
+    }
+
+    emit_event(state, :exposure, exposure)
+    state
+  end
+
+  # Like the JavaScript SDK's `_resolveVariableValue`, an experiment
+  # suppressed by a holdout never wins the key, but when no other experiment
+  # does, the first suppressed one supplies its control value instead of the
+  # default (even when it lacks the key, so a later one cannot).
   defp do_variable_value(state, key, default_value, queue_exposure) do
     experiments = Map.get(state.variable_index, key, [])
 
     {result, state} =
-      Enum.reduce_while(experiments, {nil, state}, fn exp, {found, acc_state} ->
+      Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc_state} ->
         {assignment, acc_state} = get_or_assign(acc_state, exp)
 
         acc_state =
-          if queue_exposure do
-            exposure = create_exposure(exp, assignment)
-            queue_exposure(acc_state, exp.name, exposure)
-          else
-            acc_state
-          end
+          if queue_exposure,
+            do: expose(acc_state, exp.name, exp, assignment),
+            else: acc_state
 
-        if found == nil &&
-             (assignment.assigned || assignment.overridden || assignment.rule_override) do
-          variant_data = Enum.at(exp.variants, assignment.variant)
+        cond do
+          assignment.assigned || assignment.overridden || assignment.rule_override ->
+            config = variant_config(exp, assignment)
 
-          if variant_data do
-            config = parse_variant_config(variant_data["config"])
+            if is_map(config) && Map.has_key?(config, key),
+              do: {:halt, {{:found, config[key]}, acc_state}},
+              else: {:cont, {fallback, acc_state}}
 
-            if is_map(config) && Map.has_key?(config, key) do
-              {:halt, {{exp, assignment, config[key]}, acc_state}}
-            else
-              {:cont, {found, acc_state}}
-            end
-          else
-            {:cont, {found, acc_state}}
-          end
-        else
-          {:cont, {found, acc_state}}
+          assignment.suppressed and fallback == nil ->
+            {:cont, {{:suppressed, variant_config(exp, assignment)}, acc_state}}
+
+          true ->
+            {:cont, {fallback, acc_state}}
         end
       end)
 
     case result do
-      {_experiment, _assignment, value} ->
+      {:found, value} ->
         {value, state}
 
-      nil ->
+      {:suppressed, %{} = config} when is_map_key(config, key) ->
+        {Map.fetch!(config, key), state}
+
+      _ ->
         {default_value, state}
+    end
+  end
+
+  defp variant_config(experiment, assignment) do
+    case Enum.at(experiment.variants, assignment.variant) do
+      nil -> nil
+      variant_data -> parse_variant_config(variant_data["config"])
     end
   end
 
@@ -1390,6 +1465,8 @@ defmodule ABSmartly.Context do
         end
       end)
 
+    experiment_holdouts = build_holdout_index(context_data)
+
     state = %{
       state
       | data: context_data,
@@ -1398,8 +1475,11 @@ defmodule ABSmartly.Context do
         experiment_index: exp_index,
         audience_cache: aud_cache,
         rules_cache: rules_cache,
-        exposed_experiments: exposed_experiments
+        exposed_experiments: exposed_experiments,
+        experiment_holdouts: experiment_holdouts
     }
+
+    state = prune_holdout_exposed(state)
 
     Logger.info("Context refreshed with #{length(context_data.experiments)} experiments")
     emit_event(state, :refresh, %{experiments: context_data.experiments})
@@ -1411,23 +1491,27 @@ defmodule ABSmartly.Context do
     override = Map.get(state.overrides, name)
 
     if override != nil do
-      assignment = %Types.Assignment{
-        id: experiment.id,
-        iteration: experiment.iteration,
-        full_on_variant: experiment.full_on_variant,
-        traffic_split: experiment.traffic_split,
-        variant: override,
-        assigned: false,
-        overridden: true,
-        eligible: true,
-        full_on: false,
-        custom: false,
-        audience_mismatch: false,
-        rule_override: false
+      # Overrides expose their holdouts too (see override_holdout_arms/4).
+      key = holdout_key(state, experiment)
+      {holdout_arms, state} = override_holdout_arms(state, experiment, override, key)
+
+      assignment = %{
+        base_assignment(experiment)
+        | variant: override,
+          overridden: true,
+          holdout_arms: holdout_arms,
+          holdout_key: key
       }
 
       {assignment, state}
     else
+      # A normal decision supersedes the arms an earlier override pinned, as
+      # the JavaScript SDK keeps one assignment per experiment.
+      state =
+        if state.override_snapshots == %{},
+          do: state,
+          else: %{state | override_snapshots: Map.delete(state.override_snapshots, name)}
+
       cached = Map.get(state.assignments, name)
 
       {cached, state} = maybe_reassign(cached, state, experiment, name)
@@ -1437,7 +1521,7 @@ defmodule ABSmartly.Context do
           {cached, state}
         else
           state = cache_evaluation_vars(state, experiment)
-          assignment = assign_variant(state, experiment)
+          {assignment, state} = assign_variant(state, experiment)
           {assignment, %{state | assignments: Map.put(state.assignments, name, assignment)}}
         end
 
@@ -1456,7 +1540,9 @@ defmodule ABSmartly.Context do
   # assignment was won by a rule: a rule wins over a custom assignment (as in
   # the JavaScript SDK, a custom mismatch is not staleness for it), so the
   # served variant and its exposure stay the same, and an exposed split
-  # resolved without its unit stays pinned.
+  # resolved without its unit stays pinned. (A suppressed experiment never
+  # queues its own exposure, and its holdouts expose once, so re-marking it
+  # changes nothing.)
   defp reset_exposed_for_custom(state, exposed, name) do
     case Map.get(state.assignments, name) do
       %Types.Assignment{rule_override: true} -> exposed
@@ -1472,11 +1558,16 @@ defmodule ABSmartly.Context do
 
   defp maybe_reassign(nil, state, _experiment, _name), do: {nil, state}
 
-  # Mirrors the JavaScript SDK's `audienceMatches` (context.ts).
+  # Mirrors the JavaScript SDK's `holdoutSetMatches` and `audienceMatches`
+  # (context.ts).
   defp maybe_reassign(cached, state, experiment, name) do
     rules_changed = cached.rule_key != experiment.assignment_rules
 
     cond do
+      (cached.holdout_key != nil or state.experiment_holdouts != %{}) and
+          cached.holdout_key != holdout_key(state, experiment) ->
+        reassign(cache_evaluation_vars(state, experiment), experiment, name)
+
       rules_changed and experiment.assignment_rules == nil and
           (cached.rule_variant != nil or cached.rule_override) ->
         reassign(state, experiment, name)
@@ -1521,6 +1612,7 @@ defmodule ABSmartly.Context do
   end
 
   defp recheck_audience(%{rule_override: true}, _state, _experiment), do: :ok
+  defp recheck_audience(%{suppressed: true}, _state, _experiment), do: :ok
 
   defp recheck_audience(cached, state, experiment) do
     # An indeterminate (nil) audience result keeps the cached flag.
@@ -1534,7 +1626,7 @@ defmodule ABSmartly.Context do
   end
 
   defp reassign(state, experiment, name) do
-    assignment = assign_variant(state, experiment)
+    {assignment, state} = assign_variant(state, experiment)
 
     state = %{
       state
@@ -1546,26 +1638,164 @@ defmodule ABSmartly.Context do
   end
 
   # Same decision order as the JavaScript SDK's `_assign` (context.ts): a
-  # matching assignment rule wins over everything but an override, then the
-  # audience is evaluated, a strict mismatch forces variant 0, a full-on
-  # experiment is assigned its full-on variant even without a unit, and only a
-  # running experiment needs the unit for the traffic and variant split.
+  # matching assignment rule wins over everything but an override (holdout
+  # suppression included), then a unit held out by a covering holdout gets
+  # variant 0 unassigned, then the audience is evaluated, a strict mismatch
+  # forces variant 0, a full-on experiment is assigned its full-on variant
+  # even without a unit, and only a running experiment needs the unit for the
+  # traffic and variant split.
   defp assign_variant(state, experiment) do
     {rule_variant, missing_unit} = resolve_rule(state, experiment, false)
+    {holdout_arms, state} = holdout_arms(state, experiment)
 
     base = %{
       base_assignment(experiment)
       | audience_match_seq: state.attrs_seq,
         rule_key: experiment.assignment_rules,
         rule_variant: rule_variant,
-        rule_missing_unit: missing_unit
+        rule_missing_unit: missing_unit,
+        holdout_arms: holdout_arms,
+        holdout_key: holdout_key(state, experiment),
+        suppressed: held_out?(holdout_arms, experiment)
     }
 
-    if rule_variant != nil do
-      %{base | variant: rule_variant, rule_override: true}
-    else
-      assign_without_rule(state, experiment, base)
+    assignment =
+      cond do
+        rule_variant != nil -> %{base | variant: rule_variant, rule_override: true}
+        base.suppressed -> base
+        true -> assign_without_rule(state, experiment, base)
+      end
+
+    {assignment, state}
+  end
+
+  # The unit's arm in each holdout covering the experiment, as a list of
+  # `{holdout name, arm}` in holdout id order (nil when not covered). An arm
+  # is nil while the experiment's unit is missing. Pinned in the assignment,
+  # so its exposures always match the decision made from them. Mirrors the
+  # JavaScript SDK's `_getHoldoutAssignment`: the arm is computed on the
+  # covered experiment's unit type (never the holdout's own), once per
+  # holdout iteration, so a same-iteration seed or split edit does not move
+  # the unit, and the arm count it was computed with stays with it.
+  defp holdout_arms(state, experiment) do
+    case Map.get(state.experiment_holdouts, experiment.name) do
+      nil ->
+        {nil, state}
+
+      {_key, holdouts} ->
+        Enum.map_reduce(holdouts, state, fn holdout, acc ->
+          {arm, acc} = holdout_arm(acc, holdout, unit_type(experiment))
+          {{holdout.name, arm}, acc}
+        end)
     end
+  end
+
+  # `holdout` is always the installed definition: arms are resolved from the
+  # current index, never from a definition pinned before a refresh.
+  defp holdout_arm(state, holdout, unit_type) do
+    key = {holdout.id, unit_type}
+
+    case Map.get(state.holdout_assignments, key) do
+      %{iteration: iteration} = arm when iteration == holdout.iteration ->
+        {arm, state}
+
+      _ ->
+        case Map.get(state.units, unit_type) do
+          nil ->
+            {nil, state}
+
+          uid ->
+            arm = %{
+              ref: make_ref(),
+              id: holdout.id,
+              iteration: holdout.iteration,
+              unit_type: unit_type,
+              variant:
+                VariantAssigner.assign(
+                  Utils.hash_unit(uid),
+                  holdout.split,
+                  holdout.seed_hi,
+                  holdout.seed_lo
+                ),
+              arm_count: length(holdout.split)
+            }
+
+            {arm, %{state | holdout_assignments: Map.put(state.holdout_assignments, key, arm)}}
+        end
+    end
+  end
+
+  defp held_out?(nil, _experiment), do: false
+
+  defp held_out?(holdout_arms, experiment) do
+    Enum.any?(holdout_arms, fn
+      {_name, nil} -> false
+      {_name, arm} -> held_out_by?(arm.variant, arm.arm_count, experiment.full_on_variant)
+    end)
+  end
+
+  # Mirrors the JavaScript SDK's `isHeldOutBy`: arm 0 always holds the unit
+  # out, and arm 1 of a three-arm holdout holds it out of experiments that are
+  # not full-on. The arity comes from the split, never from `holdoutType`. A
+  # missing fullOnVariant is not full-on here, as in assignment (`full_on?/1`).
+  defp held_out_by?(0, _arm_count, _full_on_variant), do: true
+  defp held_out_by?(1, 3, full_on_variant), do: full_on_variant in [0, nil]
+  defp held_out_by?(_variant, _arm_count, _full_on_variant), do: false
+
+  defp holdout_unit_missing?(%{holdout_arms: nil}), do: false
+
+  defp holdout_unit_missing?(%{holdout_arms: arms}),
+    do: Enum.any?(arms, fn {_name, arm} -> arm == nil end)
+
+  defp prune_holdout_exposed(state) do
+    if MapSet.size(state.holdout_exposed) == 0 do
+      state
+    else
+      pinned =
+        for {_name, %Types.Assignment{holdout_arms: [_ | _] = arms}} <- state.assignments,
+            {_holdout, %{ref: ref}} <- arms,
+            do: ref
+
+      overridden =
+        for {_name, {_variant, _key, [_ | _] = arms}} <- state.override_snapshots,
+            {_holdout, %{ref: ref}} <- arms,
+            do: ref
+
+      cached = for {_key, %{ref: ref}} <- state.holdout_assignments, do: ref
+      reachable = MapSet.new(pinned ++ overridden ++ cached)
+      %{state | holdout_exposed: MapSet.intersection(state.holdout_exposed, reachable)}
+    end
+  end
+
+  defp queue_holdout_exposures(state, nil), do: state
+
+  defp queue_holdout_exposures(state, arms) do
+    Enum.reduce(arms, state, fn
+      {_name, nil}, acc ->
+        acc
+
+      {name, arm}, acc ->
+        if MapSet.member?(acc.holdout_exposed, arm.ref) do
+          acc
+        else
+          acc = %{acc | holdout_exposed: MapSet.put(acc.holdout_exposed, arm.ref)}
+
+          enqueue_exposure(acc, %Types.Exposure{
+            id: arm.id,
+            name: name,
+            unit: arm.unit_type,
+            variant: arm.variant,
+            exposed_at: now_millis(),
+            assigned: true,
+            eligible: true,
+            overridden: false,
+            full_on: false,
+            custom: false,
+            audience_mismatch: false,
+            rule_override: false
+          })
+        end
+    end)
   end
 
   defp assign_without_rule(state, experiment, base) do
@@ -1643,9 +1873,10 @@ defmodule ABSmartly.Context do
       Map.reject(state.assignments, fn {name, assignment} ->
         experiment = Map.get(state.experiment_index, name)
 
-        assignment.rule_missing_unit and experiment != nil and
-          unit_type(experiment) in added_unit_types and
-          not MapSet.member?(state.exposed_experiments, name)
+        (assignment.rule_missing_unit or holdout_unit_missing?(assignment)) and
+          experiment != nil and unit_type(experiment) in added_unit_types and
+          (not MapSet.member?(state.exposed_experiments, name) or
+             placeholder_only?(state, name, assignment))
       end)
 
     %{state | assignments: assignments}
@@ -1835,6 +2066,72 @@ defmodule ABSmartly.Context do
     {reversed_var_index, exp_index, aud_cache, rules_cache}
   end
 
+  # Mirrors the JavaScript SDK's `_init`: only holdouts with a non-empty split
+  # are kept, and each experiment's `holdoutIds` resolve to those holdouts,
+  # deduplicated and sorted by id. Ids without a holdout are ignored.
+  defp build_holdout_index(%Types.ContextData{holdouts: holdouts, experiments: experiments})
+       when holdouts not in [nil, []] do
+    holdouts_by_id =
+      for %Types.HoldoutData{split: [_ | _] = split} = holdout <- holdouts,
+          Types.HoldoutData.valid_split?(split),
+          into: %{},
+          do: {holdout.id, holdout}
+
+    for %{holdout_ids: [_ | _] = ids} = experiment <- experiments,
+        covering =
+          ids
+          |> Enum.uniq()
+          |> Enum.sort()
+          |> Enum.flat_map(&List.wrap(Map.get(holdouts_by_id, &1))),
+        covering != [],
+        into: %{},
+        do: {experiment.name, {Enum.map(covering, &{&1.id, &1.iteration}), covering}}
+  end
+
+  defp build_holdout_index(_context_data), do: %{}
+
+  # The ids and iterations of the holdouts covering an experiment (nil when
+  # not covered): a change re-resolves it at the next read, so the new
+  # holdouts are exposed. A same-iteration seed or split edit changes nothing.
+  defp holdout_key(state, experiment) do
+    case Map.get(state.experiment_holdouts, experiment.name) do
+      nil -> nil
+      {key, _holdouts} -> key
+    end
+  end
+
+  # Like the JavaScript SDK's pinned overridden assignment, an override read
+  # again with the same variant and covering holdouts reuses its arms (unless
+  # one waited for a missing unit). Other covering holdouts than its last read,
+  # including the first ones after a read of its absent experiment, expose it
+  # again.
+  defp override_holdout_arms(state, experiment, variant, key) do
+    name = experiment.name
+
+    case Map.get(state.override_snapshots, name) do
+      {^variant, ^key, arms} when is_list(arms) ->
+        if Enum.any?(arms, &match?({_name, nil}, &1)),
+          do: snapshot_override(state, experiment, variant, key),
+          else: {arms, state}
+
+      {^variant, ^key, nil} ->
+        {nil, state}
+
+      nil when key == nil ->
+        snapshot_override(state, experiment, variant, key)
+
+      _changed ->
+        state = %{state | exposed_experiments: MapSet.delete(state.exposed_experiments, name)}
+        snapshot_override(state, experiment, variant, key)
+    end
+  end
+
+  defp snapshot_override(state, experiment, variant, key) do
+    {arms, state} = holdout_arms(state, experiment)
+    snapshots = Map.put(state.override_snapshots, experiment.name, {variant, key, arms})
+    {arms, %{state | override_snapshots: snapshots}}
+  end
+
   # Assignments are sticky across a refresh, as in the JavaScript SDK's
   # `experimentMatches` (context.ts): only a change of id, iteration,
   # fullOnVariant, trafficSplit or unitType invalidates a cached assignment.
@@ -1886,7 +2183,8 @@ defmodule ABSmartly.Context do
         variable_index: %{},
         experiment_index: %{},
         audience_cache: %{},
-        rules_cache: %{}
+        rules_cache: %{},
+        experiment_holdouts: %{}
     }
 
     emit_event(state, :error, reason)
