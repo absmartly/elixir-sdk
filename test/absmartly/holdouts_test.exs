@@ -1967,6 +1967,92 @@ defmodule ABSmartly.HoldoutsTest do
            ]
   end
 
+  # Not in ContextHoldoutTest: javascript-sdk compares the custom with the
+  # cached variant only when the assignment is read, so a custom flipped
+  # away and back before the unit arrives leaves the exposed decision pinned.
+  test "a custom flipped away and back keeps an exposed covered decision pinned" do
+    flips = [
+      fn ctx ->
+        :ok = Context.set_custom_assignment(ctx, "exp_late", 0)
+        :ok = Context.set_custom_assignment(ctx, "exp_late", 1)
+      end,
+      fn ctx ->
+        :ok = Context.set_custom_assignments(ctx, %{"exp_late" => 0})
+        :ok = Context.set_custom_assignments(ctx, %{"exp_late" => 1})
+      end
+    ]
+
+    for flip <- flips do
+      {ctx, ep} =
+        start(
+          data(
+            [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [1.0, 0.0])],
+            covered(1, "exp_late", [11], unit_type: "user_id", full_on: 1)
+          ),
+          units: %{}
+        )
+
+      assert Context.treatment(ctx, "exp_late") == 1
+      flip.(ctx)
+      :ok = Context.set_unit(ctx, "user_id", @uid)
+      assert Context.treatment(ctx, "exp_late") == 1
+
+      assert Enum.map(published(ctx, ep), & &1["name"]) |> Enum.uniq() == ["exp_late"]
+    end
+  end
+
+  test "set_custom_assignments lets a late unit re-resolve every differing covered decision" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [0.0, 1.0])],
+          [
+            covered(1, "exp_late_a", [11], unit_type: "user_id"),
+            covered(2, "exp_late_b", [11], unit_type: "user_id")
+          ]
+        ),
+        units: %{}
+      )
+
+    assert Context.treatment(ctx, "exp_late_a") == 0
+    assert Context.treatment(ctx, "exp_late_b") == 0
+    :ok = Context.set_custom_assignments(ctx, %{"exp_late_a" => 1, "exp_late_b" => 1})
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late_a") == 1
+    assert Context.treatment(ctx, "exp_late_b") == 1
+
+    custom = for %{"custom" => true, "name" => name} <- published(ctx, ep), do: name
+    assert Enum.sort(custom) == ["exp_late_a", "exp_late_b"]
+  end
+
+  # Not in ContextHoldoutTest: an override read rebuilds even a rule-won
+  # decision unexposed, so once cleared a late unit resolves its holdout.
+  test "an override read lets a late unit re-resolve a rule-won covered decision" do
+    {ctx, ep} =
+      start(
+        data(
+          [holdout(11, "holdout_late", {0, 0}, unit_type: "user_id", split: [0.0, 1.0])],
+          covered(1, "exp_late", [11], unit_type: "user_id", rules: @us_rule)
+        ),
+        units: %{}
+      )
+
+    :ok = Context.set_attribute(ctx, "country", "US")
+    assert Context.treatment(ctx, "exp_late") == 1
+    :ok = Context.set_override(ctx, "exp_late", 0)
+    assert Context.treatment(ctx, "exp_late") == 0
+    :ok = Context.set_override(ctx, "exp_late", nil)
+    :ok = Context.set_unit(ctx, "user_id", @uid)
+    assert Context.treatment(ctx, "exp_late") == 1
+
+    assert Enum.map(published(ctx, ep), &{&1["name"], &1["variant"]}) == [
+             {"exp_late", 1},
+             {"exp_late", 0},
+             {"exp_late", 1},
+             {"holdout_late", 1}
+           ]
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =

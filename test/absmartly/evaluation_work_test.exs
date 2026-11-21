@@ -156,6 +156,26 @@ defmodule ABSmartly.EvaluationWorkTest do
     assert counts == %{assign => 0}
   end
 
+  test "a differing custom write does not re-resolve a rule-won covered decision" do
+    experiment =
+      experiment("covered", rules: rules("r", 1))
+      |> Map.merge(%{"unitType" => "user_id", "holdoutIds" => [11]})
+
+    holdout = %{"id" => 11, "name" => "h", "seedHi" => 0, "seedLo" => 0, "split" => [0.0, 1.0]}
+    ctx = start_context([experiment], [%{"name" => "country", "value" => "US"}], [holdout])
+    assert Context.treatment(ctx, "covered") == 1
+    assign = {Context, :assign_variant, 2}
+
+    counts =
+      count_calls(ctx, [assign], fn ->
+        :ok = Context.set_custom_assignment(ctx, "covered", 0)
+        :ok = Context.set_unit(ctx, "user_id", "u1")
+        assert Context.treatment(ctx, "covered") == 1
+      end)
+
+    assert counts == %{assign => 0}
+  end
+
   test "cached reads of a payload without holdouts never look up holdout keys" do
     ctx = start_context([experiment("plain")], [])
     assert Context.peek(ctx, "plain") in [0, 1]

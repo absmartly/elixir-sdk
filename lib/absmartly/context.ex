@@ -656,7 +656,7 @@ defmodule ABSmartly.Context do
     name = to_string(experiment_name)
 
     state = %{
-      unpin_for_custom(state, name, variant)
+      state
       | custom_assignments: Map.put(state.custom_assignments, name, variant),
         exposed_experiments: reset_exposed_for_custom(state, state.exposed_experiments, name)
     }
@@ -675,11 +675,6 @@ defmodule ABSmartly.Context do
           {Map.put(ca_acc, name, variant), reset_exposed_for_custom(state, exp_acc, name)}
         end
       )
-
-    state =
-      Enum.reduce(assignments, state, fn {experiment_name, variant}, acc ->
-        unpin_for_custom(acc, to_string(experiment_name), variant)
-      end)
 
     {:reply, :ok,
      %{state | custom_assignments: new_assignments, exposed_experiments: new_exposed}}
@@ -1553,9 +1548,8 @@ defmodule ABSmartly.Context do
   # resolved without its unit stays pinned. (A suppressed experiment never
   # queues its own exposure, and its holdouts expose once, so re-marking it
   # changes nothing.)
-  # Where the JavaScript SDK rebuilds an assignment unexposed (an override
-  # read, a custom variant other than the cached one on an assignment not won
-  # by a rule), its covered decision is no longer pinned.
+  # An override read rebuilds the assignment unexposed in the JavaScript SDK,
+  # so its covered decision is no longer pinned.
   defp unpin_holdout_exposed(state, name) do
     case Map.get(state.assignments, name) do
       %Types.Assignment{holdout_exposed: true} = cached ->
@@ -1563,17 +1557,6 @@ defmodule ABSmartly.Context do
           state
           | assignments: Map.put(state.assignments, name, %{cached | holdout_exposed: false})
         }
-
-      _ ->
-        state
-    end
-  end
-
-  defp unpin_for_custom(state, name, variant) do
-    case Map.get(state.assignments, name) do
-      %Types.Assignment{rule_override: false, variant: cached}
-      when cached != variant ->
-        unpin_holdout_exposed(state, name)
 
       _ ->
         state
@@ -1934,8 +1917,22 @@ defmodule ABSmartly.Context do
         not MapSet.member?(state.exposed_experiments, name)
 
     rule_resolves or
-      (holdout_unit_missing?(assignment) and not assignment.holdout_exposed and
+      (holdout_unit_missing?(assignment) and
+         (not assignment.holdout_exposed or custom_stale?(state, name, assignment)) and
          assignment.holdout_unit_type in added_unit_types)
+  end
+
+  # Like the JavaScript SDK's read-time check: a custom variant other than the
+  # cached one makes an assignment not won by a rule stale, as of now, not as
+  # of the custom write. (A decision still waiting for its unit has no arm, so
+  # it is never held out.)
+  defp custom_stale?(_state, _name, %{rule_override: true}), do: false
+
+  defp custom_stale?(state, name, assignment) do
+    case Map.get(state.custom_assignments, name) do
+      nil -> false
+      custom -> custom != assignment.variant
+    end
   end
 
   defp base_assignment(experiment) do
