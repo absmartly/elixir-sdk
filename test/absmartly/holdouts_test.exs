@@ -2194,6 +2194,55 @@ defmodule ABSmartly.HoldoutsTest do
     assert placeholders == [exposure(0, "e", 0, unit: nil, assigned: false)]
   end
 
+  test "a custom read after a late unit rebuilds the covered decision" do
+    for setter <- [
+          &Context.set_custom_assignment(&1, "e", 0),
+          &Context.set_custom_assignments(&1, %{"e" => 0})
+        ] do
+      {ctx, ep} =
+        start(data([holdout(11, "h", @holdout_a)], covered(1, "e", [11], full_on: 1)), units: %{})
+
+      assert Context.treatment(ctx, "e") == 1
+      :ok = Context.set_unit(ctx, @unit_type, @uid)
+      :ok = setter.(ctx)
+      assert Context.treatment(ctx, "e") == 0
+      assert Context.treatment(ctx, "e") == 0
+
+      assert published(ctx, ep) == [
+               exposure(1, "e", 1, full_on: true),
+               holdout_exposure(11, "h", 0)
+             ]
+    end
+  end
+
+  test "a suppressed decision peeked before removal exposes its pinned holdout while absent" do
+    for install <- [&Context.set_data/2, &Context.refresh/2] do
+      {ctx, ep} = start(data([holdout(11, "h", @holdout_a)], covered(1, "e", [11])))
+      assert Context.peek(ctx, "e") == 0
+      :ok = install.(ctx, data([], []))
+      assert Context.treatment(ctx, "e") == 0
+      assert Context.treatment(ctx, "e") == 0
+      assert published(ctx, ep) == [holdout_exposure(11, "h", 0)]
+    end
+  end
+
+  test "a removed holdout id re-added in the same iteration keeps its arm and exposure" do
+    for install <- [&Context.set_data/2, &Context.refresh/2] do
+      exp = covered(1, "e", [11])
+      {ctx, ep} = start(data([holdout(11, "h", @holdout_a)], exp))
+      assert Context.treatment(ctx, "e") == 0
+      :ok = install.(ctx, data([], exp))
+      assert Context.treatment(ctx, "e") == @normal_variant
+      :ok = install.(ctx, data([holdout(11, "h", {1, 111})], exp))
+      assert Context.treatment(ctx, "e") == 0
+
+      assert published(ctx, ep) == [
+               holdout_exposure(11, "h", 0),
+               exposure(1, "e", @normal_variant)
+             ]
+    end
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =

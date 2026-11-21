@@ -955,6 +955,23 @@ defmodule ABSmartly.Context do
     experiment = Map.get(state.experiment_index, experiment_name)
 
     case {experiment, override} do
+      {nil, nil} when is_map_key(state.assignments, experiment_name) ->
+        cached = Map.fetch!(state.assignments, experiment_name)
+
+        if cached.suppressed and not cached.rule_override do
+          state =
+            if queue_exposure and not cached.holdout_exposed do
+              state = mark_holdout_exposed(state, experiment_name, cached)
+              queue_holdout_exposures(state, cached.holdout_arms)
+            else
+              state
+            end
+
+          {cached.variant, state}
+        else
+          do_treatment_for_unknown(state, experiment_name, queue_exposure)
+        end
+
       {exp, _} when not is_nil(exp) ->
         do_treatment_for_experiment(state, experiment_name, exp, queue_exposure)
 
@@ -1458,11 +1475,13 @@ defmodule ABSmartly.Context do
     changed_names = changed_experiment_names(state.data.experiments, context_data.experiments)
 
     assignments =
-      invalidate_changed_assignments(state.assignments, changed_names)
+      invalidate_changed_assignments(state.assignments, changed_names, exp_index)
 
     exposed_experiments =
       Enum.reduce(changed_names, state.exposed_experiments, fn name, acc ->
-        if Map.has_key?(state.overrides, name) do
+        if Map.has_key?(state.overrides, name) or
+             (not Map.has_key?(exp_index, name) and
+                match?(%{suppressed: true, rule_override: false}, Map.get(assignments, name))) do
           acc
         else
           MapSet.delete(acc, name)
@@ -1573,9 +1592,12 @@ defmodule ABSmartly.Context do
 
   defp rebuild_custom_pin(state, name) do
     case Map.get(state.assignments, name) do
-      %Types.Assignment{holdout_key: [_ | _]} ->
-        state = unpin_holdout_exposed(state, name)
-        %{state | exposed_experiments: MapSet.delete(state.exposed_experiments, name)}
+      %Types.Assignment{holdout_key: [_ | _], suppressed: false} ->
+        %{
+          state
+          | assignments: Map.delete(state.assignments, name),
+            exposed_experiments: MapSet.delete(state.exposed_experiments, name)
+        }
 
       _ ->
         state
@@ -1960,6 +1982,7 @@ defmodule ABSmartly.Context do
   # it is never held out.)
   defp custom_stale?(_state, _name, nil), do: false
   defp custom_stale?(_state, _name, %{rule_override: true}), do: false
+  defp custom_stale?(_state, _name, %{suppressed: true}), do: false
 
   defp custom_stale?(state, name, assignment) do
     case Map.get(state.custom_assignments, name) do
@@ -2250,11 +2273,13 @@ defmodule ABSmartly.Context do
     end)
   end
 
-  defp invalidate_changed_assignments(assignments, changed_names) do
+  defp invalidate_changed_assignments(assignments, changed_names, exp_index) do
     changed_names = MapSet.new(changed_names)
 
     Map.reject(assignments, fn {name, assignment} ->
-      not assignment.overridden and MapSet.member?(changed_names, name)
+      not assignment.overridden and MapSet.member?(changed_names, name) and
+        not (assignment.suppressed and not assignment.rule_override and
+               not Map.has_key?(exp_index, name))
     end)
   end
 
