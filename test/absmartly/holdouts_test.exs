@@ -2488,6 +2488,22 @@ defmodule ABSmartly.HoldoutsTest do
     end
   end
 
+  # Not in ContextHoldoutTest: an uncovered experiment beside a covered one
+  # keeps its cached assignment, so repeated reads expose it once.
+  test "an uncovered experiment beside a covered one is exposed once" do
+    {ctx, ep} =
+      start(
+        data([holdout(11, "h", @holdout_b)], [
+          covered(1, "exp_covered", [11]),
+          experiment(2, "exp_plain")
+        ])
+      )
+
+    assert Context.treatment(ctx, "exp_plain") == @normal_variant
+    assert Context.treatment(ctx, "exp_plain") == @normal_variant
+    assert published(ctx, ep) == [exposure(2, "exp_plain", @normal_variant)]
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =
