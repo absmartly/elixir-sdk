@@ -1641,7 +1641,9 @@ defmodule ABSmartly.Context do
 
     cond do
       (cached.holdout_key != nil or state.experiment_holdouts != %{}) and
-          cached.holdout_key != holdout_key(state, experiment) ->
+          (cached.holdout_key != holdout_key(state, experiment) or
+             (cached.holdout_unit_type != nil and
+                cached.holdout_unit_type != unit_type(experiment))) ->
         reassign(cache_evaluation_vars(state, experiment), experiment, name)
 
       rules_changed and experiment.assignment_rules == nil and
@@ -1997,7 +1999,6 @@ defmodule ABSmartly.Context do
   # it is never held out.)
   defp custom_stale?(_state, _name, nil), do: false
   defp custom_stale?(_state, _name, %{rule_override: true}), do: false
-  defp custom_stale?(_state, _name, %{suppressed: true}), do: false
 
   defp custom_stale?(state, name, assignment) do
     case Map.get(state.custom_assignments, name) do

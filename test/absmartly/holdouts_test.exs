@@ -2328,6 +2328,166 @@ defmodule ABSmartly.HoldoutsTest do
     end
   end
 
+  # Not in ContextHoldoutTest: javascript-sdk rebuilds an assignment whose
+  # experiment's unit type changes, so a saved unassigned covered decision
+  # does not keep the old unit type's arms.
+  test "a saved covered decision is rebuilt when its experiment's unit type changes" do
+    for install <- [&Context.set_data/2, &Context.refresh/2] do
+      holdouts = [holdout(11, "h", @holdout_b)]
+      {ctx, ep} = start(data(holdouts, covered(1, "e", [11])), units: %{})
+
+      assert Context.peek(ctx, "e") == 0
+      :ok = Context.set_unit(ctx, "user_id", @uid_not_held_out)
+      :ok = install.(ctx, data(holdouts, covered(1, "e", [11], unit_type: "user_id")))
+      assert Context.treatment(ctx, "e") == 0
+
+      assert Enum.map(published(ctx, ep), &{&1["name"], &1["unit"]}) ==
+               [{"e", "user_id"}, {"h", "user_id"}]
+    end
+  end
+
+  # Through refresh/2 only: a ready set_data/2 never invalidates a changed
+  # experiment's cached assignment, on main too.
+  test "a saved covered decision is rebuilt when its experiment's full-on variant changes" do
+    for install <- [&Context.refresh/2] do
+      holdouts = [holdout(11, "h", {0, 0}, split: [1.0, 0.0])]
+      {ctx, ep} = start(data(holdouts, covered(1, "e", [11])), units: %{})
+
+      assert Context.treatment(ctx, "e") == 0
+      :ok = install.(ctx, data(holdouts, covered(1, "e", [11], full_on: 1)))
+      assert Context.treatment(ctx, "e") == 1
+      assert Context.treatment(ctx, "e") == 1
+
+      assert published(ctx, ep) == [
+               exposure(1, "e", 0, assigned: false),
+               exposure(1, "e", 1, full_on: true)
+             ]
+    end
+  end
+
+  test "a saved covered decision is exposed again after a new experiment iteration" do
+    for install <- [&Context.refresh/2] do
+      holdouts = [holdout(11, "h", {0, 0}, split: [0.0, 1.0])]
+      {ctx, ep} = start(data(holdouts, covered(1, "e", [11])), units: %{})
+
+      assert Context.treatment(ctx, "e") == 0
+      :ok = install.(ctx, data(holdouts, covered(1, "e", [11]) |> Map.put("iteration", 2)))
+      assert Context.treatment(ctx, "e") == 0
+
+      assert published(ctx, ep) == [
+               exposure(1, "e", 0, assigned: false),
+               exposure(1, "e", 0, assigned: false)
+             ]
+    end
+  end
+
+  test "a saved covered decision read while absent exposes under its own unit type" do
+    for install <- [&Context.set_data/2, &Context.refresh/2] do
+      {ctx, ep} =
+        start(
+          data([holdout(11, "h", @holdout_b)], covered(1, "e", [11], unit_type: "user_id")),
+          units: %{@unit_type => @uid}
+        )
+
+      assert Context.peek(ctx, "e") == 0
+      :ok = install.(ctx, data([], []))
+      assert Context.treatment(ctx, "e") == 0
+
+      assert Enum.map(published(ctx, ep), &{&1["id"], &1["unit"]}) == [{1, "user_id"}]
+    end
+  end
+
+  test "peeks of a removed saved covered decision publish nothing" do
+    for install <- [&Context.set_data/2, &Context.refresh/2] do
+      {ctx, ep} = start(data([holdout(11, "h", @holdout_b)], covered(1, "e", [11])), units: %{})
+
+      assert Context.peek(ctx, "e") == 0
+      :ok = install.(ctx, data([], []))
+      assert Context.peek(ctx, "e") == 0
+      assert Context.peek(ctx, "e") == 0
+      assert published(ctx, ep) == []
+    end
+  end
+
+  # Not in ContextHoldoutTest: the served custom variant, not the cached
+  # random one, decides staleness, so repeated identical custom writes after
+  # a refresh expose the custom decision once.
+  test "repeated identical custom writes after a refresh expose the custom decision once" do
+    holdouts = [holdout(11, "h", @holdout_b)]
+    exp = covered(1, "e", [11])
+    {ctx, ep} = start(data(holdouts, exp), uid: @uid_not_held_out)
+
+    assert Context.treatment(ctx, "e") == 0
+    refresh(ctx, data([holdout(11, "h", @holdout_b, iteration: 2)], exp))
+    :ok = Context.set_custom_assignment(ctx, "e", 1)
+    :ok = Context.set_custom_assignment(ctx, "e", 1)
+    assert Context.treatment(ctx, "e") == 1
+    assert Context.treatment(ctx, "e") == 1
+
+    custom = for %{"name" => "e", "custom" => true} = e <- published(ctx, ep), do: e
+    assert length(custom) == 1
+  end
+
+  # Through refresh/2 only (see above): a traffic split change re-resolves a
+  # saved unassigned covered decision, which is then exposed again.
+  test "a saved covered decision is exposed again after a traffic split change" do
+    holdouts = [holdout(11, "h", {0, 0}, split: [0.0, 1.0])]
+    {ctx, ep} = start(data(holdouts, covered(1, "e", [11])), units: %{})
+
+    assert Context.treatment(ctx, "e") == 0
+    refresh(ctx, data(holdouts, covered(1, "e", [11]) |> Map.put("trafficSplit", [1.0, 0.0])))
+    assert Context.treatment(ctx, "e") == 0
+    assert Context.treatment(ctx, "e") == 0
+
+    assert published(ctx, ep) == [
+             exposure(1, "e", 0, assigned: false),
+             exposure(1, "e", 0, assigned: false)
+           ]
+  end
+
+  # Not in ContextHoldoutTest: a custom write never applies to a held-out
+  # decision, so it neither re-exposes nor re-resolves it.
+  test "a custom write on a held-out decision publishes only the holdout once" do
+    {ctx, ep} = start(data([holdout(11, "h", {0, 0}, split: [1.0, 0.0])], covered(1, "e", [11])))
+
+    assert Context.treatment(ctx, "e") == 0
+    :ok = Context.set_custom_assignment(ctx, "e", 1)
+    assert Context.treatment(ctx, "e") == 0
+    assert Context.treatment(ctx, "e") == 0
+
+    assert published(ctx, ep) == [holdout_exposure(11, "h", 0)]
+  end
+
+  # Not in ContextHoldoutTest: a refresh removing an exposed saved covered
+  # decision keeps its exposure, like javascript-sdk's cached assignment, so
+  # reads while absent and after restore publish nothing more.
+  test "an exposed saved covered decision removed by a refresh is not exposed again" do
+    holdouts = [holdout(11, "h", {0, 0}, split: [0.0, 1.0])]
+    payload = data(holdouts, covered(1, "e", [11]))
+
+    for held_out <- [false, true] do
+      payload =
+        if held_out,
+          do: data([holdout(11, "h", {0, 0}, split: [1.0, 0.0])], covered(1, "e", [11])),
+          else: payload
+
+      {ctx, ep} = start(payload, units: if(held_out, do: %{@unit_type => @uid}, else: %{}))
+      assert Context.treatment(ctx, "e") == 0
+      refresh(ctx, data([], []))
+      assert Context.treatment(ctx, "e") == 0
+      assert Context.treatment(ctx, "e") == 0
+      refresh(ctx, payload)
+      assert Context.treatment(ctx, "e") == 0
+
+      expected =
+        if held_out,
+          do: [holdout_exposure(11, "h", 0)],
+          else: [exposure(1, "e", 0, assigned: false)]
+
+      assert published(ctx, ep) == expected
+    end
+  end
+
   # holdoutBecomingApplicableAfterRefreshStillFiresForOverriddenExperiment
   test "a holdout added by a refresh fires for an overridden experiment" do
     {ctx, ep} =
