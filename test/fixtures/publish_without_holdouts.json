@@ -1,5 +1,5 @@
 {
- "source": "Recorded from elixir-sdk main ea4fecb (before holdouts) by running the session in ABSmartly.HoldoutsInertnessTest over `payload`; timestamps zeroed.",
+ "source": "Recorded from elixir-sdk main ea4fecb (before holdouts) by running the session in ABSmartly.HoldoutsInertnessTest over `payload`; timestamps zeroed. The vars/pvars of five sessions were then updated for the shared-variable-key fix: when the first experiment by id the unit is in has a variant without the key, the default is returned instead of a later experiment's value.",
  "payload": {
   "experiments": [
    {
@@ -684,7 +684,7 @@
     ]
    },
    "pvars": [
-    "red",
+    "dflt",
     "dflt"
    ],
    "treatments": [
@@ -699,7 +699,7 @@
    ],
    "uid": "\" padded \"",
    "vars": [
-    "red",
+    "dflt",
     "dflt",
     "dflt"
    ]
@@ -1409,7 +1409,7 @@
    },
    "pvars": [
     "red",
-    2
+    "dflt"
    ],
    "treatments": [
     2,
@@ -1424,7 +1424,7 @@
    "uid": "\"0\"",
    "vars": [
     "red",
-    2,
+    "dflt",
     "dflt"
    ]
   },
@@ -1771,7 +1771,7 @@
    },
    "pvars": [
     "red",
-    2
+    "dflt"
    ],
    "treatments": [
     2,
@@ -1786,7 +1786,7 @@
    "uid": "9007199254740993",
    "vars": [
     "red",
-    2,
+    "dflt",
     "dflt"
    ]
   },
@@ -1951,8 +1951,8 @@
     ]
    },
    "pvars": [
-    "blue",
-    2
+    "dflt",
+    "dflt"
    ],
    "treatments": [
     0,
@@ -1966,8 +1966,8 @@
    ],
    "uid": "125.75",
    "vars": [
-    "blue",
-    2,
+    "dflt",
+    "dflt",
     "dflt"
    ]
   },
@@ -2133,7 +2133,7 @@
    },
    "pvars": [
     "red",
-    2
+    "dflt"
    ],
    "treatments": [
     2,
@@ -2148,7 +2148,7 @@
    "uid": "12345",
    "vars": [
     "red",
-    2,
+    "dflt",
     "dflt"
    ]
   }

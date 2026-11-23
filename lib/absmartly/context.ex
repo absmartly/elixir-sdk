@@ -1112,48 +1112,55 @@ defmodule ABSmartly.Context do
     state
   end
 
-  # Like the JavaScript SDK's `_resolveVariableValue`, an experiment
-  # suppressed by a holdout never wins the key, but when no other experiment
-  # does, the first suppressed one supplies its control value instead of the
-  # default (even when it lacks the key, so a later one cannot).
+  # Mirrors the Java SDK's `getVariableAssignment`. The candidates are the
+  # experiments whose variants define the key, by id ascending; the winner is
+  # the first the unit is assigned to, overridden into or given by a rule. A
+  # held-out candidate never wins over one of those, but the first one is the
+  # winner (for its control value) when none qualifies. The winner's variant
+  # supplies the value, or the default when it lacks the key: the arm a unit
+  # got never passes the key on to a later candidate. Only the winner is
+  # exposed; every other candidate checked on an exposing read fires only the
+  # holdouts covering it, as in Java. A peek exposes nothing.
   defp do_variable_value(state, key, default_value, queue_exposure) do
-    experiments = Map.get(state.variable_index, key, [])
+    {winner, state} =
+      variable_winner(state, Map.get(state.variable_index, key, []), queue_exposure)
 
-    {result, state} =
-      Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc_state} ->
-        {assignment, acc_state} = get_or_assign(acc_state, exp)
-
-        acc_state =
-          if queue_exposure,
-            do: expose(acc_state, exp.name, exp, assignment),
-            else: acc_state
-
-        cond do
-          assignment.assigned || assignment.overridden || assignment.rule_override ->
-            config = variant_config(exp, assignment)
-
-            if is_map(config) && Map.has_key?(config, key),
-              do: {:halt, {{:found, config[key]}, acc_state}},
-              else: {:cont, {fallback, acc_state}}
-
-          assignment.suppressed and fallback == nil ->
-            {:cont, {{:suppressed, variant_config(exp, assignment)}, acc_state}}
-
-          true ->
-            {:cont, {fallback, acc_state}}
-        end
-      end)
-
-    case result do
-      {:found, value} ->
-        {value, state}
-
-      {:suppressed, %{} = config} when is_map_key(config, key) ->
-        {Map.fetch!(config, key), state}
-
-      _ ->
+    case winner do
+      nil ->
         {default_value, state}
+
+      {exp, assignment} ->
+        state =
+          if queue_exposure,
+            do: expose(state, exp.name, exp, assignment),
+            else: state
+
+        case variant_config(exp, assignment) do
+          %{^key => value} -> {value, state}
+          _ -> {default_value, state}
+        end
     end
+  end
+
+  defp variable_winner(state, experiments, queue_exposure) do
+    Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc} ->
+      {assignment, acc} = get_or_assign(acc, exp)
+
+      cond do
+        assignment.assigned || assignment.overridden || assignment.rule_override ->
+          {:halt, {{exp, assignment}, acc}}
+
+        true ->
+          acc =
+            if queue_exposure,
+              do: queue_holdout_exposures(acc, assignment.holdout_arms),
+              else: acc
+
+          if assignment.suppressed and fallback == nil,
+            do: {:cont, {{exp, assignment}, acc}},
+            else: {:cont, {fallback, acc}}
+      end
+    end)
   end
 
   defp variant_config(experiment, assignment) do
@@ -2180,7 +2187,12 @@ defmodule ABSmartly.Context do
         end)
       end)
 
-    reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
+    # Candidates for a shared key are tried by experiment id ascending, as in
+    # the Java SDK, whatever order the experiments arrive in.
+    sorted_var_index =
+      Map.new(var_index, fn {key, exps} ->
+        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id)}
+      end)
 
     # Parsed once per installed data, so an experiment's rules are not
     # re-decoded on every assignment.
@@ -2192,7 +2204,7 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    {reversed_var_index, exp_index, aud_cache, rules_cache}
+    {sorted_var_index, exp_index, aud_cache, rules_cache}
   end
 
   # Mirrors the JavaScript SDK's `_init`: only holdouts with a non-empty split

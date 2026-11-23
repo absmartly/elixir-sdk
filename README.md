@@ -163,6 +163,15 @@ button_color = Context.variable_value(context, "button_color", "blue")
 timeout = Context.variable_value(context, "api_timeout", 5000)
 ```
 
+#### Shared variable keys
+
+When several running experiments define the same variable key, `Context.variable_value/3` picks one winner:
+
+- The candidates are the experiments with any variant that defines the key, tried in ascending experiment id order.
+- The winner is the first candidate the unit is in: assigned, overridden or given a variant by an assignment rule. When none qualifies, the first candidate held out by a [holdout](#holdouts) supplies its control value; otherwise your default is returned.
+- The value comes from the winner's variant. If that variant does not define the key, your default is returned: a later experiment is never tried because of the arm the unit got.
+- Only the winner is exposed. Candidates that were checked but did not win publish no exposure of their own (a holdout covering one still publishes its exposure, as in the Java SDK). `Context.peek_variable_value/3` follows the same rule and publishes nothing.
+
 ### Peek at Treatment Variants
 
 Although generally not recommended, it is sometimes necessary to peek at a treatment without triggering an exposure. The ABsmartly SDK provides a `peek/2` function for that.
@@ -242,7 +251,7 @@ Exposures from a rule are published with `ruleOverride: true` (and `assigned: fa
 
 A holdout keeps a share of units out of a set of experiments, to measure their combined impact. Holdouts are configured in the Web Console and need no code: the SDK applies them to every experiment they cover.
 
-- A unit **held out** of an experiment gets variant 0 (control), so `Context.treatment/2` returns 0. The experiment publishes no exposure of its own for that unit, and never supplies a variable key that another experiment the unit is assigned to, overridden into or given by a rule supplies: `Context.variable_value/3` falls back to the held-out experiment's control value only when no such experiment has the key (and to your default when control does not set it either). When several held-out experiments define the key, only the first one in the order the experiments appear in the context data is the fallback: if its control does not set the key, your default is returned without trying later ones.
+- A unit **held out** of an experiment gets variant 0 (control), so `Context.treatment/2` returns 0. The experiment publishes no exposure of its own for that unit, and never supplies a variable key that another experiment the unit is assigned to, overridden into or given by a rule supplies: `Context.variable_value/3` falls back to the held-out experiment's control value only when no such experiment has the key (and to your default when control does not set it either). When several held-out experiments define the key, only the first one by experiment id is the fallback: if its control does not set the key, your default is returned without trying later ones.
 - In a three-arm holdout, the second arm holds units out of the covered experiments that are not full-on, and full-on experiments serve their full-on variant as usual.
 - An experiment covered by several holdouts is held out when any one of them holds the unit out.
 - `Context.set_override/3` and a matching [assignment rule](#assignment-rules) win over a holdout.
