@@ -238,6 +238,21 @@ Rule conditions see the same attributes as audience filters, including `applicat
 
 Exposures from a rule are published with `ruleOverride: true` (and `assigned: false`) so they can be excluded from analysis. A cached assignment is re-evaluated, and exposed again, when an attribute change or a refresh changes the outcome of the rules.
 
+### Holdouts
+
+A holdout keeps a share of units out of a set of experiments, to measure their combined impact. Holdouts are configured in the Web Console and need no code: the SDK applies them to every experiment they cover.
+
+- A unit **held out** of an experiment gets variant 0 (control), so `Context.treatment/2` returns 0. The experiment publishes no exposure of its own for that unit, and never supplies a variable key that another experiment the unit is assigned to, overridden into or given by a rule supplies: `Context.variable_value/3` falls back to the held-out experiment's control value only when no such experiment has the key (and to your default when control does not set it either). When several held-out experiments define the key, only the first one in the order the experiments appear in the context data is the fallback: if its control does not set the key, your default is returned without trying later ones.
+- In a three-arm holdout, the second arm holds units out of the covered experiments that are not full-on, and full-on experiments serve their full-on variant as usual.
+- An experiment covered by several holdouts is held out when any one of them holds the unit out.
+- `Context.set_override/3` and a matching [assignment rule](#assignment-rules) win over a holdout.
+- Each covering holdout publishes one exposure of its own (with the holdout's id and name) the first time `Context.treatment/2` or `Context.variable_value/3` reads a covered experiment, whether or not the unit is held out. `Context.peek/2` and `Context.peek_variable_value/3` publish nothing.
+- Set the experiment's unit before its first exposing read. A covered experiment read without its unit has no holdout arm, so no holdout exposure is published. Setting the unit later re-resolves it only if it was not exposed yet, as in the JavaScript SDK; an exposed experiment keeps the decision the user already saw.
+- A read of an experiment that is not in the context data publishes a placeholder exposure (id 0, as in the JavaScript SDK). That placeholder never counts as an exposure of the covered experiment the name later resolves to: its first real exposing read still publishes the experiment's and its holdouts' exposures, and a unit set before that read still re-resolves its holdout arms.
+- The holdout arm is computed from the covered experiment's unit, once per holdout iteration, so a refresh that edits a holdout without starting a new iteration never moves a unit to another arm.
+
+`Context.data/1` returns the holdouts in `ABSmartly.Types.ContextData`'s `holdouts` field (a list of `ABSmartly.Types.HoldoutData`), and each `ABSmartly.Types.ExperimentData` has the `holdout_ids` and `holdout_type` the collector sent.
+
 ### Custom Assignments
 
 Custom assignments allow you to implement your own assignment logic while still benefiting from ABsmartly's analytics.
@@ -540,6 +555,16 @@ end
 ```
 
 ## Changelog
+
+### Holdouts are applied
+
+#### Added
+
+- `ABSmartly.Types.ContextData` has a new `holdouts` field (default `[]`), `ABSmartly.Types.ExperimentData` has new `holdout_ids` and `holdout_type` fields (default `nil`), and there is a new `ABSmartly.Types.HoldoutData` struct. Payloads without holdouts are handled exactly as before.
+
+#### Changed
+
+- **Holdouts** (see [Holdouts](#holdouts)), as in the JavaScript SDK: experiments covered by a holdout through `holdoutIds` are held out (variant 0, no exposure of their own) for units in the holdout's held-out arm, unless an override or matching assignment rule takes precedence; each covering holdout publishes its own exposure if the experiment's unit is set before its first exposing read. Two-arm and three-arm holdouts are supported; the number of arms comes from the holdout's `split`.
 
 ### Assignment rules, semver operators and a versioned `X-Agent`
 

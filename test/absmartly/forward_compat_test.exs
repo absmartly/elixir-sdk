@@ -10,6 +10,8 @@ defmodule ABSmartly.ForwardCompatTest do
 
   alias ABSmartly.{Context, Types, Utils, VariantAssigner}
 
+  @holdouts_fixture Path.expand("../fixtures/holdouts_forward_compat.json", __DIR__)
+
   @session "e791e240fcd3df7d238cfc285f475e8152fcc0ec"
 
   defp experiment(id, name, assignment_rules, extra \\ %{}) do
@@ -51,7 +53,7 @@ defmodule ABSmartly.ForwardCompatTest do
       )
 
   # Goes through the same decoding as a fetched payload.
-  defp start_context(payload) do
+  defp start_context(payload, units \\ %{"session_id" => @session}) do
     {:ok, data} = payload |> Jason.encode!() |> Jason.decode!() |> Context.safe_context_data()
 
     sdk_config = %Types.SDKConfig{
@@ -63,7 +65,7 @@ defmodule ABSmartly.ForwardCompatTest do
     }
 
     context_config = %Types.ContextConfig{
-      units: %{"session_id" => @session},
+      units: units,
       attributes: [],
       overrides: %{},
       custom_assignments: %{}
@@ -147,4 +149,82 @@ defmodule ABSmartly.ForwardCompatTest do
       assert Context.treatment(ctx, name) == normal_variant(), inspect(r)
     end
   end
+
+  test "unknown and malformed fields in holdouts are ignored, with no log output" do
+    payload = @holdouts_fixture |> File.read!() |> Jason.decode!()
+
+    # Decoding runs in this process and evaluation in the context's, so only
+    # their log events count: other tests run concurrently (async: true).
+    {log, ctx} =
+      log_events_of_self_and_context(fn ->
+        start_context(payload, %{"session_id" => @session, "user_id" => @session})
+      end)
+
+    assert Context.is_ready?(ctx)
+
+    assert Context.treatment(ctx, "exp_covered_a") == 0
+    assert Context.variable_value(ctx, "color", "none") == "none"
+    assert Context.treatment(ctx, "exp_covered_b") == 1
+    assert Context.treatment(ctx, "exp_bad_holdout_ids") == 1
+
+    exposures =
+      for e <- pending_exposures(ctx),
+          do: {e.id, e.name, e.unit, e.variant}
+
+    assert exposures == [
+             {11, "holdout_a", "session_id", 0},
+             {12, "holdout_b", "session_id", 1},
+             {2, "exp_covered_b", "user_id", 1},
+             {12, "holdout_b", "user_id", 1},
+             {3, "exp_bad_holdout_ids", "session_id", 1}
+           ]
+
+    data = Context.data(ctx)
+    assert Enum.map(data.experiments, & &1.holdout_ids) == [[11, 12], [12, 99], nil]
+    assert Enum.map(data.experiments, & &1.holdout_type) == ["full", nil, nil]
+    assert Enum.map(data.holdouts, & &1.id) == [11, 12, 14, 15]
+    assert Enum.find(data.holdouts, &(&1.id == 14)).split == []
+    assert %{seed_hi: 0, seed_lo: 0, iteration: 0} = Enum.find(data.holdouts, &(&1.id == 15))
+
+    assert log.() == []
+  end
+
+  # Also captures the context's events from its init on.
+  defp log_events_of_self_and_context(fun) do
+    test_pid = self()
+    {:ok, events} = Agent.start_link(fn -> [] end)
+    pids = :ets.new(:log_pids, [:public, :set])
+    :ets.insert(pids, {test_pid})
+    id = :"holdout_log_#{System.unique_integer([:positive])}"
+
+    :ok =
+      :logger.add_handler(id, __MODULE__.LogSink, %{
+        level: :warning,
+        config: %{events: events, pids: pids}
+      })
+
+    on_exit(fn -> :logger.remove_handler(id) end)
+
+    ctx = fun.()
+
+    {fn ->
+       # A synchronous call, so the context's earlier logging has run.
+       :sys.get_state(ctx)
+       :logger.remove_handler(id)
+       Agent.get(events, &Enum.reverse/1)
+     end, ctx}
+  end
+
+  defmodule LogSink do
+    @moduledoc false
+    # Runs in the logging process: an event counts when that process, or the
+    # process that started it, is the test's.
+    def log(%{level: level, msg: msg}, %{config: %{events: events, pids: pids}}) do
+      if :ets.info(pids) != :undefined and
+           Enum.any?([self() | Process.get(:"$ancestors", [])], &:ets.member(pids, &1)),
+         do: Agent.update(events, &[{level, msg} | &1])
+    end
+  end
+
+  defp pending_exposures(ctx), do: :sys.get_state(ctx).exposures |> Enum.reverse()
 end
