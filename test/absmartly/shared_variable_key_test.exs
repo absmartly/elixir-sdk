@@ -304,6 +304,21 @@ defmodule ABSmartly.SharedVariableKeyTest do
     assert exposed(ctx, ep) == [{5, "exp_dup_a"}]
   end
 
+  test "an integral float id is the same id as the integer" do
+    {ctx, ep} =
+      start(
+        [
+          strict_us(5, "exp_int", [%{"k" => "int0"}, %{"k" => "int1"}]),
+          experiment(5.0, "exp_float", [%{"k" => "float0"}, %{"k" => "float1"}])
+        ],
+        attributes: [country: "GB"]
+      )
+
+    assert Context.variable_keys(ctx)["k"] == ["exp_int"]
+    assert Context.variable_value(ctx, "k", "default") == "default"
+    assert exposed(ctx, ep) == []
+  end
+
   test "a later read of another key exposes its own winner once" do
     {ctx, ep} =
       start([
