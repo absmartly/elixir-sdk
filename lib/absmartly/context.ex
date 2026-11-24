@@ -1119,8 +1119,9 @@ defmodule ABSmartly.Context do
   # winner (for its control value) when none qualifies. The winner's variant
   # supplies the value, or the default when it lacks the key: the arm a unit
   # got never passes the key on to a later candidate. Only the winner is
-  # exposed; every other candidate checked on an exposing read fires only the
-  # holdouts covering it, as in Java. A peek exposes nothing.
+  # exposed. On an exposing read every candidate checked, the winner included,
+  # first fires the holdouts covering it, as in Java, so a covered winner's
+  # holdout exposures come before its own. A peek exposes nothing.
   defp do_variable_value(state, key, default_value, queue_exposure) do
     {winner, state} =
       variable_winner(state, Map.get(state.variable_index, key, []), queue_exposure)
@@ -1146,19 +1147,20 @@ defmodule ABSmartly.Context do
     Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc} ->
       {assignment, acc} = get_or_assign(acc, exp)
 
+      acc =
+        if queue_exposure,
+          do: queue_holdout_exposures(acc, assignment.holdout_arms),
+          else: acc
+
       cond do
         assignment.assigned || assignment.overridden || assignment.rule_override ->
           {:halt, {{exp, assignment}, acc}}
 
-        true ->
-          acc =
-            if queue_exposure,
-              do: queue_holdout_exposures(acc, assignment.holdout_arms),
-              else: acc
+        assignment.suppressed and fallback == nil ->
+          {:cont, {{exp, assignment}, acc}}
 
-          if assignment.suppressed and fallback == nil,
-            do: {:cont, {{exp, assignment}, acc}},
-            else: {:cont, {fallback, acc}}
+        true ->
+          {:cont, {fallback, acc}}
       end
     end)
   end
@@ -2188,10 +2190,11 @@ defmodule ABSmartly.Context do
       end)
 
     # Candidates for a shared key are tried by experiment id ascending, as in
-    # the Java SDK, whatever order the experiments arrive in.
+    # the Java SDK, whatever order the experiments arrive in. Like Java, only
+    # the first experiment in the data with a given id is a candidate.
     sorted_var_index =
       Map.new(var_index, fn {key, exps} ->
-        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id)}
+        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id) |> Enum.uniq_by(& &1.id)}
       end)
 
     # Parsed once per installed data, so an experiment's rules are not

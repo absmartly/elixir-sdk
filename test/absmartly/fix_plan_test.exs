@@ -194,9 +194,9 @@ defmodule ABSmartly.FixPlanTest do
 
   describe "fix #8 - variable index ordering" do
     test "variable index preserves experiment order" do
-      shared = fn name, color ->
+      shared = fn id, name, color ->
         %{
-          "id" => 1,
+          "id" => id,
           "name" => name,
           "unitType" => "session_id",
           "iteration" => 1,
@@ -212,7 +212,9 @@ defmodule ABSmartly.FixPlanTest do
       end
 
       ctx =
-        start_context(%{"experiments" => [shared.("first", "red"), shared.("second", "blue")]})
+        start_context(%{
+          "experiments" => [shared.(1, "first", "red"), shared.(2, "second", "blue")]
+        })
 
       assert Context.variable_keys(ctx)["color"] == ["first", "second"]
       assert Context.variable_value(ctx, "color", "none") == "red"

@@ -292,6 +292,18 @@ defmodule ABSmartly.SharedVariableKeyTest do
     end
   end
 
+  test "of two experiments with the same id only the first in the data is a candidate" do
+    {ctx, ep} =
+      start([
+        experiment(5, "exp_dup_a", [%{"k" => "a0"}, %{"other" => 1}]),
+        experiment(5, "exp_dup_b", [%{"k" => "b0"}, %{"k" => "b1"}])
+      ])
+
+    assert Context.variable_keys(ctx)["k"] == ["exp_dup_a"]
+    assert Context.variable_value(ctx, "k", "default") == "default"
+    assert exposed(ctx, ep) == [{5, "exp_dup_a"}]
+  end
+
   test "a later read of another key exposes its own winner once" do
     {ctx, ep} =
       start([

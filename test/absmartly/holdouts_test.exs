@@ -2760,8 +2760,8 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.pending(ctx) == 2
 
     assert published(ctx, ep) == [
-             exposure(1, "exp_detached_variable_winner", 1, unit: "user_id", full_on: true),
-             holdout_exposure(11, "holdout_detached_variable", 1, "user_id")
+             holdout_exposure(11, "holdout_detached_variable", 1, "user_id"),
+             exposure(1, "exp_detached_variable_winner", 1, unit: "user_id", full_on: true)
            ]
   end
 
@@ -3012,8 +3012,8 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.variable_value(ctx, "color", "default") == "treatment"
 
     assert published(ctx, ep) == [
-             exposure(1, "exp_holdout_rules", 1, assigned: false, rule_override: true),
-             holdout_exposure(11, "holdout_rules_suppression", 0)
+             holdout_exposure(11, "holdout_rules_suppression", 0),
+             exposure(1, "exp_holdout_rules", 1, assigned: false, rule_override: true)
            ]
   end
 
