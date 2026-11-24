@@ -2211,9 +2211,10 @@ defmodule ABSmartly.Context do
     {sorted_var_index, exp_index, aud_cache, rules_cache}
   end
 
-  # Jackson truncates a float id and parses a numeric string id, ignoring
+  # Jackson truncates a float id and parses a string of ASCII digits, ignoring
   # surrounding whitespace (an empty string is 0). Any other id is kept as
-  # itself, which Erlang term order sorts after every number.
+  # itself, which Erlang term order sorts after every number. Ids the backend
+  # does not send (non-ASCII digits or spaces) can differ from Java.
   defp java_id(%{id: id}) when is_integer(id), do: id
   defp java_id(%{id: id}) when is_float(id), do: trunc(id)
 
