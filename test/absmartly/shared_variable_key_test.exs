@@ -319,6 +319,31 @@ defmodule ABSmartly.SharedVariableKeyTest do
     assert exposed(ctx, ep) == []
   end
 
+  test "a non-integral float id is ordered and deduplicated as its integer part" do
+    {ctx, ep} =
+      start([
+        experiment(3.5, "exp_float", [%{"k" => "float0"}, %{"k" => "float1"}]),
+        experiment(3, "exp_int", [%{"k" => "int0"}, %{"k" => "int1"}]),
+        experiment(2.9, "exp_low", [%{"k" => "low0"}, %{"k" => "low1"}])
+      ])
+
+    assert Context.variable_keys(ctx)["k"] == ["exp_low", "exp_float"]
+    assert Context.variable_value(ctx, "k", "default") == "low1"
+    assert exposed(ctx, ep) == [{2.9, "exp_low"}]
+  end
+
+  test "a numeric string id is ordered as its integer" do
+    {ctx, ep} =
+      start([
+        experiment(7, "exp_a", [%{"k" => "a0"}, %{"k" => "a1"}]),
+        experiment("3", "exp_b", [%{"k" => "b0"}, %{"k" => "b1"}])
+      ])
+
+    assert Context.variable_keys(ctx)["k"] == ["exp_b", "exp_a"]
+    assert Context.variable_value(ctx, "k", "default") == "b1"
+    assert exposed(ctx, ep) == [{"3", "exp_b"}]
+  end
+
   test "a later read of another key exposes its own winner once" do
     {ctx, ep} =
       start([

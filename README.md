@@ -573,7 +573,7 @@ end
 
 #### Changed
 
-- `Context.variable_keys/1` lists each key's experiments by ascending experiment id (as in the Java SDK) instead of in context-data order, and an experiment repeating an id already listed for the key is left out.
+- `Context.variable_keys/1` lists each key's experiments by ascending experiment id (as in the Java SDK) instead of in context-data order, and an experiment repeating an id already listed for the key is left out. Ids are compared as the Java SDK reads them: a float id by its integer part (`5.0` and `5.7` are 5) and a numeric string id as its integer (`"5"` is 5).
 - On an exposing variable read, the exposures of the holdouts covering the winning experiment are queued before the winner's own exposure, as in the Java SDK.
 
 ### Holdouts are applied

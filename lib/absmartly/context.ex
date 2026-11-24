@@ -2191,11 +2191,11 @@ defmodule ABSmartly.Context do
 
     # Candidates for a shared key are tried by experiment id ascending, as in
     # the Java SDK, whatever order the experiments arrive in. Like Java, only
-    # the first experiment in the data with a given id is a candidate (an
-    # integral float id such as `5.0` is the same id as `5`).
+    # the first experiment in the data with a given id is a candidate, and the
+    # id is read as Java reads it into an `int` (`5.0`, `5.7` and `"5"` are 5).
     sorted_var_index =
       Map.new(var_index, fn {key, exps} ->
-        {key, exps |> Enum.reverse() |> Enum.sort_by(& &1.id) |> Enum.uniq_by(&same_id/1)}
+        {key, exps |> Enum.reverse() |> Enum.sort_by(&java_id/1) |> Enum.uniq_by(&java_id/1)}
       end)
 
     # Parsed once per installed data, so an experiment's rules are not
@@ -2211,7 +2211,19 @@ defmodule ABSmartly.Context do
     {sorted_var_index, exp_index, aud_cache, rules_cache}
   end
 
-  defp same_id(%{id: id}), do: Types.HoldoutData.integer_id(id) || id
+  # Jackson truncates a float id and parses a numeric string id. Any other id
+  # sorts after every number, as itself.
+  defp java_id(%{id: id}) when is_integer(id), do: {0, id}
+  defp java_id(%{id: id}) when is_float(id), do: {0, trunc(id)}
+
+  defp java_id(%{id: id}) when is_binary(id) do
+    case Integer.parse(id) do
+      {int, ""} -> {0, int}
+      _ -> {1, id}
+    end
+  end
+
+  defp java_id(%{id: id}), do: {1, id}
 
   # Mirrors the JavaScript SDK's `_init`: only holdouts with a non-empty split
   # are kept, and each experiment's `holdoutIds` resolve to those holdouts,
