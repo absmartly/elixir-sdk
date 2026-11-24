@@ -332,6 +332,16 @@ defmodule ABSmartly.SharedVariableKeyTest do
     assert exposed(ctx, ep) == [{2.9, "exp_low"}]
   end
 
+  test "a negative non-integral float id is truncated towards zero" do
+    {ctx, _ep} =
+      start([
+        experiment(-5, "exp_int", [%{"k" => "int0"}, %{"k" => "int1"}]),
+        experiment(-5.7, "exp_float", [%{"k" => "float0"}, %{"k" => "float1"}])
+      ])
+
+    assert Context.variable_keys(ctx)["k"] == ["exp_int"]
+  end
+
   test "a numeric string id is ordered as its integer" do
     {ctx, ep} =
       start([
@@ -342,6 +352,27 @@ defmodule ABSmartly.SharedVariableKeyTest do
     assert Context.variable_keys(ctx)["k"] == ["exp_b", "exp_a"]
     assert Context.variable_value(ctx, "k", "default") == "b1"
     assert exposed(ctx, ep) == [{"3", "exp_b"}]
+  end
+
+  test "a padded numeric string id is its integer and an empty one is 0" do
+    {ctx, _ep} =
+      start([
+        experiment(3, "exp_a", [%{"k" => "a0"}, %{"k" => "a1"}]),
+        experiment(" 2", "exp_b", [%{"k" => "b0"}, %{"k" => "b1"}]),
+        experiment("", "exp_c", [%{"k" => "c0"}, %{"k" => "c1"}])
+      ])
+
+    assert Context.variable_keys(ctx)["k"] == ["exp_c", "exp_b", "exp_a"]
+  end
+
+  test "a non-numeric id sorts after every numeric id" do
+    {ctx, _ep} =
+      start([
+        experiment("x", "exp_x", [%{"k" => "x0"}, %{"k" => "x1"}]),
+        experiment(900, "exp_n", [%{"k" => "n0"}, %{"k" => "n1"}])
+      ])
+
+    assert Context.variable_keys(ctx)["k"] == ["exp_n", "exp_x"]
   end
 
   test "a later read of another key exposes its own winner once" do

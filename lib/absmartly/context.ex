@@ -2192,7 +2192,7 @@ defmodule ABSmartly.Context do
     # Candidates for a shared key are tried by experiment id ascending, as in
     # the Java SDK, whatever order the experiments arrive in. Like Java, only
     # the first experiment in the data with a given id is a candidate, and the
-    # id is read as Java reads it into an `int` (`5.0`, `5.7` and `"5"` are 5).
+    # id is read as Java reads it into an `int` (`5.0`, `5.7` and `" 5"` are 5).
     sorted_var_index =
       Map.new(var_index, fn {key, exps} ->
         {key, exps |> Enum.reverse() |> Enum.sort_by(&java_id/1) |> Enum.uniq_by(&java_id/1)}
@@ -2211,19 +2211,26 @@ defmodule ABSmartly.Context do
     {sorted_var_index, exp_index, aud_cache, rules_cache}
   end
 
-  # Jackson truncates a float id and parses a numeric string id. Any other id
-  # sorts after every number, as itself.
-  defp java_id(%{id: id}) when is_integer(id), do: {0, id}
-  defp java_id(%{id: id}) when is_float(id), do: {0, trunc(id)}
+  # Jackson truncates a float id and parses a numeric string id, ignoring
+  # surrounding whitespace (an empty string is 0). Any other id is kept as
+  # itself, which Erlang term order sorts after every number.
+  defp java_id(%{id: id}) when is_integer(id), do: id
+  defp java_id(%{id: id}) when is_float(id), do: trunc(id)
 
   defp java_id(%{id: id}) when is_binary(id) do
-    case Integer.parse(id) do
-      {int, ""} -> {0, int}
-      _ -> {1, id}
+    case String.trim(id) do
+      "" ->
+        0
+
+      trimmed ->
+        case Integer.parse(trimmed) do
+          {int, ""} -> int
+          _ -> id
+        end
     end
   end
 
-  defp java_id(%{id: id}), do: {1, id}
+  defp java_id(%{id: id}), do: id
 
   # Mirrors the JavaScript SDK's `_init`: only holdouts with a non-empty split
   # are kept, and each experiment's `holdoutIds` resolve to those holdouts,
