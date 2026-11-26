@@ -413,6 +413,53 @@ defmodule ABSmartly.SharedVariableKeyTest do
       assert exposed(ctx, ep) == [{2, "exp_session"}, {1, "exp_user"}, {1, "exp_user"}]
     end
 
+    test "stays pinned when exposed first and given a custom assignment" do
+      {ctx, ep} = login_pair()
+
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert :ok = Context.set_custom_assignment(ctx, "exp_user", 1)
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert exposed(ctx, ep) == [{1, "exp_user"}, {2, "exp_session"}, {1, "exp_user"}]
+    end
+
+    test "stays pinned when exposed by a treatment before the variable read" do
+      {ctx, ep} = login_pair()
+
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert exposed(ctx, ep) == [{1, "exp_user"}, {2, "exp_session"}]
+    end
+
+    test "waits for the unit across reads made before it is set" do
+      {ctx, _ep} = login_pair()
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert Context.peek(ctx, "exp_user") == 0
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.variable_value(ctx, "k", "default") == "user1"
+    end
+
+    test "keeps waiting for the unit when an attribute change rebuilds it" do
+      {ctx, _ep} =
+        start([
+          experiment(2, "exp_session", [%{"k" => "session0"}, %{"k" => "session1"}]),
+          experiment(1, "exp_user", [%{"k" => "user0"}, %{"k" => "user1"}],
+            unit_type: "user_id",
+            audience: @us_audience
+          )
+        ])
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_attribute(ctx, "country", "US")
+      assert Context.peek(ctx, "exp_user") == 0
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.peek_variable_value(ctx, "k", "default") == "user1"
+    end
+
     test "keeps a decision cached by a treatment peek, as before" do
       {ctx, ep} = login_pair()
 
