@@ -1689,7 +1689,7 @@ defmodule ABSmartly.Context do
       # A shared-key candidate passed over while its unit was missing. (While
       # it still is, a rebuild would only give the same control.)
       cached.variable_unassigned and Map.has_key?(state.units, unit_type(experiment)) ->
-        reassign(state, experiment, name)
+        reassign(cache_evaluation_vars(state, experiment), experiment, name)
 
       (cached.holdout_key != nil or state.experiment_holdouts != %{}) and
           (cached.holdout_key != holdout_key(state, experiment) or

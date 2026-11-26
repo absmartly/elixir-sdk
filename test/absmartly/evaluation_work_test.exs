@@ -249,6 +249,42 @@ defmodule ABSmartly.EvaluationWorkTest do
     assert Context.pending(ctx) - exposed == 41
   end
 
+  test "variable candidates re-assigned at login share one evaluation map" do
+    audience = Jason.encode!(%{"filter" => [@us]})
+
+    experiments =
+      [
+        experiment("winner") |> Map.merge(%{"id" => 100, "split" => [0.0, 1.0]})
+        | Enum.map(1..3, fn i ->
+            experiment("login_#{i}", audience: audience)
+            |> Map.merge(%{
+              "id" => i,
+              "unitType" => "user_id",
+              "audienceStrict" => true,
+              "split" => [0.0, 1.0]
+            })
+          end)
+      ]
+      |> Enum.map(fn exp ->
+        put_in(exp["variants"], [
+          %{"name" => "A", "config" => ~s({"k":"a"})},
+          %{"name" => "B", "config" => ~s({"k":"b"})}
+        ])
+      end)
+
+    ctx = start_context(experiments, [%{"name" => "country", "value" => "GB"}])
+    assert Context.peek_variable_value(ctx, "k", "default") == "b"
+
+    counts =
+      count_calls(ctx, [@build], fn ->
+        :ok = Context.set_attribute(ctx, "country", "US")
+        :ok = Context.set_unit(ctx, "user_id", "user-1")
+        Enum.each(1..3, &assert(Context.peek(ctx, "login_#{&1}") == 1))
+      end)
+
+    assert counts == %{@build => 1}
+  end
+
   test "experiments without rules or an audience never build the evaluation map" do
     names = Enum.map(1..20, &"plain_#{&1}")
     ctx = start_context(Enum.map(names, &experiment/1), many_attributes(200))
