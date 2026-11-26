@@ -460,6 +460,64 @@ defmodule ABSmartly.SharedVariableKeyTest do
       assert Context.peek_variable_value(ctx, "k", "default") == "user1"
     end
 
+    test "is assigned at login after an override was exposed and removed" do
+      {ctx, _ep} = login_pair()
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_override(ctx, "exp_user", 1)
+      assert Context.treatment(ctx, "exp_user") == 1
+      assert :ok = Context.set_override(ctx, "exp_user", nil)
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.treatment(ctx, "exp_user") == 1
+      assert Context.variable_value(ctx, "k", "default") == "user1"
+    end
+
+    test "is not flagged by a read its override won" do
+      {ctx, ep} = login_pair()
+
+      assert :ok = Context.set_override(ctx, "exp_user", 1)
+      assert Context.variable_value(ctx, "k", "default") == "user1"
+      assert :ok = Context.set_override(ctx, "exp_user", nil)
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert exposed(ctx, ep) == [{1, "exp_user"}, {1, "exp_user"}]
+    end
+
+    test "keeps waiting for the unit after a rule win seen only by a peek" do
+      {ctx, _ep} =
+        start([
+          experiment(2, "exp_session", [%{"k" => "session0"}, %{"k" => "session1"}]),
+          experiment(1, "exp_user", [%{"k" => "user0"}, %{"k" => "user1"}],
+            unit_type: "user_id",
+            rules: @us_rule
+          )
+        ])
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_attribute(ctx, "country", "US")
+      assert Context.peek(ctx, "exp_user") == 1
+      assert :ok = Context.set_attribute(ctx, "country", "GB")
+      assert Context.peek(ctx, "exp_user") == 0
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.variable_value(ctx, "k", "default") == "user1"
+    end
+
+    test "is not decided again on each read while its unit is still missing" do
+      {ctx, _ep} = login_pair()
+      assert Context.peek_variable_value(ctx, "k", "default") == "session1"
+
+      mfa = {ABSmartly.Context, :assign_variant, 2}
+      :erlang.trace_pattern(mfa, true, [:local])
+      :erlang.trace(ctx, true, [:call])
+
+      for _ <- 1..10, do: Context.peek_variable_value(ctx, "k", "default")
+
+      :erlang.trace(ctx, false, [:call])
+      :erlang.trace_pattern(mfa, false, [:local])
+      ref = :erlang.trace_delivered(ctx)
+      assert_receive {:trace_delivered, ^ctx, ^ref}
+      refute_received {:trace, ^ctx, :call, {ABSmartly.Context, :assign_variant, _}}
+    end
+
     test "keeps a decision cached by a treatment peek, as before" do
       {ctx, ep} = login_pair()
 

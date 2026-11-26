@@ -1019,7 +1019,8 @@ defmodule ABSmartly.Context do
           placeholder_exposed: MapSet.delete(state.placeholder_exposed, experiment_name)
       }
 
-      state = pin_exposed(state, experiment_name)
+      # An override's exposure is not the decision underneath it.
+      state = if assignment.overridden, do: state, else: pin_exposed(state, experiment_name)
 
       state =
         if assignment.suppressed and not assignment.overridden and not assignment.rule_override,
@@ -1759,7 +1760,7 @@ defmodule ABSmartly.Context do
     # A rebuild while the unit is still missing keeps waiting for it.
     assignment =
       if match?(%{variable_unassigned: true}, Map.get(state.assignments, name)) and
-           unit_missing?(state, experiment, assignment),
+           not Map.has_key?(state.units, unit_type(experiment)),
          do: %{assignment | variable_unassigned: true},
          else: assignment
 
