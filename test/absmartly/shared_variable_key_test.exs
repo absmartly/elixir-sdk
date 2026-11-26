@@ -12,31 +12,13 @@ defmodule ABSmartly.SharedVariableKeyTest do
   use ExUnit.Case, async: true
 
   alias ABSmartly.{Context, Types}
+  alias ABSmartly.Test.ScriptedPublisher
 
   @unit_type "session_id"
   @uid "e791e240fcd3df7d238cfc285f475e8152fcc0ec"
 
   @us_audience ~s({"filter":[{"eq":[{"var":"country"},{"value":"US"}]}]})
   @us_rule ~s({"rules":[{"name":"US","type":"assign","conditions":{"and":[{"eq":[{"var":"country"},{"value":"US"}]}]},"environments":[],"variant":1}]})
-
-  defmodule CapturePublisher do
-    @moduledoc false
-    @behaviour ABSmartly.ContextPublisher
-
-    def start do
-      name = :"shared_key_capture_publisher_#{System.unique_integer([:positive])}"
-      {:ok, _pid} = Agent.start_link(fn -> [] end, name: name)
-      Atom.to_string(name)
-    end
-
-    def events(endpoint), do: endpoint |> String.to_existing_atom() |> Agent.get(&Enum.reverse/1)
-
-    @impl ABSmartly.ContextPublisher
-    def publish(endpoint, _api_key, _application, _environment, event_map, _retries) do
-      Agent.update(String.to_existing_atom(endpoint), &[event_map | &1])
-      :ok
-    end
-  end
 
   # Every experiment assigns variant 1 to a unit it has (split [0, 1]).
   defp experiment(id, name, configs, opts \\ []) do
@@ -66,14 +48,14 @@ defmodule ABSmartly.SharedVariableKeyTest do
   end
 
   defp start(experiments, opts \\ []) do
-    endpoint = CapturePublisher.start()
+    endpoint = ScriptedPublisher.start([])
 
     sdk_config = %Types.SDKConfig{
       endpoint: endpoint,
       api_key: "test-api-key",
       application: "website",
       environment: "production",
-      publisher: CapturePublisher
+      publisher: ScriptedPublisher
     }
 
     context_config = %Types.ContextConfig{
@@ -94,7 +76,7 @@ defmodule ABSmartly.SharedVariableKeyTest do
     :ok = Context.publish(ctx)
 
     endpoint
-    |> CapturePublisher.events()
+    |> ScriptedPublisher.attempts()
     |> Enum.flat_map(&(&1["exposures"] || []))
     |> Enum.map(&{&1["id"], &1["name"]})
   end
@@ -373,6 +355,22 @@ defmodule ABSmartly.SharedVariableKeyTest do
       ])
 
     assert Context.variable_keys(ctx)["k"] == ["exp_n", "exp_x"]
+  end
+
+  test "a late unit assignment re-evaluates an unexposed missing-unit candidate" do
+    {ctx, ep} =
+      start(
+        [
+          experiment(2, "exp_session", [%{"k" => "session0"}, %{"k" => "session1"}]),
+          experiment(1, "exp_user", [%{"k" => "user0"}, %{"k" => "user1"}], unit_type: "user_id")
+        ],
+        units: %{"session_id" => @uid}
+      )
+
+    assert Context.variable_value(ctx, "k", "default") == "session1"
+    assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+    assert Context.treatment(ctx, "exp_user") == 1
+    assert exposed(ctx, ep) == [{2, "exp_session"}, {1, "exp_user"}]
   end
 
   test "a later read of another key exposes its own winner once" do

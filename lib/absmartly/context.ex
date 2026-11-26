@@ -1148,6 +1148,14 @@ defmodule ABSmartly.Context do
       {assignment, acc} = get_or_assign(acc, exp)
 
       acc =
+        if assignment.unit_missing and not MapSet.member?(acc.exposed_experiments, exp.name) do
+          updated = %{assignment | variable_unassigned: true}
+          %{acc | assignments: Map.put(acc.assignments, exp.name, updated)}
+        else
+          acc
+        end
+
+      acc =
         if queue_exposure,
           do: queue_holdout_exposures(acc, assignment.holdout_arms),
           else: acc
@@ -1649,6 +1657,10 @@ defmodule ABSmartly.Context do
     rules_changed = cached.rule_key != experiment.assignment_rules
 
     cond do
+      cached.variable_unassigned and Map.has_key?(state.units, unit_type(experiment)) and
+          not MapSet.member?(state.exposed_experiments, name) ->
+        reassign(state, experiment, name)
+
       (cached.holdout_key != nil or state.experiment_holdouts != %{}) and
           (cached.holdout_key != holdout_key(state, experiment) or
              (cached.holdout_unit_type != nil and
@@ -1714,6 +1726,8 @@ defmodule ABSmartly.Context do
 
   defp reassign(state, experiment, name) do
     {assignment, state} = assign_variant(state, experiment)
+
+    assignment = %{assignment | variable_unassigned: false}
 
     state = %{
       state
@@ -1906,7 +1920,7 @@ defmodule ABSmartly.Context do
         %{base | variant: experiment.full_on_variant, assigned: true, full_on: true}
 
       is_nil(uid) ->
-        base
+        %{base | unit_missing: true}
 
       true ->
         hashed_unit = Utils.hash_unit(uid)
