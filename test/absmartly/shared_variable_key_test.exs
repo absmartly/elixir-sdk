@@ -20,7 +20,6 @@ defmodule ABSmartly.SharedVariableKeyTest do
   @us_audience ~s({"filter":[{"eq":[{"var":"country"},{"value":"US"}]}]})
   @us_rule ~s({"rules":[{"name":"US","type":"assign","conditions":{"and":[{"eq":[{"var":"country"},{"value":"US"}]}]},"environments":[],"variant":1}]})
 
-  # Every experiment assigns variant 1 to a unit it has (split [0, 1]).
   defp experiment(id, name, configs, opts \\ []) do
     %{
       "id" => id,
@@ -357,20 +356,72 @@ defmodule ABSmartly.SharedVariableKeyTest do
     assert Context.variable_keys(ctx)["k"] == ["exp_n", "exp_x"]
   end
 
-  test "a late unit assignment re-evaluates an unexposed missing-unit candidate" do
-    {ctx, ep} =
-      start(
-        [
-          experiment(2, "exp_session", [%{"k" => "session0"}, %{"k" => "session1"}]),
-          experiment(1, "exp_user", [%{"k" => "user0"}, %{"k" => "user1"}], unit_type: "user_id")
-        ],
-        units: %{"session_id" => @uid}
-      )
+  describe "a candidate passed over for a missing unit" do
+    defp login_pair do
+      start([
+        experiment(2, "exp_session", [%{"k" => "session0"}, %{"k" => "session1"}]),
+        experiment(1, "exp_user", [%{"k" => "user0"}, %{"k" => "user1"}], unit_type: "user_id")
+      ])
+    end
 
-    assert Context.variable_value(ctx, "k", "default") == "session1"
-    assert :ok = Context.set_unit(ctx, "user_id", "user-1")
-    assert Context.treatment(ctx, "exp_user") == 1
-    assert exposed(ctx, ep) == [{2, "exp_session"}, {1, "exp_user"}]
+    test "is assigned once its unit is set" do
+      {ctx, ep} = login_pair()
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.treatment(ctx, "exp_user") == 1
+      assert exposed(ctx, ep) == [{2, "exp_session"}, {1, "exp_user"}]
+    end
+
+    test "is assigned once its unit is set with set_units" do
+      {ctx, ep} = login_pair()
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_units(ctx, %{"user_id" => "user-1"})
+      assert Context.variable_value(ctx, "k", "default") == "user1"
+      assert exposed(ctx, ep) == [{2, "exp_session"}, {1, "exp_user"}]
+    end
+
+    test "after a peek, wins a later peek once its unit is set" do
+      {ctx, _ep} = login_pair()
+
+      assert Context.peek_variable_value(ctx, "k", "default") == "session1"
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.peek_variable_value(ctx, "k", "default") == "user1"
+      assert Context.pending(ctx) == 0
+    end
+
+    test "stays pinned to the control it was exposed with" do
+      {ctx, ep} = login_pair()
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert exposed(ctx, ep) == [{2, "exp_session"}, {1, "exp_user"}]
+    end
+
+    test "stays pinned after a custom assignment clears its exposure" do
+      {ctx, ep} = login_pair()
+
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert :ok = Context.set_custom_assignment(ctx, "exp_user", 1)
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.treatment(ctx, "exp_user") == 0
+      assert exposed(ctx, ep) == [{2, "exp_session"}, {1, "exp_user"}, {1, "exp_user"}]
+    end
+
+    test "keeps a decision cached by a treatment peek, as before" do
+      {ctx, ep} = login_pair()
+
+      assert Context.peek(ctx, "exp_user") == 0
+      assert :ok = Context.set_unit(ctx, "user_id", "user-1")
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert Context.variable_value(ctx, "k", "default") == "session1"
+      assert exposed(ctx, ep) == [{2, "exp_session"}]
+    end
   end
 
   test "a later read of another key exposes its own winner once" do

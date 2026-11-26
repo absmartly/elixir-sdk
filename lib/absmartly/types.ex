@@ -317,7 +317,6 @@ defmodule ABSmartly.Types do
       rule_override: false,
       rule_variant: nil,
       rule_missing_unit: false,
-      unit_missing: false,
       variable_unassigned: false,
       rule_key: nil,
       audience_match_seq: 0,

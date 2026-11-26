@@ -1019,6 +1019,8 @@ defmodule ABSmartly.Context do
           placeholder_exposed: MapSet.delete(state.placeholder_exposed, experiment_name)
       }
 
+      state = clear_variable_unassigned(state, experiment_name)
+
       state =
         if assignment.suppressed and not assignment.overridden and not assignment.rule_override,
           do: state,
@@ -1147,13 +1149,7 @@ defmodule ABSmartly.Context do
     Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc} ->
       {assignment, acc} = get_or_assign(acc, exp)
 
-      acc =
-        if assignment.unit_missing and not MapSet.member?(acc.exposed_experiments, exp.name) do
-          updated = %{assignment | variable_unassigned: true}
-          %{acc | assignments: Map.put(acc.assignments, exp.name, updated)}
-        else
-          acc
-        end
+      acc = mark_variable_unassigned(acc, exp, assignment)
 
       acc =
         if queue_exposure,
@@ -1171,6 +1167,36 @@ defmodule ABSmartly.Context do
           {:cont, {fallback, acc}}
       end
     end)
+  end
+
+  # A candidate passed over because its unit is missing is decided again once
+  # that unit is set, unless it was exposed: only the winner is exposed, so an
+  # unexposed loser's provisional control must not stick after login. A
+  # decision cached while the unit was already set is left as it is.
+  defp mark_variable_unassigned(state, experiment, assignment) do
+    if assignment.assigned or assignment.overridden or assignment.rule_override or
+         assignment.variable_unassigned or Map.has_key?(state.units, unit_type(experiment)) or
+         MapSet.member?(state.exposed_experiments, experiment.name) do
+      state
+    else
+      updated = %{assignment | variable_unassigned: true}
+      %{state | assignments: Map.put(state.assignments, experiment.name, updated)}
+    end
+  end
+
+  # An exposed decision stays what the user saw, even if a later write (a
+  # custom assignment) clears the exposed marker.
+  defp clear_variable_unassigned(state, name) do
+    case Map.get(state.assignments, name) do
+      %Types.Assignment{variable_unassigned: true} = cached ->
+        %{
+          state
+          | assignments: Map.put(state.assignments, name, %{cached | variable_unassigned: false})
+        }
+
+      _ ->
+        state
+    end
   end
 
   defp variant_config(experiment, assignment) do
@@ -1657,8 +1683,8 @@ defmodule ABSmartly.Context do
     rules_changed = cached.rule_key != experiment.assignment_rules
 
     cond do
-      cached.variable_unassigned and Map.has_key?(state.units, unit_type(experiment)) and
-          not MapSet.member?(state.exposed_experiments, name) ->
+      # A shared-key candidate passed over while its unit was missing.
+      cached.variable_unassigned and Map.has_key?(state.units, unit_type(experiment)) ->
         reassign(state, experiment, name)
 
       (cached.holdout_key != nil or state.experiment_holdouts != %{}) and
@@ -1726,8 +1752,6 @@ defmodule ABSmartly.Context do
 
   defp reassign(state, experiment, name) do
     {assignment, state} = assign_variant(state, experiment)
-
-    assignment = %{assignment | variable_unassigned: false}
 
     state = %{
       state
@@ -1920,7 +1944,7 @@ defmodule ABSmartly.Context do
         %{base | variant: experiment.full_on_variant, assigned: true, full_on: true}
 
       is_nil(uid) ->
-        %{base | unit_missing: true}
+        base
 
       true ->
         hashed_unit = Utils.hash_unit(uid)

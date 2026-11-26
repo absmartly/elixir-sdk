@@ -576,6 +576,8 @@ end
 - `Context.variable_keys/1` lists each key's experiments by ascending experiment id (as in the Java SDK) instead of in context-data order, and an experiment repeating an id already listed for the key is left out. Ids are compared as the Java SDK reads them: a float id by its integer part (`5.0` and `5.7` are 5) and a string of ASCII digits, ignoring surrounding whitespace, as its integer (`" 5"` is 5, `""` is 0).
 - With shared variable keys, a winner whose variant lacks the key now returns the default instead of a later experiment's value, and experiments that were checked but did not win are no longer exposed (see Fixed above).
 - On an exposing variable read, the exposures of the holdouts covering the winning experiment are queued before the winner's own exposure, as in the Java SDK.
+- A variable read no longer exposes an experiment the unit is not in, even when it is the only experiment defining the key: an experiment whose unit is missing, or that excludes the unit by a strict audience, returns the default with no exposure.
+- An experiment passed over on a variable read because its unit was missing, and not exposed, is assigned again once that unit is set (`set_unit/3`, `set_units/2`), so a later read after login gets its real variant rather than a provisional control.
 
 ### Holdouts are applied
 
