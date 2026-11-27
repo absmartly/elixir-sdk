@@ -1019,6 +1019,9 @@ defmodule ABSmartly.Context do
           placeholder_exposed: MapSet.delete(state.placeholder_exposed, experiment_name)
       }
 
+      # An override's exposure is not the decision underneath it.
+      state = if assignment.overridden, do: state, else: pin_exposed(state, experiment_name)
+
       state =
         if assignment.suppressed and not assignment.overridden and not assignment.rule_override,
           do: state,
@@ -1112,47 +1115,90 @@ defmodule ABSmartly.Context do
     state
   end
 
-  # Like the JavaScript SDK's `_resolveVariableValue`, an experiment
-  # suppressed by a holdout never wins the key, but when no other experiment
-  # does, the first suppressed one supplies its control value instead of the
-  # default (even when it lacks the key, so a later one cannot).
+  # Mirrors the Java SDK's `getVariableAssignment`. The candidates are the
+  # experiments whose variants define the key, by id ascending; the winner is
+  # the first the unit is assigned to, overridden into or given by a rule. A
+  # held-out candidate never wins over one of those, but the first one is the
+  # winner (for its control value) when none qualifies. The winner's variant
+  # supplies the value, or the default when it lacks the key: the arm a unit
+  # got never passes the key on to a later candidate. Only the winner is
+  # exposed. On an exposing read every candidate checked, the winner included,
+  # first fires the holdouts covering it, as in Java, so a covered winner's
+  # holdout exposures come before its own. A peek exposes nothing.
   defp do_variable_value(state, key, default_value, queue_exposure) do
-    experiments = Map.get(state.variable_index, key, [])
+    {winner, state} =
+      variable_winner(state, Map.get(state.variable_index, key, []), queue_exposure)
 
-    {result, state} =
-      Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc_state} ->
-        {assignment, acc_state} = get_or_assign(acc_state, exp)
+    case winner do
+      nil ->
+        {default_value, state}
 
-        acc_state =
+      {exp, assignment} ->
+        state =
           if queue_exposure,
-            do: expose(acc_state, exp.name, exp, assignment),
-            else: acc_state
+            do: expose(state, exp.name, exp, assignment),
+            else: state
 
-        cond do
-          assignment.assigned || assignment.overridden || assignment.rule_override ->
-            config = variant_config(exp, assignment)
-
-            if is_map(config) && Map.has_key?(config, key),
-              do: {:halt, {{:found, config[key]}, acc_state}},
-              else: {:cont, {fallback, acc_state}}
-
-          assignment.suppressed and fallback == nil ->
-            {:cont, {{:suppressed, variant_config(exp, assignment)}, acc_state}}
-
-          true ->
-            {:cont, {fallback, acc_state}}
+        case variant_config(exp, assignment) do
+          %{^key => value} -> {value, state}
+          _ -> {default_value, state}
         end
-      end)
+    end
+  end
 
-    case result do
-      {:found, value} ->
-        {value, state}
+  defp variable_winner(state, experiments, queue_exposure) do
+    Enum.reduce_while(experiments, {nil, state}, fn exp, {fallback, acc} ->
+      {assignment, acc} = get_or_assign(acc, exp)
 
-      {:suppressed, %{} = config} when is_map_key(config, key) ->
-        {Map.fetch!(config, key), state}
+      acc = mark_variable_unassigned(acc, exp, assignment)
+
+      acc =
+        if queue_exposure,
+          do: queue_holdout_exposures(acc, assignment.holdout_arms),
+          else: acc
+
+      cond do
+        assignment.assigned || assignment.overridden || assignment.rule_override ->
+          {:halt, {{exp, assignment}, acc}}
+
+        assignment.suppressed and fallback == nil ->
+          {:cont, {{exp, assignment}, acc}}
+
+        true ->
+          {:cont, {fallback, acc}}
+      end
+    end)
+  end
+
+  # A candidate passed over because its unit is missing is decided again once
+  # that unit is set, unless it was ever exposed: only the winner is exposed,
+  # so an unexposed loser's provisional control must not stick after login. A
+  # decision cached while the unit was already set is left as it is.
+  defp mark_variable_unassigned(state, experiment, assignment) do
+    if assignment.variable_unassigned or assignment.exposed or
+         not unit_missing?(state, experiment, assignment) do
+      state
+    else
+      updated = %{assignment | variable_unassigned: true}
+      %{state | assignments: Map.put(state.assignments, experiment.name, updated)}
+    end
+  end
+
+  defp unit_missing?(state, experiment, assignment) do
+    not (assignment.assigned or assignment.overridden or assignment.rule_override) and
+      not Map.has_key?(state.units, unit_type(experiment))
+  end
+
+  # The cached decision stays what the user saw, even when a later write (a
+  # custom assignment) clears the exposed marker.
+  defp pin_exposed(state, name) do
+    case Map.get(state.assignments, name) do
+      %Types.Assignment{exposed: false} = cached ->
+        pinned = %{cached | exposed: true, variable_unassigned: false}
+        %{state | assignments: Map.put(state.assignments, name, pinned)}
 
       _ ->
-        {default_value, state}
+        state
     end
   end
 
@@ -1640,6 +1686,11 @@ defmodule ABSmartly.Context do
     rules_changed = cached.rule_key != experiment.assignment_rules
 
     cond do
+      # A shared-key candidate passed over while its unit was missing. (While
+      # it still is, a rebuild would only give the same control.)
+      cached.variable_unassigned and Map.has_key?(state.units, unit_type(experiment)) ->
+        reassign(cache_evaluation_vars(state, experiment), experiment, name)
+
       (cached.holdout_key != nil or state.experiment_holdouts != %{}) and
           (cached.holdout_key != holdout_key(state, experiment) or
              (cached.holdout_unit_type != nil and
@@ -1705,6 +1756,13 @@ defmodule ABSmartly.Context do
 
   defp reassign(state, experiment, name) do
     {assignment, state} = assign_variant(state, experiment)
+
+    # A rebuild while the unit is still missing keeps waiting for it.
+    assignment =
+      if match?(%{variable_unassigned: true}, Map.get(state.assignments, name)) and
+           not Map.has_key?(state.units, unit_type(experiment)),
+         do: %{assignment | variable_unassigned: true},
+         else: assignment
 
     state = %{
       state
@@ -2180,7 +2238,14 @@ defmodule ABSmartly.Context do
         end)
       end)
 
-    reversed_var_index = Map.new(var_index, fn {key, exps} -> {key, Enum.reverse(exps)} end)
+    # Candidates for a shared key are tried by experiment id ascending, as in
+    # the Java SDK, whatever order the experiments arrive in. Like Java, only
+    # the first experiment in the data with a given id is a candidate, and the
+    # id is read as Java reads it into an `int` (`5.0`, `5.7` and `" 5"` are 5).
+    sorted_var_index =
+      Map.new(var_index, fn {key, exps} ->
+        {key, exps |> Enum.reverse() |> Enum.sort_by(&java_id/1) |> Enum.uniq_by(&java_id/1)}
+      end)
 
     # Parsed once per installed data, so an experiment's rules are not
     # re-decoded on every assignment.
@@ -2192,8 +2257,30 @@ defmodule ABSmartly.Context do
         end
       end)
 
-    {reversed_var_index, exp_index, aud_cache, rules_cache}
+    {sorted_var_index, exp_index, aud_cache, rules_cache}
   end
+
+  # Jackson truncates a float id and parses a string of ASCII digits, ignoring
+  # surrounding whitespace (an empty string is 0). Any other id is kept as
+  # itself, which Erlang term order sorts after every number. Ids the backend
+  # does not send (non-ASCII digits or spaces) can differ from Java.
+  defp java_id(%{id: id}) when is_integer(id), do: id
+  defp java_id(%{id: id}) when is_float(id), do: trunc(id)
+
+  defp java_id(%{id: id}) when is_binary(id) do
+    case String.trim(id) do
+      "" ->
+        0
+
+      trimmed ->
+        case Integer.parse(trimmed) do
+          {int, ""} -> int
+          _ -> id
+        end
+    end
+  end
+
+  defp java_id(%{id: id}), do: id
 
   # Mirrors the JavaScript SDK's `_init`: only holdouts with a non-empty split
   # are kept, and each experiment's `holdoutIds` resolve to those holdouts,

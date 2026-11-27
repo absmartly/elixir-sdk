@@ -2760,8 +2760,8 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.pending(ctx) == 2
 
     assert published(ctx, ep) == [
-             exposure(1, "exp_detached_variable_winner", 1, unit: "user_id", full_on: true),
-             holdout_exposure(11, "holdout_detached_variable", 1, "user_id")
+             holdout_exposure(11, "holdout_detached_variable", 1, "user_id"),
+             exposure(1, "exp_detached_variable_winner", 1, unit: "user_id", full_on: true)
            ]
   end
 
@@ -3012,8 +3012,8 @@ defmodule ABSmartly.HoldoutsTest do
     assert Context.variable_value(ctx, "color", "default") == "treatment"
 
     assert published(ctx, ep) == [
-             exposure(1, "exp_holdout_rules", 1, assigned: false, rule_override: true),
-             holdout_exposure(11, "holdout_rules_suppression", 0)
+             holdout_exposure(11, "holdout_rules_suppression", 0),
+             exposure(1, "exp_holdout_rules", 1, assigned: false, rule_override: true)
            ]
   end
 
@@ -3046,6 +3046,57 @@ defmodule ABSmartly.HoldoutsTest do
     :ok = Context.set_attribute(ctx, "country", "US")
     assert Context.peek_variable_value(ctx, "color", "default") == "control"
     assert Context.peek(ctx, "exp_rule_won") == 1
+  end
+
+  # Shared variable keys (Java `getVariableAssignment`): only the winner is
+  # exposed, while a candidate checked before it fires only its holdouts.
+  test "an unassigned candidate checked before the winner exposes only its holdout" do
+    {ctx, ep} =
+      start(
+        data([holdout(11, "holdout_b", @holdout_b)], [
+          covered(1, "exp_strict_loser", [11],
+            audience: ~s({"filter":[{"value":false}]}),
+            audience_strict: true
+          )
+          |> with_variables("shared_loser"),
+          experiment(2, "exp_winner") |> with_config(1, ~s({"shared_loser":"from_winner"}))
+        ])
+      )
+
+    assert Context.variable_value(ctx, "shared_loser", "default") == "from_winner"
+
+    assert published(ctx, ep) == [
+             holdout_exposure(11, "holdout_b", 1),
+             exposure(2, "exp_winner", @normal_variant)
+           ]
+  end
+
+  test "a held-out fallback whose control lacks the key returns the default" do
+    {ctx, ep} =
+      start(
+        data([holdout(11, "holdout_a", @holdout_a)], [
+          covered(1, "exp_held_out_no_key", [11]) |> with_config(1, ~s({"fb":"treatment"})),
+          covered(2, "exp_held_out_with_key", [11]) |> with_variables("fb")
+        ])
+      )
+
+    assert Context.peek_variable_value(ctx, "fb", "default") == "default"
+    assert Context.pending(ctx) == 0
+    assert Context.variable_value(ctx, "fb", "default") == "default"
+    assert published(ctx, ep) == [holdout_exposure(11, "holdout_a", 0)]
+  end
+
+  test "a shared key's candidates are tried by experiment id, not data order" do
+    {ctx, ep} =
+      start(
+        data([], [
+          experiment(5, "exp_five") |> with_config(1, ~s({"ordered":"five"})),
+          experiment(2, "exp_two") |> with_config(1, ~s({"ordered":"two"}))
+        ])
+      )
+
+    assert Context.variable_value(ctx, "ordered", "default") == "two"
+    assert published(ctx, ep) == [exposure(2, "exp_two", @normal_variant)]
   end
 
   # --- event handler failures ------------------------------------------------
